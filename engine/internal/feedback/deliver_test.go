@@ -85,15 +85,93 @@ func itoa(n int) string {
 	return "1"
 }
 
-func TestGHAvailableReadsTheLocalLogin(t *testing.T) {
+// fakeGHScript puts an executable gh on PATH that runs script and appends the
+// arguments of every call to a record file. It never touches the network.
+func fakeGHScript(t *testing.T, script string) (recordPath string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is a shell script")
+	}
+	dir := t.TempDir()
+	recordPath = filepath.Join(dir, "calls")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + recordPath + "\n" + script
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	return recordPath
+}
+
+// ghUnreachable is the answer issue #356 saw: a stored credential, and a probe
+// that could not reach github.com.
+const ghUnreachable = `case "$1 $2" in
+  "auth status")
+    printf '%s\n' '{"hosts":{"github.com":[{"state":"error","active":true,"host":"github.com","login":"zayJu","tokenSource":"keyring","error":"Post \"https://api.github.com/graphql\": dial tcp: i/o timeout"}]}}'
+    exit 0
+    ;;
+esac
+`
+
+// Issue #356: an auth probe that cannot reach github.com must not decide the
+// delivery path. gh is installed and holds a credential, so the report is
+// attempted, and only an actual create failure sends the person to the page.
+func TestDeliverAttemptsGHWhenTheProbeCannotReachGitHub(t *testing.T) {
+	recordPath := fakeGHScript(t, ghUnreachable+
+		"/bin/cat >/dev/null\n"+
+		"echo https://github.com/SheathedSharp/option-berth/issues/42\n")
+	delivery := Deliver(context.Background(), DefaultRepo, sampleReport(t))
+	if delivery.Channel != "gh" || delivery.URL != "https://github.com/SheathedSharp/option-berth/issues/42" {
+		t.Fatalf("delivery = %+v, want the issue gh created", delivery)
+	}
+	// The published channel is the one delivery took, from the same predicate.
+	if channel := ChannelFor(GHLogin(context.Background())); channel != delivery.Channel {
+		t.Fatalf("published channel = %q, delivery channel = %q", channel, delivery.Channel)
+	}
+	calls, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(calls), "issue create") {
+		t.Fatalf("gh was not asked to create the issue:\n%s", calls)
+	}
+}
+
+// The fallback explains itself with the failure that actually happened, not
+// with a guess about why gh might not work.
+func TestDeliverReportsTheRealCreateFailure(t *testing.T) {
+	fakeGHScript(t, ghUnreachable+
+		"/bin/cat >/dev/null\n"+
+		"echo 'HTTP 401: Bad credentials' >&2\n"+
+		"exit 1\n")
+	delivery := Deliver(context.Background(), DefaultRepo, sampleReport(t))
+	if delivery.Channel != "url" {
+		t.Fatalf("channel = %q, want url after a failed create", delivery.Channel)
+	}
+	if !strings.Contains(delivery.Reason, "401") {
+		t.Fatalf("reason = %q, want the create failure", delivery.Reason)
+	}
+	if !strings.HasPrefix(delivery.URL, "https://github.com/"+DefaultRepo+"/issues/new?") {
+		t.Fatalf("url = %q", delivery.URL)
+	}
+}
+
+func TestGHLoginReadsTheLocalLogin(t *testing.T) {
 	dir := fakeGH(t, 0)
-	if ok, reason := GHAvailable(context.Background()); !ok {
-		t.Fatalf("GHAvailable = false (%s) with a signed-in gh", reason)
+	account := GHLogin(context.Background())
+	if !account.AttemptsGH() || account.State != GHSignedIn {
+		t.Fatalf("GHLogin = %+v with a signed-in gh", account)
+	}
+	if channel := ChannelFor(account); channel != ChannelGH {
+		t.Fatalf("ChannelFor = %q, want %q", channel, ChannelGH)
 	}
 
 	t.Setenv("PATH", filepath.Join(dir, "nothing"))
-	if ok, reason := GHAvailable(context.Background()); ok || reason == "" {
-		t.Fatalf("GHAvailable = (%v, %q) with no gh on PATH", ok, reason)
+	account = GHLogin(context.Background())
+	if account.AttemptsGH() || account.State != GHNotInstalled || account.Reason == "" {
+		t.Fatalf("GHLogin = %+v with no gh on PATH", account)
+	}
+	if channel := ChannelFor(account); channel != ChannelURL {
+		t.Fatalf("ChannelFor = %q, want %q", channel, ChannelURL)
 	}
 }
 

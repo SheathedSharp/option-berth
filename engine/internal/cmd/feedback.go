@@ -165,17 +165,16 @@ func runFeedbackStatus(cmd *cobra.Command, _ []string) error {
 	totals := feedback.Totals(entries)
 	now := time.Now()
 
-	channel := "url"
-	if account.Available {
-		channel = "gh"
-	}
+	// The published channel is the one delivery would take right now; both come
+	// from the same predicate, so they cannot drift apart.
+	channel := feedback.ChannelFor(account)
 	out := struct {
 		Schema        string                `json:"schema"`
 		Decision      string                `json:"decision"`
 		Enabled       bool                  `json:"enabled"`
 		DisabledByEnv bool                  `json:"disabled_by_env"`
 		Channel       string                `json:"channel"`
-		GitHub        feedback.GHAccount    `json:"github"`
+		GitHub        feedback.GHStatus     `json:"github"`
 		Reports       feedback.LedgerTotals `json:"reports"`
 		Path          string                `json:"path"`
 		LedgerPath    string                `json:"ledger_path"`
@@ -187,7 +186,7 @@ func runFeedbackStatus(cmd *cobra.Command, _ []string) error {
 		Enabled:       loadErr == nil && present && consent.Enabled() && !feedbackDisabledByEnv(),
 		DisabledByEnv: feedbackDisabledByEnv(),
 		Channel:       channel,
-		GitHub:        account,
+		GitHub:        account.Published(),
 		Reports:       totals,
 		Path:          paths.FeedbackPath(),
 		LedgerPath:    paths.FeedbackLedgerPath(),
@@ -218,15 +217,33 @@ func runFeedbackStatus(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// githubLine is the one sentence a person reads about who files the report.
+// githubLine is the one sentence a person reads about who files the report and
+// what happens when gh cannot. The states read differently because they mean
+// different things: a github.com the probe could not reach is not a signed-out
+// gh, and it does not stop `gh issue create` from filing the report.
 func githubLine(account feedback.GHAccount) string {
-	switch {
-	case account.Available && account.Account != "":
-		return "signed in as " + account.Account
-	case account.Available:
-		return "signed in"
+	reason := account.Reason
+	if reason == "" {
+		reason = "gh could not report its sign-in state"
+	}
+	switch account.State {
+	case feedback.GHSignedIn:
+		if account.Account != "" {
+			return "signed in as " + account.Account + "; a filed report uses this account"
+		}
+		return "signed in; a filed report uses this account"
+	case feedback.GHCredentialUnconfirmed:
+		who := "credential stored"
+		if account.Account != "" {
+			who = "credential stored for " + account.Account
+		}
+		return who + " but github.com is unreachable; a report is still attempted through gh"
+	case feedback.GHSignedOut:
+		return "not signed in (" + reason + "); a report opens a prefilled issue page you submit"
+	case feedback.GHNotInstalled:
+		return "not available (" + reason + "); a report opens a prefilled issue page you submit"
 	default:
-		return "not available (" + account.Reason + ")"
+		return "not confirmed (" + reason + "); a report is still attempted through gh"
 	}
 }
 
@@ -267,18 +284,14 @@ func runFeedbackOn(cmd *cobra.Command, _ []string) error {
 		return printJSON(map[string]any{
 			"schema":   feedback.ConsentSchema,
 			"decision": string(feedback.DecisionEnabled),
-			"github":   account,
+			"github":   account.Published(),
 			"path":     paths.FeedbackPath(),
 		})
 	}
 	fmt.Printf("improvement reports are on; the decision is recorded in %s\n", paths.FeedbackPath())
 	// Turning it on is the moment the person can still change who files it, so
-	// the account is named here rather than only when a report is composed.
-	if account.Available {
-		fmt.Printf("github     %s; a filed report uses this account\n", githubLine(account))
-	} else {
-		fmt.Printf("github     %s; a report opens a prefilled issue page you submit\n", githubLine(account))
-	}
+	// the credential is named here rather than only when a report is composed.
+	fmt.Printf("github     %s\n", githubLine(account))
 	fmt.Println(display.Dim("nothing is sent until a report is filed, and a free-text note is always shown first"))
 	return nil
 }
@@ -490,14 +503,14 @@ func runFeedbackLog(cmd *cobra.Command, _ []string) error {
 	if feedbackLogJSON {
 		return printJSON(struct {
 			Schema      string                 `json:"schema"`
-			GitHub      feedback.GHAccount     `json:"github"`
+			GitHub      feedback.GHStatus      `json:"github"`
 			Summary     feedback.ReportSummary `json:"summary"`
 			Entries     []feedback.LogEntry    `json:"entries"`
 			Path        string                 `json:"path"`
 			IssueReason string                 `json:"issue_reason,omitempty"`
 		}{
 			Schema:      feedback.ReportSchema,
-			GitHub:      account,
+			GitHub:      account.Published(),
 			Summary:     summary,
 			Entries:     shown,
 			Path:        paths.FeedbackLedgerPath(),
@@ -509,7 +522,7 @@ func runFeedbackLog(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("reports    %s\n", feedbackTotalsLine(summary.LedgerTotals))
 	if summary.Filed > 0 {
 		fmt.Printf("issues     %s\n", feedbackOutcomeLine(summary))
-		if !account.Available {
+		if !account.AttemptsGH() {
 			fmt.Printf("           `gh auth login` is needed to read issue state\n")
 		}
 	}
