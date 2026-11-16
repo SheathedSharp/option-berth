@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -770,7 +769,7 @@ func printStatus(doc statusDocument) {
 	printStatusServices(doc)
 	printStatusMachine(doc)
 	printStatusResources(doc)
-	printStatusUnclaimedPorts(doc)
+	printStatusListeners(doc)
 	printStatusCode(doc)
 	printStatusFailure(doc)
 	printStatusDraft(doc)
@@ -785,7 +784,7 @@ func printStatusBrief(doc statusDocument) {
 	printStatusServices(doc)
 	printStatusMachine(doc)
 	printStatusResources(doc)
-	printStatusUnclaimedPorts(doc)
+	printStatusListeners(doc)
 	printStatusFailure(doc)
 }
 
@@ -996,13 +995,16 @@ func printStatusMachine(doc statusDocument) {
 
 // printStatusResources is the worktree-level sum. "Not measured" stays a
 // different word from a measured zero: a running service with no sample is
-// counted, but it is not silently added as 0%.
+// counted, but it is not silently added as 0%. The count is declared services
+// only, and the word says so: the listeners of runs outside the manifest are
+// the listener line's business, not this count's.
 func printStatusResources(doc statusDocument) {
+	adHoc, _ := listenerAttribution(doc)
 	running := doc.Worktree.RunningServices
-	if running == 0 && doc.Worktree.Resources == nil {
+	if running == 0 && doc.Worktree.Resources == nil && len(adHoc) == 0 {
 		return
 	}
-	parts := []string{fmt.Sprintf("%d running", running)}
+	parts := []string{fmt.Sprintf("%d declared running", running)}
 	if res := doc.Worktree.Resources; res != nil {
 		parts = append(parts,
 			fmt.Sprintf("cpu %.1f%%", res.CPUPercent),
@@ -1014,34 +1016,41 @@ func printStatusResources(doc statusDocument) {
 	statusLine("resources", strings.Join(parts, " · "))
 }
 
-// printStatusUnclaimedPorts keeps the normal status path service-centered. A
-// listener with no matching service is the exceptional fact that cannot fit on
-// any service row, so it gets its own line only when one exists.
-func printStatusUnclaimedPorts(doc statusDocument) {
-	declared := []int{}
-	for _, s := range doc.Worktree.Services {
-		for _, port := range []*int{s.Port, s.PortActual} {
-			if port != nil && !slices.Contains(declared, *port) {
-				declared = append(declared, *port)
-			}
-		}
-	}
-	slices.Sort(declared)
-
-	unclaimed := []int{}
-	for _, p := range doc.Ports {
-		if !slices.Contains(declared, p.Port) {
-			unclaimed = append(unclaimed, p.Port)
-		}
-	}
-	if len(unclaimed) == 0 {
+// printStatusListeners gives every listener a home on the reading screen: the
+// run that owns it, or unowned with the process behind it. A bare port number
+// made the reader go to lsof to learn whether option-berth owned the process.
+func printStatusListeners(doc statusDocument) {
+	adHoc, unowned := listenerAttribution(doc)
+	if len(adHoc) == 0 && len(unowned) == 0 {
 		return
 	}
-	names := make([]string, 0, len(unclaimed))
-	for _, p := range unclaimed {
-		names = append(names, strconv.Itoa(p))
+	parts := make([]string, 0, len(adHoc)+len(unowned))
+	for _, run := range adHoc {
+		name := run.Name
+		if name == "" {
+			name = run.RunID
+		}
+		if name == "" {
+			name = "unknown"
+		}
+		parts = append(parts, portsText(run.Ports)+" (run "+name+")")
 	}
-	statusLine("listeners", strings.Join(names, ", ")+" — no service declares "+pluralWord(len(unclaimed), "it"))
+	for _, listener := range unowned {
+		detail := "unowned"
+		if listener.Command != "" {
+			detail += ": " + listener.Command
+		}
+		if listener.PID > 0 {
+			if listener.Command != "" {
+				detail += ", pid "
+			} else {
+				detail += ": pid "
+			}
+			detail += strconv.Itoa(listener.PID)
+		}
+		parts = append(parts, strconv.Itoa(listener.Port)+" ("+detail+")")
+	}
+	statusLine("listeners", strings.Join(parts, " · "))
 }
 
 // printStatusCode is the repository half: how much moved, not which lines.

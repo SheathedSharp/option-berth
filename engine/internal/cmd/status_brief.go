@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"fmt"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -32,23 +36,52 @@ type briefWorktree struct {
 	Identity string         `json:"identity"`
 	Branch   string         `json:"branch,omitempty"`
 	Services []briefService `json:"services"`
-	// AdHocRuns lists `oberth start` runs whose listener belongs to this
-	// worktree but whose name is not a declared service. `services` cannot show
-	// them; without this a brief reader sees only bare port numbers and cannot
-	// tell oberth owns the process.
-	AdHocRuns       []briefAdHocRun  `json:"ad_hoc_runs"`
-	RunningServices int              `json:"running_services"`
-	Resources       *state.Resources `json:"resources,omitempty"`
+	// AdHocRuns lists every run whose listeners no running service row
+	// already names. That includes an `oberth start` run the manifest does not
+	// declare, a stale generation still holding a port, and a declared
+	// service's run holding an extra listener. `services` cannot show them;
+	// without this a brief reader sees only bare port numbers and cannot tell
+	// oberth owns the process.
+	AdHocRuns []briefAdHocRun `json:"ad_hoc_runs"`
+	// UnownedPorts is the remaining listeners: the process behind the port is
+	// not an option-berth run. Every port in `ports` is therefore covered by a
+	// service row, by `ad_hoc_runs`, or by this list.
+	UnownedPorts    []briefUnownedPort `json:"unowned_ports"`
+	RunningServices int                `json:"running_services"`
+	Resources       *state.Resources   `json:"resources,omitempty"`
 }
 
-// briefAdHocRun is one run's attribution: identity plus the listeners it holds.
-// A run may hold several ports; the ports are sorted and never null.
+// briefAdHocRun is one run's attribution: identity, the command it was started
+// with, and the listeners it holds. A run may hold several ports; the ports are
+// sorted and never null. The command facts come from the run mirror; they are
+// absent when the mirror no longer has that generation, never invented.
 type briefAdHocRun struct {
-	Name  string `json:"name"`
-	RunID string `json:"run_id,omitempty"`
-	Group string `json:"group,omitempty"`
-	PID   int    `json:"pid,omitempty"`
-	Ports []int  `json:"ports"`
+	Name      string `json:"name"`
+	RunID     string `json:"run_id,omitempty"`
+	Group     string `json:"group,omitempty"`
+	PID       int    `json:"pid,omitempty"`
+	Cmd       string `json:"cmd,omitempty"`
+	Cwd       string `json:"cwd,omitempty"`
+	StartedAt string `json:"started_at,omitempty"`
+	Ports     []int  `json:"ports"`
+}
+
+// briefUnownedPort is a listener no option-berth run owns. The command and pid
+// are what a reader needs to identify the process before deciding anything;
+// both are absent when the process table could not supply them.
+type briefUnownedPort struct {
+	Port    int    `json:"port"`
+	PID     int    `json:"pid,omitempty"`
+	Command string `json:"command,omitempty"`
+}
+
+// portsText renders a port list for the human listener line.
+func portsText(ports []int) string {
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = strconv.Itoa(port)
+	}
+	return strings.Join(parts, ", ")
 }
 
 type briefService struct {
@@ -162,6 +195,7 @@ func briefStartingFrom(in *state.ServiceStarting) *briefStarting {
 }
 
 func briefStatusFrom(doc statusDocument) briefStatusDocument {
+	adHoc, unowned := listenerAttribution(doc)
 	out := briefStatusDocument{
 		Scope: doc.Scope,
 		Worktree: briefWorktree{
@@ -169,7 +203,8 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 			Identity:        doc.Worktree.Identity,
 			Branch:          doc.Worktree.Branch,
 			Services:        make([]briefService, 0, len(doc.Worktree.Services)),
-			AdHocRuns:       briefAdHocRuns(doc),
+			AdHocRuns:       adHoc,
+			UnownedPorts:    unowned,
 			RunningServices: doc.Worktree.RunningServices,
 			Resources:       doc.Worktree.Resources,
 		},
@@ -304,20 +339,39 @@ func listenerOnPort(ports []state.Port, port int) *state.Port {
 // briefAdHocRuns groups the listeners owned by runs the manifest does not
 // declare. The run id is the identity; a record without one falls back to the
 // name. Declared services stay in `services`, where their port already lives.
-func briefAdHocRuns(doc statusDocument) []briefAdHocRun {
-	declared := make(map[string]bool, len(doc.Worktree.Services))
+// listenerAttribution gives every listener in `ports` exactly one home:
+// covered by a running service row, owned by another run, or unowned. The old
+// split by service name hid a stale generation that still used a declared
+// name and left every other listener as a bare number; attribution has to
+// follow the run identity, not the label.
+func listenerAttribution(doc statusDocument) ([]briefAdHocRun, []briefUnownedPort) {
+	covered := make(map[int]bool, len(doc.Worktree.Services))
 	for _, svc := range doc.Worktree.Services {
-		declared[svc.Name] = true
+		if svc.Running && svc.PortActual != nil {
+			covered[*svc.PortActual] = true
+		}
 	}
 	byRun := make(map[string]*briefAdHocRun)
+	unowned := make([]briefUnownedPort, 0)
+	seenUnowned := make(map[int]bool)
 	for _, port := range doc.Ports {
+		if covered[port.Port] {
+			continue
+		}
 		run := port.Run
-		if run == nil || declared[run.Name] {
+		if run == nil {
+			if seenUnowned[port.Port] {
+				continue
+			}
+			seenUnowned[port.Port] = true
+			unowned = append(unowned, briefUnownedPort{
+				Port: port.Port, PID: port.PID, Command: port.Command,
+			})
 			continue
 		}
 		key := run.ID
 		if key == "" {
-			key = run.Name
+			key = fmt.Sprintf("%s/%d", run.Group, run.RootPID)
 		}
 		item, ok := byRun[key]
 		if !ok {
@@ -331,6 +385,24 @@ func briefAdHocRuns(doc statusDocument) []briefAdHocRun {
 			item.Ports = append(item.Ports, port.Port)
 		}
 	}
+
+	// The run's start facts are in the mirror, not in the listener row: the
+	// listener's own command is often a child (`node …`) rather than the
+	// recorded start line. Join by pid and generation, never by name.
+	snapshot := runs.Load()
+	for _, item := range byRun {
+		if snapshot == nil || item.PID <= 0 {
+			continue
+		}
+		entry, ok := snapshot.LookupByPID(item.PID)
+		if !ok || (item.RunID != "" && entry.ID != "" && entry.ID != item.RunID) {
+			continue
+		}
+		item.Cmd = entry.Cmd
+		item.Cwd = entry.Cwd
+		item.StartedAt = normalizeStartedAt(entry.StartedAt)
+	}
+
 	out := make([]briefAdHocRun, 0, len(byRun))
 	for _, item := range byRun {
 		sort.Ints(item.Ports)
@@ -342,5 +414,6 @@ func briefAdHocRuns(doc statusDocument) []briefAdHocRun {
 		}
 		return out[i].RunID < out[j].RunID
 	})
-	return out
+	sort.Slice(unowned, func(i, j int) bool { return unowned[i].Port < unowned[j].Port })
+	return out, unowned
 }
