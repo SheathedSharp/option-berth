@@ -1,163 +1,56 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/option-berth-lockup-dark.svg">
-    <img src="brand/option-berth-lockup-light.svg" alt="option-berth" width="420">
-  </picture>
-</p>
-<p align="center"><strong>Stop guessing what's running.</strong><br>The runtime facts layer for Git worktrees: what a checkout should run, whether it really is running, and why not.</p>
-<p align="center">English · <a href="README.zh.md">简体中文</a></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="brand/option-berth-lockup-dark.svg"><img src="brand/option-berth-lockup-light.svg" alt="option-berth" width="420"></picture></p>
 
-<p align="center"><a href="https://oberth.zayju.de/">Website</a> · <a href="https://oberth.zayju.de/guide/">Guide</a> · <a href="docs/product.md">Product</a> · <a href="docs/cli.md">CLI</a> · <a href="https://github.com/SheathedSharp/option-berth/releases/latest">Latest release</a> · <a href="https://oberth.zayju.de/llms.txt">llms.txt</a></p>
+# option-berth
 
-## Why this exists
+English | [中文](README.zh.md)
 
-Worktrees solved parallel code, not parallel runtime. With four checkouts open — and an agent writing in
-each — every question about a running service turns into a guess: which checkout does it belong to, is
-it actually healthy, is the worker without a port still alive, and will stopping this project disturb
-another branch? The answers sit in a process table, a port list, three log files and someone's memory.
+Run local development services across Git worktrees. The `oberth` CLI starts and stops declared services and reports which checkout owns a run, whether its port is listening, whether health checks pass, and why it exited.
 
-`oberth` puts them on one chain: **worktree → manifest → service → run → runtime facts**. You confirm
-what a checkout should run; the engine starts, observes and stops it within bounds; people and coding
-agents read the same facts instead of reconstructing system state.
+Use it for local projects with APIs, background workers or several branches running at once, including workflows driven by coding agents. It is not an OS sandbox, a production deployment platform or a machine-wide process cleaner. External services are not implicitly taken over.
 
-## What you get
+## Install, then run one service
 
-| You want to | option-berth gives you |
-| --- | --- |
-| Run several worktrees at once | Per-run ownership and automatic ports, so branches do not collide |
-| Know a service is usable | Process, listener and health kept apart; `up --wait` waits for real readiness |
-| Diagnose a failure | The service's log, exit result and diagnosis, not a reassembled shell one-liner |
-| Observe a portless worker | A run record, instead of treating "no port" as "not running" |
-| Let a script or agent read the facts | The same CLI as structured JSON; no second model or agent-reasoning system inside |
-| Hand work to the next session | `oberth workplace` keeps the commands and tasks run here, and how they ended |
-
-Stopping never crosses into another checkout. When a checkout disappears, `worktrees --gone` lists the
-identities it left behind and `down --worktree` still stops them and returns their `port: auto`
-reservations; deleting data stays a person's call.
-
-**Not a machine-wide port radar, not an OS sandbox, not another AI IDE.** `machine:` dependencies are
-read-only and project start/stop never takes them over; worktree isolation is about run ownership and
-lifecycle boundaries.
-
-## Try it
-
-The repository ships [Hello Worktree](examples/hello-worktree/README.md): one API that only listens on
-localhost and one portless worker, Python 3 standard library only — no model account, container or pip
-dependency. [Stack Workshop](examples/stack-workshop/README.md) is the complex sample, and the input of
-the manual agent benchmark: ten Python services plus a real Postgres container, with a slow-starting
-auth, a built frontend, a migration per worktree, portless workers and a read-only `machine:`
-reference. It needs Docker.
-
-```sh
-# With oberth installed, from the repository root
-cd examples/hello-worktree
-oberth up --wait --json
-oberth status --json
-oberth logs worker --once
-oberth down --json
-```
-
-For your own project, run `oberth init`, then review and edit the generated `oberth.yaml`. An agent can
-draft one, but **a draft is not authorization**: nothing is written until you run `init adopt`. Fields,
-automatic ports, dependencies and health checks are in [the CLI guide](docs/cli.md).
-
-## Install
-
-macOS / Linux: one command resolves the latest release, downloads the archive for this machine,
-verifies SHA256, and installs into `~/.local/bin`.
+macOS / Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh
 ```
 
-Windows (PowerShell):
+See [installation](docs/install.md) for Windows, manual downloads, verification, version pinning and protocol switches. Full service lifecycle support is primarily macOS/Linux; a Windows build is not equivalent native acceptance.
 
-```powershell
-irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.ps1 | iex
-```
-
-Linux `.deb`/`.rpm`, pinned versions, uninstall, upgrades and the platform
-boundaries are in [Install and uninstall](docs/install.md). The scripts only download and verify release
-archives: they start no service and write no Git data.
-
-Running `oberth` shows the installed version and, when a newer release exists, the upgrade command for
-this platform. `oberth version --check` asks on demand; it only reads release metadata and never
-downloads or installs anything.
-
-The complete service lifecycle is supported on **macOS and Linux**. Windows has a native build, smoke
-checks and some fact/persistence tests, which is not full lifecycle support.
-
-## Everyday commands
+Follow the [quick start](docs/quickstart.md) first: it needs only Python 3's standard library, no model account or Docker. In a project with a reviewed `oberth.yaml`, the everyday loop is:
 
 ```sh
-oberth status --json            # this worktree's declaration and runtime facts
-oberth doctor                  # install, manifest and background-service diagnosis
-oberth up --wait                # start and wait for readiness
-oberth restart --only api       # restart only the named service
-oberth logs api --once          # read a service's log
-oberth down                    # stop the project and release port claims safely
+oberth up --wait
+oberth status --json
+oberth logs api --once
+oberth down
 ```
 
-`oberth git` gives read-only Git context; for cross-project observation use `oberth events` with an
-explicit worktree filter.
+`up --wait` waits for the declared readiness conditions. `status` distinguishes a process, a listener and health; inability to observe is not “not running.” `down` targets the current worktree, not the whole machine. Replace the example service name `api` with your own.
 
-## With coding agents and orchestrators
+See [product scope and safety boundaries](docs/product.md) for the complete definition.
 
-The engine exposes an explicit launch adapter and implements no model, tool loop or session reasoning.
-How an agent learns to use these commands lives in the separate
-[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) repository:
+## Choose your next task
 
-```sh
-npx skills add SheathedSharp/option-berth-skill -g
-oberth agent plan codex --worktree "$PWD" --json
-```
-
-Conductor, Cursor, Claude Code, Codex and similar tools create the workspace; call `oberth` from their
-own setup / run / cleanup scripts or an outer wrapper:
-
-```sh
-oberth up --wait                           # setup for a new workspace
-oberth status --json                       # scripts and agents read the runtime facts
-oberth down --worktree /path/to/worktree   # cleanup; still works after the checkout is gone
-```
-
-The product installs no hooks, registers no MCP server and edits none of those tools' configuration.
-Per-tool recipes, version prerequisites and the port flags common frameworks need (Vite wants
-`--port ${port} --strictPort`) are in [the integration recipes](docs/integrations.md).
-
-The native macOS client is a separate product,
-[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos). It reads this CLI's facts and
-keeps no second copy of the runtime state. Both products, and the skill, meet only at the CLI and its
-`--json` contract.
-
-## Documentation
-
-| What you need | Where to go |
+| Task | Read |
 | --- | --- |
-| Product definition, what it refuses to do | [docs/product.md](docs/product.md) |
-| CLI, JSON fields, manifest, error codes | [docs/cli.md](docs/cli.md) |
-| Install, upgrade, uninstall | [docs/install.md](docs/install.md) |
-| Orchestrators and dev servers | [docs/integrations.md](docs/integrations.md) |
-| Work records and handoff | [docs/workplace.md](docs/workplace.md) |
-| Implementation boundaries | [docs/agent/architecture.md](docs/agent/architecture.md) |
-| What each check proves | [docs/agent/validation.md](docs/agent/validation.md) |
-| Build, test and release this repository | [docs/agent/develop.md](docs/agent/develop.md), [docs/agent/releasing.md](docs/agent/releasing.md) |
+| Run two branches at once | [Multiple worktrees](docs/worktrees.md) |
+| Understand absence, idle exit or version switching | [Runtime Service](docs/runtime-service.md) |
+| Diagnose startup, port or observation failures | [Troubleshooting](docs/troubleshooting.md) |
+| Integrate an orchestrator or coding agent | [Integrations](docs/integrations.md), [separate skill](https://github.com/SheathedSharp/option-berth-skill) |
+| Understand optional model advice and consent | [Attention](docs/attention.md) |
+| Leave a structured handoff | [Work records](docs/workplace.md) |
+| Look up flags, JSON, RPC or manifest fields | [Interface reference](docs/cli.md) |
 
-## Contributing
+The [documentation index](docs/index.md) covers the full reading path. The [macOS interface](https://github.com/SheathedSharp/option-berth-macos) is a separate project, not a CLI prerequisite; components need matching protocol versions.
 
-Contribute one focused PR per theme, describing the problem, the implementation, TODOs, tests and
-compatibility. Do not commit private configuration, credentials, run logs or screenshots of real
-projects. The rules this repository expects before you touch it are in [AGENTS.md](AGENTS.md).
+## Contribute
 
-```sh
-mage test
-mage vet
-python3 -m unittest discover -s scripts -p '*_test.py'
-```
+Start with [development](docs/agent/develop.md), then [architecture](docs/agent/architecture.md) and [verification scope](docs/agent/validation.md). Follow [AGENTS.md](AGENTS.md) before editing. Tests must not use your everyday background host or real project data. Earlier test results do not establish acceptance of today's revision.
 
-## License
+Release requirements are maintained in the [release process](docs/agent/releasing.md), not implied by a local build.
 
-Maintained by **SheathedSharp** and contributors. Project code is under the [MIT License](LICENSE);
-third-party code and assets keep their own licenses and copyright, see
-[third-party notices](THIRD_PARTY_NOTICES.md). Coding-agent names describe compatibility only and do not
-imply endorsement by their developers.
+## License and provenance
+
+Project contributions use [MIT](LICENSE). Third-party components retain their own notices: see [attribution and source](third_party/README.md) and [source archives](docs/third-party.md). Archives support inspection and development without changing Go dependency resolution. Third-party tool names do not imply endorsement.

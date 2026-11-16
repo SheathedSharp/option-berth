@@ -2,6 +2,10 @@
 
 English | [中文](integrations.zh.md)
 
+## Choose a workflow
+
+First get the [standalone example](quickstart.md) working. Use this page when a reviewed manifest already exists and another tool creates worktrees. The lifecycle commands are the same across tools; the hook syntax is tool-specific. Copy only the recipe matching your installed tool/version, review every path, and install no hook merely to read status.
+
 option-berth is the **runtime fact layer for worktrees**. Orchestration tools create workspaces,
 schedule sessions, and often allocate their own ports; `oberth` answers what state the services on
 this code are in right now, why a failure failed, and stops the services it left behind when things
@@ -29,28 +33,14 @@ cd /path/to/checkout
 oberth up --wait
 ```
 
-- `--wait` waits until the services selected for this run are actually listening; services that
-  declare `health:` must also pass their health check; a portless worker counts as ready based on the
-  run record being active. Each service declares its own readiness budget with `ready_timeout:` (Go
-  duration, default 30s, must be positive); `up --wait` waits by it by default, and `depends_on`
-  successors also wait by the depended-on service's own budget. `--wait-timeout` is only the overall
-  cap for the whole `up --wait` run; it only tightens, never loosens, each service's
-  `ready_timeout:`; slow services should write their budget into the manifest rather than just
-  raising this flag.
-- `ready_timeout:` constrains the listen and health waits **after startup**, including dependency
-  waits and `up --wait`; `--wait-timeout` only constrains `up --wait`'s own wait (it starts counting
-  after the `groups.start` stream ends, and does not affect the runtime service's dependency waits). Neither
-  constrains `prepare:`. Slow dependency installation needs the `prepare_inputs:` cache (skipped when
-  the content is unchanged), or a larger script timeout on the orchestration tool's own side.
-- On failure the exit code is 1, with `state`, `reason`, and `hint` given per service; `hint` points
-  at `oberth logs <service> --once` only if the process really did start.
-- When observation is blind, `up --wait` returns an `observation_*` error immediately and keeps the
-  run it just started. This is not "it didn't start". Follow the `hint`, run `oberth runtime service run --detach`
-  in a normal terminal, then retry; do not retry repeatedly inside a sandbox.
-- `up` by default refuses service working directories outside `$HOME`. When an orchestration tool
-  puts the workspace outside home, confirm and add `--allow-outside-home`; `down` has no such flag.
-- The manifest must be confirmed by a human: `oberth init`, or `oberth init draft` to draft and a
-  human `oberth init adopt` to adopt. An agent's draft is not authorization.
+- `--wait` waits for the selected services to listen and pass any declared `health:` check. A portless worker is ready when its run record remains active; that does not establish business-level completion.
+- `ready_timeout:` is each service's post-start readiness budget, used for dependency waiting and listener/health waiting in `up --wait`. It defaults to `30s` and must be positive. Values such as `30s` and `2m` are Go durations: 30 seconds and 2 minutes. Declare a larger budget for a slow service in its manifest.
+- `--wait-timeout` limits only the CLI readiness-wait phase after the `groups.start` stream ends. It does not widen a service's budget or control dependency waits inside the host. It is not a timer around the entire start operation.
+- Neither setting limits `prepare:`. Use `prepare_inputs:` to skip preparation when inputs have not changed, or adjust the orchestrator's own script timeout.
+- Failure exits 1 with per-service `state`, `reason` and `hint`. A hint points to `oberth logs <service> --once` only if a process actually started.
+- If listener observation is unavailable, `up --wait` returns `observation_*` and preserves the runs it just started. This does not mean they failed to start. Follow the hint to explicitly run `oberth runtime service run --detach` in an ordinary terminal; do not relax the sandbox or repeatedly retry inside it.
+- `up` rejects service working directories outside `$HOME` by default. Add `--allow-outside-home` only after confirming that location; `down` has no such flag.
+- A person must confirm the manifest. Use `oberth init`, or draft with `oberth init draft` and have a person accept with `oberth init adopt`. A draft is not authorization.
 
 ### While running: read the facts
 

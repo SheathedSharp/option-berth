@@ -2,12 +2,16 @@
 
 [English](workplace.md) | 中文
 
+## 接手或留下工作记录
+
+工作记录回答“这里试过什么、结果怎样”，不回答“服务现在是否运行”。接手工作先读 `workplace list`、`workplace show`；确定要写记录时，再创建或选中 workplace。block 就是一条命令或一轮助手任务的记录，不是一个服务。下面维护命令与字段的精确行为。
+
 交接层的一份**工作记录**。一个 worktree 下可以有多个 workplace，每个按时间顺序保存其中的
 工作条目（block）：引擎跑过的命令，和交给 agent 的每一轮任务。它回答的是「在这里做过什么、
 结果如何」——agent 可以读回来接手别人（或自己上一轮）的工作，也可以把引擎看不见的尝试自己
 写进去。命令只读写这份记录，不判断、不启动、不恢复。
 
-它挂在 worktree 上，不在服务链上，不参与服务事实的归约，也不被 `status` 当成运行真相。
+它挂在 worktree 上，不在服务链上，不参与服务状态计算，也不被 `status` 当成当前运行状态。
 命令与字段的契约以本文为准；其余 CLI 契约见 [CLI 使用说明](cli.zh.md)。
 
 ## 命令
@@ -53,7 +57,7 @@ oberth workplace record --kind shell|agent [flags] [--worktree PATH] [--json]
 
 记录不需要手动操作：
 
-- `oberth start` 把这次运行写进当前 workplace；非附加（`-d`）的运行由 runtime service 在记录它的退出时收尾。
+- `oberth start` 把这次运行写进当前 workplace；分离运行（`-d`）由 runtime service 在记录它的退出时收尾。
 - `oberth agent stream` 每一轮写一条：`turn.started` 开，`turn.completed` 按 provider 给的
   outcome 收尾（completed / interrupted / failed）。
 - 引擎看不见的工作用 `oberth workplace record` 写进来：agent 自己的尝试（「我改了 X，测试仍然

@@ -24,9 +24,10 @@ MIGRATIONS = {
 }
 GUARDS = {"engine/internal/runtimesvc/storage_lease.go", "engine/internal/runtimesvc/storage_lease_test.go",
           "engine/internal/runtimesvc/storage_lease_legacy_test.go"}
-DOCKER = {"scripts/agent_eval.py", "examples/stack-workshop/README.md", "docs/agent/validation.md", "engine/internal/docker/watch_test.go",
+DOCKER = {"scripts/agent_eval.py", "examples/stack-workshop/README.md", "docs/agent/validation.md", "docs/agent/validation-reference.md", "engine/internal/docker/watch_test.go",
           "engine/internal/doctor/probes.go", "engine/internal/doctor/doctor.go", "engine/internal/doctor/checks_test.go", "engine/internal/doctor/probes_test.go"}
 THREADS = {"scripts/check_storage_ownership.py","scripts/example_api_test.py", "scripts/verify-e2e.py", "scripts/install_test.py", "scripts/verify_stats_drain_test.py"}
+HISTORICAL = {"docs/agent/history/validation-through-20261114.md", "docs/agent/history/agent-traces-20261102.md", "docs/agent/history/backlog-20261114.md", "docs/agent/history/backlog-20261114.zh.md"}
 SUFFIXES = {".go", ".py", ".md", ".sh", ".ps1", ".yml", ".yaml", ".json", ".sql", ".tmpl", ".html"}
 
 
@@ -47,6 +48,7 @@ def audit(root):
             reason = None
             if RETIRED.search(line):
                 if name == "scripts/check_runtime_naming.py": reason = "the audit's explicit retired-input rules"
+                elif name in HISTORICAL: reason = "explicitly dated historical archive, not current commands or acceptance"
                 elif name in REJECTION: reason = "explicit rejection/input-negative contract fixture"
                 elif name == "scripts/check_runtime_availability.py" and ('"daemon.lock"' in line or 'c.call("daemon.status"' in line): reason = "real released-Store interlock fixture or explicitly rejected old RPC"
                 elif name in GUARDS and '\"daemon.lock\"' in line: reason = "legacy exclusion interlock only; never a socket fallback"

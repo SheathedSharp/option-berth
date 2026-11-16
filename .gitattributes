@@ -1,0 +1,3 @@
+# Preserve original source archives and legal-document bytes.
+third_party/sources/** -text
+third_party/licenses/** -text

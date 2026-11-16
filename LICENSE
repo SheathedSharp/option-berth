@@ -3,8 +3,10 @@ MIT License
 Copyright (c) 2026 SheathedSharp
 Copyright (c) 2026 option-berth contributors
 
-Third-party components keep their own copyright and license; their full texts
-are in THIRD_PARTY_NOTICES.md and ship with every release archive.
+Third-party components keep their own copyright and license. In the source
+checkout, see third_party/README.md and the original license files it identifies.
+Release archives carry the applicable notices in licenses/third-party-notices.md
+and the full runtime license texts alongside it.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

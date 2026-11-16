@@ -1,5 +1,7 @@
 # Release process
 
+For maintainers publishing this engine, not users installing it. Follow the stages below without skipping required checks: version PR, reviewed merge, exact-SHA preflight, native annotated-tag flow and Verified release. Merely reading this page does not authorize any GitHub write or publication. Installation belongs to [install.md](../install.md).
+
 ## This repository releases only the engine
 
 option-berth is three independent products: this repository releases the `oberth` engine and CLI; the

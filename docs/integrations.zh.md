@@ -2,9 +2,11 @@
 
 [English](integrations.md) | 中文
 
-option-berth 是 **worktree 的运行事实层**。编排工具负责创建工作区、调度会话，也常常分配自己的
-端口；`oberth` 负责回答这份代码上的服务现在是什么状态、失败为什么失败，并在结束时停止它留下的
-服务。
+## 先选适合自己的流程
+
+先把[独立示例](quickstart.zh.md)跑通。已有审阅过的配置、需要另一个工具创建工作树时，再看本页。各工具调用的启停命令相同，但 hook 写法不同。只选与你已安装工具及版本对应的示例，检查每个路径；只读状态不需要安装 hook。
+
+编排工具负责创建工作目录和调度会话，有时也会分配端口；`oberth` 负责记录各工作目录的服务归属、报告状态和失败原因，并按请求停止这些服务。两者配合使用，不要让两个工具分别启动同一个服务。
 
 接入方式是**用户在自己的脚本里调用 CLI**：工具提供 setup / run / cleanup 槽位的，把 `oberth`
 命令粘进去；没有槽位的，用外层 wrapper 或 `AGENTS.md` 说明。这些脚本和配置都由用户自己创建；
@@ -25,23 +27,14 @@ cd /path/to/checkout
 oberth up --wait
 ```
 
-- `--wait` 等到本次选择的服务真正监听；声明了 `health:` 的服务还要通过健康检查；无端口 worker
-  以运行记录活跃为准。每个服务用 `ready_timeout:`（Go duration，缺省 30s，必须为正）声明自己的
-  就绪预算；`up --wait` 默认按它等待，`depends_on` 的后继服务也按被依赖方自己的预算等待。
-  `--wait-timeout` 只是整次 `up --wait` 的总上限，只会收紧、不会放宽每个服务的
-  `ready_timeout:`；慢服务应把预算写进清单，而不是只调大这个开关。
-- `ready_timeout:` 约束**启动之后**的监听与健康等待，包括依赖等待和 `up --wait`；
-  `--wait-timeout` 只约束 `up --wait` 自己的等待（它在 `groups.start` 流结束后才开始计时，
-  不影响 runtime service 的依赖等待）。两者都不约束 `prepare:`。依赖安装慢要靠 `prepare_inputs:`
-  缓存（内容未变时跳过），或调大编排工具自己的脚本超时。
-- 失败时退出码为 1，逐服务给出 `state`、`reason` 和 `hint`；只有进程真的起过，`hint` 才指向
-  `oberth logs <service> --once`。
-- 观察失明时 `up --wait` 会立即返回 `observation_*` 错误并保留刚启动的运行。这不是“没起来”。
-  按 `hint` 在普通终端运行 `oberth runtime service run --detach` 后再试；不要在沙箱里反复重试。
-- `up` 默认拒绝服务工作目录在 `$HOME` 之外。编排工具把 workspace 放在 home 外时，确认后加
-  `--allow-outside-home`；`down` 没有这个开关。
-- 清单要由人确认：`oberth init`，或 `oberth init draft` 起草、人 `oberth init adopt` 采纳。
-  agent 的草稿不等于授权。
+- `--wait` 等待所选服务开始监听；配置了 `health:` 的，还要通过该健康检查。没有端口的 worker 以运行记录仍然活跃为准，不代表业务任务已经完成。
+- `ready_timeout:` 是每个服务启动后的就绪预算，包括依赖等待和 `up --wait` 使用的监听、健康检查等待。默认 `30s`，必须为正；`30s`、`2m` 是 Go duration 的写法，即 30 秒、2 分钟。慢服务应在清单里明确设置。
+- `--wait-timeout` 只限制 CLI 收到 `groups.start` 流结束后的就绪等待阶段，不会放宽单服务的预算，也不控制后台内部的依赖等待。它不是整个启动操作的总计时器。
+- 这两个参数都不限制 `prepare:`。依赖安装慢，可以配置 `prepare_inputs:` 在输入未变时跳过准备，或调整编排工具自己的脚本超时。
+- 失败退出码为 1，逐服务返回 `state`、`reason` 和 `hint`。只有确实启动过进程，`hint` 才会指向 `oberth logs <service> --once`。
+- 若观察端口的权限不足，`up --wait` 会返回 `observation_*`，并保留刚启动的运行。不能据此判断“服务没起来”。按 `hint` 在普通终端明确运行 `oberth runtime service run --detach`，不要放宽沙箱或在里面反复重试。
+- `up` 默认拒绝 `$HOME` 以外的服务工作目录。确实要用 home 外的目录，确认后加 `--allow-outside-home`；`down` 没有这个参数。
+- 清单必须由人确认。可以直接用 `oberth init`，也可以先 `oberth init draft` 起草，再由人通过 `oberth init adopt` 采纳；草稿本身不是授权。
 
 ### 运行中：读事实
 
@@ -82,7 +75,7 @@ oberth down --identity wt_...                       # by identity, when the dire
 - 两个 checkout 占用同一组名时，组作用域的停止返回 `ambiguous`；此时按端口或 pid 点名
   `kill`，不要替调用者猜一个。
 
-## 通用接法
+## 通用接入方式
 
 | 工具的槽位 | 放什么 |
 |---|---|
@@ -111,7 +104,7 @@ oberth down --identity wt_...                       # by identity, when the dire
   `ready_timeout` 失败（并且只清理本次新启动的运行）。优先使用框架的严格端口选项，让冲突
   直接变成一条可读的失败事实。
 
-## 工具配方
+## 各工具的接入示例
 
 以下配置都由用户自己创建；项目级配置（`.conductor/settings.toml`、`.cursor/worktrees.json`、
 项目 `.claude/settings.json`、`.codex/`）可以随仓库提交，用户级配置（如 `~/.codex/hooks.json`、
@@ -374,7 +367,7 @@ If `oberth down --help` on this machine has no `--worktree`, use `oberth down` b
 worktree directory.
 ````
 
-## 框架配方
+## 各框架的启动参数
 
 `port: auto` 是大多数本地开发服务的正确选择：引擎为每个 worktree 预留不同端口，并把端口注入
 `PORT`；`cmd:` 里的 `${port}` 在启动前按当前服务展开。`cmd:` 按 shell 风格拆成 argv，但不经过

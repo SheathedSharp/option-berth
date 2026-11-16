@@ -1,5 +1,7 @@
 # Attention adapter
 
+For a person deciding whether to configure or enable models, start with [Attention](../attention.md). This page is the engineering reference for typed requests, eligibility, cancellation, privacy and quality evidence. Example model calls below require separate authorization and are not part of ordinary service control.
+
 `oberth attn` is an optional, read-only assessment of the agent attention handoff.
 Its `assess` runner reads `oberth status --json --no-mark`, validates the exact
 published artifact, asks the selected provider whether the event affects the
@@ -33,64 +35,15 @@ options. See the [OpenRouter Jev guide](https://openrouter.ai/blog/insights/what
 and [TypeSafe API reference](https://docs.typesafe.ai/api/) for the upstream
 wire contract.
 
-## Turning it on
+<a id="turning-it-on"></a>
 
-`oberth attn config` is the one step that stores credentials, in this order: give
-an endpoint and model (directly, through a preset, or by picking from the
-catalog), read the key, prove the key answers, then write the owner-only file.
-It never turns the assessment on; `oberth attn on` flips that one boolean, and
-`oberth attn off` flips it back (`--forget` also removes the key).
+## Configuration admission
 
-With no flags on a terminal, the command walks through provider, model and key
-with the arrow keys. Every list ends with a custom row: a deployment or model
-that is not in the catalog is one answer away, and the catalog is a convenience
-rather than a gate. The curated rows are:
+User setup and consent are explained in [Attention](../attention.md#configure-and-consent-separately). `config` proves a synthetic request before committing owner-only settings; a failed proof leaves the old file unchanged. `on` is a separate consent write.
 
-| Preset | Endpoint | Models |
-|---|---|---|
-| `openrouter` | `https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.14` (default), `openai/gpt-6-luna-decisions`, `google/gemini-decision-1`, `microsoft/microsoft-decision-1`, `perplexity/pplx-decider-v1.3`, `cloudflare/clef`, `liquid/d1.1`, `upstage/solar-decide`, `morph/reflex` |
-| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `jev-latest` (default), `jev-preview` |
+Hidden input uses the existing `internal/terminal` and `golang.org/x/sys` adapters; prompts go to stderr so JSON stdout stays clean.
 
-```sh
-# a person at a terminal: provider, model, then hidden key input
-oberth attn config
-
-# a script or CI job: the key never appears in an argument list
-oberth attn config --preset openrouter --key-stdin < key.txt
-oberth attn on
-
-# read it from an existing variable
-oberth attn config --preset typesafe --key-env ATTN_KEY
-
-# any compatible endpoint or model: no preset, explicit fields
-oberth attn config --endpoint https://assess.example/decisions --model team/model --key-env ATTN_KEY
-```
-
-The proof is one synthetic, redacted assessment — the same request shape a real
-event uses, carrying no worktree facts. **If the probe fails, nothing is
-written**, so a typo cannot replace a working configuration with one that breaks
-every later task. On success the command prints what it stored and what will and
-will not be sent.
-
-| Command | What it does | Network |
-|---|---|---|
-| `oberth attn status` | resolved state, reason, fingerprint, quality summary | no |
-| `oberth attn config` | store endpoint/model/key, probe once, then write | once |
-| `oberth attn test` | one synthetic probe against the effective settings | once |
-| `oberth attn on` / `off` | flip the single consent boolean | no |
-| `oberth attn assess --dry-run` | the exact redacted request for this worktree | no |
-
-`status` never prints a key, only a short fingerprint so a person can tell two
-keys apart. `assess --dry-run` is the honesty check to run before turning it on:
-if the body it shows is not acceptable, do not enable.
-
-Hidden input and the arrow-key picker live in `internal/terminal` and use the
-platform's own termios through `golang.org/x/sys`, which the engine already
-depends on; `golang.org/x/term` is deliberately not added for the same handful
-of lines. Prompts are drawn on standard error, so a command's stdout stays one
-JSON value. On Windows interactive entry and the picker are refused with a
-pointer to the flags, because the engine's Windows surface is a native build and
-a smoke test, not full acceptance.
+Windows interactive entry remains outside full acceptance; flags are the supported input path there.
 
 ## Run it
 
@@ -154,9 +107,21 @@ No global watcher is installed. Before every poll, consent and the original
 endpoint/model/credential identity are checked again; revocation or a changed
 configuration terminates the old task session without another provider call.
 
-The runner's `OpenChanges` adapter only dials an existing Runtime Service. It reuses scoped redacted summaries, filters their source to the task worktree and ignores resource-only changes. Sequence cursors are relative to the runtime service identity, not the attention artifact revision; disconnect/drop/restart causes a reconnect snapshot wake. `Trigger` retains low-frequency full reconciliation and local configuration checks while connected, and safely falls back to the original polling path when capability or connectivity is absent. The public timing behavior belongs to [cli.md](../cli.md). Do not add a second events process for the same follow session.
+The runner's `OpenChanges` adapter only dials an existing Runtime Service.
 
-The feed only schedules fact reads. `Auto` still validates the exact artifact and authorized task context, calls a provider only for an eligible uncached assessment, and re-reads facts after model/cache return. The optional model packages must remain outside the dependency closure of runtime service/scanner/control packages. Cancellation closes only the task's own socket and joins its reconnect worker; no broad process cleanup or global listener is installed.
+It reuses scoped redacted summaries, filters their source to the task worktree and ignores resource-only changes.
+
+Sequence cursors are relative to the runtime service identity, not the attention artifact revision; disconnect/drop/restart causes a reconnect snapshot wake. `Trigger` retains low-frequency full reconciliation and local configuration checks while connected, and safely falls back to the original polling path when capability or connectivity is absent.
+
+The public timing behavior belongs to [cli.md](../cli.md).
+
+Do not add a second events process for the same follow session.
+
+The feed only schedules fact reads. `Auto` still validates the exact artifact and authorized task context, calls a provider only for an eligible uncached assessment, and re-reads facts after model/cache return.
+
+The optional model packages must remain outside the dependency closure of runtime service/scanner/control packages.
+
+Cancellation closes only the task's own socket and joins its reconnect worker; no broad process cleanup or global listener is installed.
 
 For CI and one-off runs the same three fields come from the environment:
 `BERTH_ATTN_ENDPOINT`, `BERTH_ATTN_MODEL` and `BERTH_ATTN_KEY`. They override

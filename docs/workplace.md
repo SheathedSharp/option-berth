@@ -2,6 +2,10 @@
 
 English | [中文](workplace.zh.md)
 
+## Read or leave a handoff
+
+Use work records to answer “what was tried here and how did it end?”, not “is the service running now?” Read `workplace list` and `workplace show` to take over work; create/select a workplace only when you intend to write records. A block is one recorded command or agent turn, not a service. The command and field reference below remains authoritative.
+
 The handoff layer's **work record**. One worktree can hold several workplaces, each keeping its work
 entries (blocks) in order: commands the engine ran, and each round of work handed to an agent. It
 answers "what happened here, and how did it turn out" — an agent can read it back to take over someone

@@ -1,26 +1,12 @@
-# oberth CLI 契约
+# oberth 接口参考
 
 [English](cli.md) | 中文
 
-这份文档描述产品主线：一个 worktree 的清单、运行记录和运行实况、起停和日志，并行开发所需的
-只读事件流，以及留给下一个接手的人或 agent 的工作记录。其余命令以 oberth <command> --help
-为准，不在这里另建一套契约。
+这是一份查询手册，维护命令、JSON、RPC 与配置字段的精确行为。第一次使用先读[快速开始](quickstart.zh.md)；不必从头顺读本页。运行中的帮助以 `oberth <command> --help` 查询，自动生成的 schema 来自 Go 类型。
 
-无参数运行 `oberth` 显示首屏：品牌标记与字标、一句定位、本机版本、一次工作会话起步的三条命令
-（status / up / down）、接着可能会用到的可选能力（`attn` 与 `feedback report`，单独成组，免得读成
-必需）和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。版本行在发布版本检查
-成功时带 `(latest)` 或 `(latest version vX.Y.Z)`；检查未知时只打印本机版本，不把“没查到”写成
-“最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth runtime service stop`。还没有记录过改进报告
-的决定时，首屏也可能问一次是否发送关于 oberth 自身的脱敏报告；这个问题和报告携带什么，写在
-基础设施命令一节的 `oberth feedback` 里。标记由
-`scripts/brand_export.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
-不手写；字标是轮廓字，终端里用粗体文字表示。
+工作树（worktree）是一份独立项目目录；配置文件（manifest）是 `oberth.yaml`；服务（service）是声明的命令；运行（run）是一次具体启动；Runtime Service 是拥有运行注册和存储的本机后台。进程、监听和健康是不同状态，未知不能写成不存在。
 
-标记按品牌自己的分工上两色：两条轨用墨色（深色终端用纸色），胶囊用陶土色。涂成一色时
-胶囊会和两个轨帽并成三个一样的块，看起来像一张脸，所以这个分工是语义的一部分，不是配色
-偏好。truecolor 下用 `#23262B` / `#F8F6F2` 与 `#A8543E` / `#DB9378`，`COLORFGBG` 报告
-深色背景时取后一组；256 色终端取最接近的槽位（235 / 255 / 131 / 174）；8 色终端下轨保持
-终端自身前景色，胶囊退化为 yellow。`NO_COLOR` 下不着色。
+先用[文档导航](index.zh.md)选择任务，下面依次查询通用规则、命令、基础设施和配置。模型建议的授权入口见 [Attention](attention.zh.md)。
 
 ## 共通规则
 
@@ -45,7 +31,7 @@
   hint 指向离开沙箱重试、升级 option-berth 或运行
   `oberth doctor --only listener_observation` 检查当前进程。
 - macOS 27 起，由非 Apple 签名父进程（Go、Homebrew Python 等）启动的子进程执行 `netstat`
-  会以 0 退出却拿不到 TCP 表。这种「一条行都没有」仍按 observation_empty 处理，由自证探针判定；
+  会以 0 退出却拿不到 TCP 表。这种“一行都没有”仍按 observation_empty 处理，由自证探针判定；
   探针能看到自己的监听时，本轮改用 `lsof` 采集并照常报 observable。采集器不是主采集器时，
   `observation.source` 写出它的名字（`lsof`）；主采集器留空。`doctor` 的 detail 与
   `runtime service status` 的 `observation` 描述的是同一轮观察。
@@ -55,13 +41,15 @@
   窄表里缺失的端口 `machine[].listening_known` 为 false，`port: auto` 逐个用绑定实测而不是
   信任缺失，人读的 `status` 打印 `listening unknown`。
 - --no-runtime-service 让事实读取在本地采集，不连接或启动 Runtime Service；记录及起停 run 的操作仍需要宿主。历史记录只在离线时从同一数据库只读读取；活跃拥有者持有数据库时，直接读取返回 `runtime_service_busy`，不能假装历史为空。在线读取应去掉该参数，通过拥有者宿主查询。
-- 不接受任何不被读取的线缆字段。协议 schema 由 runtime service 的 Go 类型生成，因此在那里声明的字段是
+- 不接受任何不被读取的协议字段。协议 schema 由 runtime service 的 Go 类型生成，因此在那里声明的字段是
   每个客户端都可以依赖的承诺；一个没有任何 handler 处理的字段比缺一个更糟，因为调用会成功，
   调用方无法知道它被忽略了。因此方法参数可能携带的每个字段都由本仓库自己的代码读取，
   否则 `internal/runtimesvc/rpc` 让构建失败。撤回一个已发布字段属于协议变更；有意删除的名字记录在
   该包里，使它们不会悄悄回来。
 
-## 命令面
+<a id="命令面"></a>
+
+## 按任务查命令
 
 CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现在是什么状态」，操作是「让它跑起来或
 停下来」，代码与声明是「读代码和清单」，交接是「留下或取回工作、把会话交给外部 agent」，
@@ -81,7 +69,9 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 --first-error`）。它不新增命令，也不改变上面这张层表；`status`、`up`、`logs` 自己的
 `--help` 里写着同一套读法的理由。
 
-## 核心闭环
+<a id="核心闭环"></a>
+
+## 日常操作
 
 ### oberth status [path] [--json] [--no-mark] [--only services] [--brief]
 
@@ -975,3 +965,22 @@ Provider contracts: [OpenCode CLI](https://opencode.ai/docs/cli/),
 [Codex CLI](https://developers.openai.com/codex/cli/reference/),
 [Claude Code CLI](https://code.claude.com/docs/en/cli-reference), and
 [Pi CLI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md).
+
+
+## 显示与欢迎页细节
+
+无参数运行 `oberth` 显示首屏：品牌标记与字标、一句定位、本机版本、一次工作会话起步的三条命令
+（status / up / down）、接着可能会用到的可选能力（`attn` 与 `feedback report`，单独成组，免得读成
+必需）和到完整帮助的指引；它是指路牌不是手册，分组命令清单只在 `oberth --help`。版本行在发布版本检查
+成功时带 `(latest)` 或 `(latest version vX.Y.Z)`；检查未知时只打印本机版本，不把“没查到”写成
+“最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth runtime service stop`。还没有记录过改进报告
+的决定时，首屏也可能问一次是否发送关于 oberth 自身的脱敏报告；这个问题和报告携带什么，写在
+基础设施命令一节的 `oberth feedback` 里。标记由
+`scripts/brand_export.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
+不手写；字标是轮廓字，终端里用粗体文字表示。
+
+标记按品牌自己的分工上两色：两条轨用墨色（深色终端用纸色），胶囊用陶土色。涂成一色时
+胶囊会和两个轨帽并成三个一样的块，看起来像一张脸，所以这个分工是语义的一部分，不是配色
+偏好。truecolor 下用 `#23262B` / `#F8F6F2` 与 `#A8543E` / `#DB9378`，`COLORFGBG` 报告
+深色背景时取后一组；256 色终端取最接近的槽位（235 / 255 / 131 / 174）；8 色终端下轨保持
+终端自身前景色，胶囊退化为 yellow。`NO_COLOR` 下不着色。

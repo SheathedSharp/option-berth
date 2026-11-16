@@ -1,5 +1,7 @@
 # Architecture and support boundaries
 
+Use this page to locate ownership and package boundaries. For first use, see the [user index](../index.md); for extension/build steps, see [development](develop.md). Runtime facts mean observed process/listener/health/exit state, not model judgement.
+
 Product definition: [product.md](../product.md). User interface: [cli.md](../cli.md).
 This document explains the current production implementation; it does not treat past decisions,
 temporary debugging or research tasks as standing requirements.
@@ -10,13 +12,25 @@ temporary debugging or research tasks as standing requirements.
 
 **Oberth Runtime** is the worktree runtime engine; **Runtime Service** is its local background host (`internal/runtimesvc`). These are responsibility names, not a new product or Go runtime wrapper. Public host names follow the [protocol-3 switch](../cli.md#runtime-service-protocol-3-switch); the product name, public module, home, database schema and origin/license history are not renamed.
 
-The internal Go layout follows these responsibilities: `internal/runtimecore` owns pure readiness/generation/projection policy, and `internal/runtimesvc` owns the background host with its `client`, `rpc`, `runsreg` and `groupstart` adapters. Neither uses the name `runtime`, avoiding confusion with Go's standard library. The public Go module path is unchanged; the wire/CLI contract is owned by [cli.md](../cli.md#runtime-service-protocol-3-switch).
+The internal Go layout follows these responsibilities: `internal/runtimecore` owns pure readiness/generation/projection policy, and `internal/runtimesvc` owns the background host with its `client`, `rpc`, `runsreg` and `groupstart` adapters.
 
-`runsreg` is the live run authority. `servicefacts` reduces a captured registry/exit set; `groups.ApplyServiceFacts` adapts it and `runtimecore.Project` refreshes the same published declaration rows. `ports` is the system-observation adapter: it contributes listeners and ownership evidence, never a second service lifecycle. `groupstart`, `killer` and existing claims transactions retain execution authority. Optional attention remains an agent-side consumer, not part of the host's control loop.
+Neither uses the name `runtime`, avoiding confusion with Go's standard library.
+
+The public Go module path is unchanged; the wire/CLI contract is owned by [cli.md](../cli.md#runtime-service-protocol-3-switch).
+
+`runsreg` is the live run authority. `servicefacts` reduces a captured registry/exit set; `groups.ApplyServiceFacts` adapts it and `runtimecore.Project` refreshes the same published declaration rows. `ports` is the system-observation adapter: it contributes listeners and ownership evidence, never a second service lifecycle. `groupstart`, `killer` and existing claims transactions retain execution authority.
+
+Optional attention remains an agent-side consumer, not part of the host's control loop.
 
 ## Storage ownership and read routing
 
-`Server.acquireSingleInstance` first owns the endpoint, then its `storageLease` and `store.OpenOwned` before listen or recovery. SQLite retains one EXCLUSIVE/WAL connection across normal commits. `singleOwnerConnector` cannot reconnect after losing it. Sidecar interlocks supplement this lease; they are not evidence that an arbitrary previous endpoint was enumerated. The filesystem metadata gate runs before storage sidecars are created.
+`Server.acquireSingleInstance` first owns the endpoint, then its `storageLease` and `store.OpenOwned` before listen or recovery.
+
+SQLite retains one EXCLUSIVE/WAL connection across normal commits. `singleOwnerConnector` cannot reconnect after losing it.
+
+Sidecar interlocks supplement this lease; they are not evidence that an arbitrary previous endpoint was enumerated.
+
+The filesystem metadata gate runs before storage sidecars are created.
 
 `Serve` installs only that claimed Store. Bad/future databases fail admission without reset. Producers and hooks finish before `closeStore`, storage leases release next, and the endpoint releases last. Early listen/recovery failure follows the same release boundary.
 
@@ -24,11 +38,37 @@ The internal Go layout follows these responsibilities: `internal/runtimecore` ow
 
 ## Independent lifecycle publication
 
-`scanner.RuntimeChanged` coalesces lifecycle wakeups. Its owned worker captures registry facts without OS/process/store probes, and commits under the same publication mutex as scans. It does not acquire the attribution or OS/health ordering gate. A normal snapshot can therefore return known worker progress while a periodic or RPC-owned observation is busy. An unchanged registry does not manufacture an observation failure merely because the listener cache expired.
+`scanner.RuntimeChanged` coalesces lifecycle wakeups.
 
-A run projection never renews listener freshness. When the last batch is stale, the projection explicitly marks observation partial, removes stale listener rows and marks machine dependencies unknown; absence is not port-free. It does not generate port-down history from that loss of observation. Readiness without a listener or health requirement may use the run fact; listener/health-dependent readiness and forced control observations retain their original observation requirements. Snapshot callers requesting optional samples may receive only already-known samples during this fallback, not a promise of a newly collected batch.
+Its owned worker captures registry facts without OS/process/store probes, and commits under the same publication mutex as scans.
 
-Slow scans rebase service rows against the current registry under the commit mutex after attribution and configured health finish. A newer run ID wins; an old generation's health/stats cannot migrate to it. Captures and published snapshots are immutable. The runtime worker is cancelled and joined with the existing scanner workers, not detached on timeout. Coalesced notifications carry no persisted duplicate state. The projection starts from declarations already published by the normal manifest index; it does not discover new roots, reload manifests or replace the initial observation/control admission path.
+It does not acquire the attribution or OS/health ordering gate.
+
+A normal snapshot can therefore return known worker progress while a periodic or RPC-owned observation is busy.
+
+An unchanged registry does not manufacture an observation failure merely because the listener cache expired.
+
+A run projection never renews listener freshness.
+
+When the last batch is stale, the projection explicitly marks observation partial, removes stale listener rows and marks machine dependencies unknown; absence is not port-free.
+
+It does not generate port-down history from that loss of observation.
+
+Readiness without a listener or health requirement may use the run fact; listener/health-dependent readiness and forced control observations retain their original observation requirements.
+
+Snapshot callers requesting optional samples may receive only already-known samples during this fallback, not a promise of a newly collected batch.
+
+Slow scans rebase service rows against the current registry under the commit mutex after attribution and configured health finish.
+
+A newer run ID wins; an old generation's health/stats cannot migrate to it.
+
+Captures and published snapshots are immutable.
+
+The runtime worker is cancelled and joined with the existing scanner workers, not detached on timeout.
+
+Coalesced notifications carry no persisted duplicate state.
+
+The projection starts from declarations already published by the normal manifest index; it does not discover new roots, reload manifests or replace the initial observation/control admission path.
 
 ## One chain of facts
 
@@ -145,7 +185,13 @@ A start accepts only readiness evidence for the current service. The no-port run
 the stop receipt are fixed before the first signal and are not re-derived from the same PID in a later
 stage. Operations are refused when reliable control identity is missing.
 
-`runtimecore` owns the shared pure readiness, generation-confirmation and replacement rules used by CLI waiting and background dependency waiting. An accepted request is not a registered start, a registered start is not ready, and a healthy replacement cannot satisfy the wait for its predecessor. Unknown run identity cannot satisfy an identity-bound wait. Existing capability checks and `expect_runs` selection stay fail-closed.
+`runtimecore` owns the shared pure readiness, generation-confirmation and replacement rules used by CLI waiting and background dependency waiting.
+
+An accepted request is not a registered start, a registered start is not ready, and a healthy replacement cannot satisfy the wait for its predecessor.
+
+Unknown run identity cannot satisfy an identity-bound wait.
+
+Existing capability checks and `expect_runs` selection stay fail-closed.
 
 `runtimecore.Restart` sequences the existing stop and start adapters without widening either selector. A failed/partial stop or cancellation prevents the start half; per-item results and errors stay visible. These are two acts, not an atomic OS transaction. A failed start cannot resurrect the stopped process, and cancellation after a real spawn does not turn that spawn into a transaction rollback.
 
@@ -171,11 +217,33 @@ re-enter the scanner, the claims manager or registry writes.
 
 ## Recovery and compatibility
 
-The in-memory registry is the live authority for one Runtime Service. `runs.json` is its compatible live-run recovery mirror, not a second owner; SQLite stores exit history, reservations and worktree identities. Startup acquires the existing single-writer lock, loads durable exits, then imports the mirror transactionally before admitting normal work or pruning. A required read/commit failure blocks startup rather than replacing evidence with an empty store.
+The in-memory registry is the live authority for one Runtime Service. `runs.json` is its compatible live-run recovery mirror, not a second owner; SQLite stores exit history, reservations and worktree identities.
 
-`runsreg.Restore` does not publish pending rows until the mirror transaction succeeds. Existing memory generations win on retry. Positive process-death or PID-reuse evidence rejects an obsolete imported run before it can appear active; missing birth evidence remains unknown and does not authorize control. Survivors keep run identity, precise start time, log path/offset, executable, spec hash and port hint. Read-only health/stat enrichment for a legacy row without an ID is retained only with an equal positive PID and known nonzero birth time; it never mints a control identity. Restore does not start services, signal processes, reallocate claims or infer readiness. Numerical PID identity still has the OS race window described below.
+Startup acquires the existing single-writer lock, loads durable exits, then imports the mirror transactionally before admitting normal work or pruning.
 
-Lifecycle projection requires no database schema migration or parallel writer. History-reader and typed live-mirror tests cover persisted record shapes, not host endpoint or wire compatibility. Protocol 3 changes the public host identifiers and adds database ownership admission; its explicit cutover belongs to the [CLI contract](../cli.md#runtime-service-protocol-3-switch). Never remove a live lock, reset the ledger or restart user services as a recovery shortcut.
+A required read/commit failure blocks startup rather than replacing evidence with an empty store.
+
+`runsreg.Restore` does not publish pending rows until the mirror transaction succeeds.
+
+Existing memory generations win on retry.
+
+Positive process-death or PID-reuse evidence rejects an obsolete imported run before it can appear active; missing birth evidence remains unknown and does not authorize control.
+
+Survivors keep run identity, precise start time, log path/offset, executable, spec hash and port hint.
+
+Read-only health/stat enrichment for a legacy row without an ID is retained only with an equal positive PID and known nonzero birth time; it never mints a control identity.
+
+Restore does not start services, signal processes, reallocate claims or infer readiness.
+
+Numerical PID identity still has the OS race window described below.
+
+Lifecycle projection requires no database schema migration or parallel writer.
+
+History-reader and typed live-mirror tests cover persisted record shapes, not host endpoint or wire compatibility.
+
+Protocol 3 changes the public host identifiers and adds database ownership admission; its explicit cutover belongs to the [CLI contract](../cli.md#runtime-service-protocol-3-switch).
+
+Never remove a live lock, reset the ledger or restart user services as a recovery shortcut.
 
 ## Scope of support
 

@@ -1,138 +1,71 @@
 # Development
 
-The engineering guide for this repository: how to build, how to run, and what to run after a change.
-Contracts live in [product.md](../product.md), [cli.md](../cli.md) and [architecture.md](architecture.md);
-the hard boundaries an agent must know up front are in the root [AGENTS.md](../../AGENTS.md), and this
-page does not repeat them.
+Use this page to choose an entry point before changing code. Product behavior belongs in the [product guide](../product.md) and [CLI reference](../cli.md); implementation boundaries belong in [architecture](architecture.md). Read the root [AGENTS.md](../../AGENTS.md) before running commands.
 
-## How the repository splits
+## Prerequisites and repository layout
 
-| Area | Path | Notes |
-|------|------|-------|
-| Engine and CLI | `engine/` | The `oberth` product interface; Go version in `engine/go.mod` |
-| Development automation | `mage` targets at the repository root | Build and verification entry points; do **not** treat Mage as the product CLI |
-| Documentation | `docs/`, `docs/agent/` | Human contracts in `docs/`, engineering process in `docs/agent/`; verification and release in [validation.md](validation.md) and [releasing.md](releasing.md) |
+Use the Go version declared in `engine/go.mod`, Python 3 for repository scripts, and Git. Mage is optional task automation, not the product CLI. Website browser checks additionally require the tools in `site/package-lock.json`; they are not prerequisites for building the engine.
 
-The interface and the agent guidance are not in this repository; they are independent products:
-[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) (the macOS client) and
-[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) (the coding-agent skill).
-All three meet only at the CLI and its `--json` contract.
+| Change | Start here | Keep in agreement |
+|---|---|---|
+| CLI command or JSON result | `engine/internal/cmd/`, `engine/internal/runtimesvc/rpc/` | CLI reference, generated schema, coding-agent skill |
+| Runtime observation or operation | `engine/internal/runtimecore/` | Ownership, cancellation, run generation and partial-result contracts |
+| Background host, sessions or subscriptions | `engine/internal/runtimesvc/` | Protocol, resource cleanup and database ownership |
+| Manifest parsing | `engine/internal/groups/` | Manifest schema, examples and integrations |
+| Persistence | `engine/internal/store/` | Schema compatibility, transactions and read-only paths |
+| Optional attention adapter | `engine/internal/attn/` | Explicit consent and [adapter contract](attn-adapter.md) |
+| User documentation | `docs/` | Both languages and [documentation rules](../AGENTS.md) |
+| Source archives and attribution | `third_party/` | [Source inventory](../../third_party/README.md) and notices |
 
-For work that spans the products, keep the three clones in one directory as siblings (`option-berth`,
-`option-berth-macos`, `option-berth-skill`): the brand export reads the client's `BerthGeometry.swift`,
-the skill contract check reads the sibling skill checkout, and the client points at any engine through
-`BERTH_BIN`.
+The [macOS client](https://github.com/SheathedSharp/option-berth-macos) and [coding-agent skill](https://github.com/SheathedSharp/option-berth-skill) have separate repositories. The skill contract check expects a sibling `option-berth-skill` checkout. The brand exporter reads the sibling client's geometry source; do not copy either product into this tree to satisfy a check.
 
-Implementation boundaries and inviolable constraints are in the root [AGENTS.md](../../AGENTS.md);
-this page covers only how to move these files.
+## Build without installing
 
-## Build and run
-
-From the repository root:
-
-```sh
-mage build          # engine (CLI + runtime service + optional modules)
-mage buildEngine    # engine only → ./bin/oberth
-mage runCLI "status --json"
-mage runRuntimeService      # start a runtime service with the CLI just built (isolated use)
-mage stop
-mage schema         # regenerate the protocol and manifest JSON Schema
-```
-
-`mage install` writes to the install directory and modifies PATH (skip with `NO_MODIFY_PATH=1`);
-**do not** install to or release into the user's everyday environment without explicit authorization.
-
-The client and the skill build and verify in their own repositories; see their READMEs and AGENTS.md.
-
-## Verification (run what you changed)
-
-Rules and boundaries are in [validation.md](validation.md). Common entry points (under `engine/`):
+From `engine/`, these commands compile or inspect code without starting the product:
 
 ```sh
 go build ./...
 go vet ./...
-go test -count=1 -timeout=8m ./...
+go build -o ../bin/oberth ./cmd/oberth
 ```
 
-PRs run these three on macOS/Linux automatically, along with the Mage and Python helper tests, plus
-a native build and script parsing on Windows; the Linux job also cross-builds six release targets
-with `CGO_ENABLED=0`. The full gates — core race tests, real service scenarios — still
-run per [validation.md](validation.md) on the daily, manual or release paths. CI-configuration changes
-also run actionlint and the required-checks consistency check; the list is in
-`.github/quality-gate-checks.json`.
+`mage buildEngine` is the root-level build wrapper. `mage schema` regenerates the protocol and manifest JSON Schema; review the source and generated diff together. Building is not proof that scanning, starting services or upgrading a running installation works.
 
-If `proxy.golang.org` times out fetching modules, prefix the same shell with
-`GOPROXY=https://goproxy.cn` (or a mirror reachable from your environment) and rerun the commands.
-Set only `GOPROXY`: Go still verifies checksums through the proxy's `/sumdb/` endpoint, so `GOSUMDB=off`
-is unnecessary. Do not append `,direct` either — when the proxy misses, Go falls back to a direct GitHub
-connection and stalls for a long time. A timeout means the network, not that the code fails to compile.
+`mage install` changes the installation and can change PATH. Runtime-service commands and project `up`/`down` control processes. None belongs in a routine documentation or source-inspection check. For an explicitly authorized isolated run, use the [runtime-service guide](../runtime-service.md) and the safety boundaries in the root instructions.
 
-Scripts, release and brand generation:
+Dependency versions remain in `engine/go.mod` and `engine/go.sum`. The [third-party source archives](../third-party.md) do not override module resolution. Resolve network or proxy problems deliberately; do not turn off checksum verification to make a build pass.
+
+## Choose checks by side effect
+
+Read [validation.md](validation.md) first. A test name, a `-run` filter or a temporary `BERTH_HOME` does not make a package's `TestMain` safe. Review package setup and imported helpers before execution; use `go test -c` where only compilation is authorized.
+
+For documentation and source data, the offline/static entry points are:
 
 ```sh
-python3 -m unittest discover -s scripts -p '*_test.py'
-python3 scripts/brand_export.py --check
+python3 scripts/check_docs.py
 python3 scripts/check_skill_contract.py --skill-dir ../option-berth-skill
-python3 scripts/agent_eval.py --list          # core/large/cold groups and the comparison modes
-python3 scripts/agent_eval.py --dry-run --suite large  # build the complex samples; needs Linux + Docker
-python3 scripts/agent_eval.py --dry-run --suite cold   # cold-start samples: no manifest, no agent
 ```
 
-`check_skill_contract.py` needs a sibling skill checkout; CI checks out `option-berth-skill` in the
-Linux job before running it. Its anchors come from this repository's CLI contract (error codes, the
-reference table and the agent-facing JSON field table), the manifest schema and the observation
-constants. Do not edit skill content in the engine repository.
+Python unit-test modules also have different behavior. Read their setup before selecting them; do not replace this decision with an unreviewed discovery command. Schema generation and pure parser tests can validate examples without starting the example services.
 
-The real agent matrix needs an ordinary terminal (outside a coding-agent sandbox) or CI with
-credentials. The manual CI entry point here is `.github/workflows/agent-eval.yml`, which hangs off an
-`agent-eval` environment that requires reviewer approval; metrics, models and the gateway protocol
-preflight are in [agent-eval.md](agent-eval.md).
+Full Go tests, race suites, real-service scenarios, Docker and model evaluations belong in their authorized isolated environment. Existing [workflows](../../.github/workflows) and [release gates](releasing.md) remain authoritative; this guide does not reduce their requirements. A local static check is not a substitute for those gates.
 
-Isolation and authorization boundaries are in [AGENTS.md](../../AGENTS.md) "Validation"; interface
-compatibility and implementation constraints such as "cancellation and unknown are not success" are in
-the same file's "Interface" and "One chain of facts" sections.
+## Add or change a feature
 
-### Listener observation on macOS 27 has to be re-verified locally
+Start from the owning contract, then follow the production call chain. Keep observed facts, service identity and group configuration distinct; the architecture guide describes their owners. Do not implement a parallel cache or result format just for a new adapter.
 
-GitHub-hosted runners top out at macOS 26 (`macos-26` / `macos-latest` is macOS 26 arm64) and this
-repository's workflows still pin `macos-15`. The macOS 27 behavior — a `netstat` started by a parent
-Apple has not signed gets no TCP table — therefore has **no CI coverage** and can only be re-verified
-on a local macOS 27 machine. Do not present a local record as CI evidence. Steps (isolated
-`HOME`/`BERTH_HOME`, a throwaway project, cleaned up afterwards):
+For a CLI change, test the helper or adapter actually called by production. Update JSON fields, error/exit behavior, generated schemas and the skill contract together. For a runtime-service change, include cancellation, reconnect, resource release and database ownership cases; a fake provider benchmark does not establish product speed.
 
-```sh
-export HOME=$(mktemp -d) BERTH_HOME=$(mktemp -d)
-cd engine && go build -o /tmp/oberth-mac27 ./cmd/oberth
-/tmp/oberth-mac27 doctor --only listener_observation     # expect observable, detail naming lsof
-/tmp/oberth-mac27 runtime service run --detach && /tmp/oberth-mac27 runtime service status
-cd ../examples/hello-worktree
-/tmp/oberth-mac27 up --wait --json && /tmp/oberth-mac27 status --json && /tmp/oberth-mac27 down --json
-cd ../../engine && go test -tags integration ./internal/scenario/... -count=1
-/tmp/oberth-mac27 runtime service stop    # do not leave a runtime service behind
-```
+For documentation changes, keep the short task guides separate from exhaustive reference. Preserve negative statements and authorization boundaries in both languages. Move old experiment logs to the marked [history directory](history/), not into current acceptance claims.
 
-Record the result in [validation.md](validation.md) "Listener observation", with the commit, the
-inputs and the actual output. Add a CI job once GitHub offers a macOS 27 image.
+## Platform-specific acceptance
 
-## Commits and collaboration
+Listener observation depends on operating-system permissions. A sandbox refusal to inspect processes or ports is evidence of a restricted test environment, not proof of a product regression. Do not relax the sandbox or control unrelated processes to complete a test.
 
-Additional requirements for this repository: subjects use product language, never this repository's
-internal milestone codes (`M0`–`M3`, phase names) and never vague words like "closed loop" or "filled
-in". `scope` matches the tree you touched (`engine`, `docs`, `ci`, `brand`, …).
+For macOS behavior not covered by the configured hosted runner, record the actual OS, revision, observation backend and isolated inputs in a separate acceptance report. Follow the real-service procedure only with explicit authorization. Do not label local results as CI results, and do not treat an older archived report as acceptance of today's revision.
 
-- Before pushing, run `git log` / `git status` and re-read the target HEAD; watch for concurrent commits.
-- Merging goes through a remote PR: push the branch to `origin`, open a PR, wait for
-  `Engine verification` to pass, and merge with a merge commit once the user confirms; never merge into
-  `main` locally. Releases follow the same version-PR plus annotated-tag path, verified by
-  `Verified release` before publishing — see [releasing.md](releasing.md).
-- The release and tagging flow is in [releasing.md](releasing.md); the version and tag rules are
-  maintained only there.
+## Commits and release
 
-## Related topics
+Use product-language commit subjects and an appropriate scope, not internal milestone codes or vague completion slogans. Before a commit, reread HEAD and status so another session's changes are not included accidentally.
 
-- CLI and RPC contract: [cli.md](../cli.md); product boundaries: [product.md](../product.md);
-  implementation and the chain of facts: [architecture.md](architecture.md)
-- Optional attention adapter: [attn-adapter.md](attn-adapter.md)
-- Integrating orchestrators and dev servers: [integrations.md](../integrations.md)
-- Client: [option-berth-macos](https://github.com/SheathedSharp/option-berth-macos)
-- Coding-agent skill: [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)
+Local development does not imply permission to install, push, merge or release. When authorized, use the normal PR checks and protected version/tag process in [releasing.md](releasing.md); never merge into the user's main worktree as a shortcut.

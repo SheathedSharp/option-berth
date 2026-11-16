@@ -7,7 +7,8 @@ from the path alone, whether a page is written for a person or for a coding agen
 
 | Reader | Path | Language | Carries |
 |---|---|---|---|
-| A person using or integrating `oberth` | `docs/*.md` | English and Simplified Chinese, paired | The product's external contracts: CLI, manifest, installation, integration recipes, work records |
+| A person using or integrating `oberth` | `docs/*.md` | English and Simplified Chinese, paired | Task guides and external contracts: getting started, worktrees, CLI, installation, attention, integrations, work records |
+| Engineering history (not current acceptance) | `docs/agent/history/` | Preserved original language | Dated traces, previous plans and validation logs, each marked as historical |
 | A coding agent working on this repository | `docs/agent/*.md` | English only | Engineering process: architecture boundaries, build, validation, release, the scenario library |
 
 The split is by reader, not by subject. `docs/agent/` is not a mirror of `docs/` and never becomes one.
@@ -18,6 +19,10 @@ A contract lives in exactly one place. Everything else links to it.
 
 | Fact | Home | Never in |
 |---|---|---|
+| Task entry points and shortest first success | `docs/index.md`, `docs/quickstart.md` | Exhaustive reference tables |
+| Runtime-service user operations and lifecycle | `docs/runtime-service.md` | Architecture internals |
+| Attention consent and user controls | `docs/attention.md` | Engineering adapter detail |
+| Third-party source scope / fixed-version records | `docs/third-party.md` / human-maintained `third_party/README.md` | Root README beyond a pointer |
 | Product definition, what the product refuses to do | `docs/product.md` | `docs/agent/` |
 | CLI surface, error codes, JSON fields, manifest references | `docs/cli.md` | `docs/agent/`, the skill repository |
 | Work records and handoff | `docs/workplace.md` | `docs/cli.md` beyond a pointer |
@@ -25,7 +30,7 @@ A contract lives in exactly one place. Everything else links to it.
 | Orchestrator and dev-server recipes | `docs/integrations.md` | `docs/agent/` |
 | Implementation boundaries and the chain of facts | `docs/agent/architecture.md` | `docs/product.md` |
 | Build commands and what to run after a change | `docs/agent/develop.md` | `README.md` |
-| What each check proves and its platform scope | `docs/agent/validation.md` | `docs/agent/develop.md` |
+| Check-selection guide / exact per-check promises and platform scope | `docs/agent/validation.md` / `docs/agent/validation-reference.md` (guide links to matrix, not a second copy) | `docs/agent/develop.md` |
 | Scenario library, arms, metrics and the comparison report | `docs/agent/agent-eval.md` | `docs/cli.md` |
 | What agents still ask the shell, and why | `docs/agent/trace-analysis.md` | `docs/agent/agent-eval.md` |
 | Version, tag and release rules | `docs/agent/releasing.md` | `AGENTS.md` |
@@ -58,7 +63,7 @@ form.
 `docs/agent/` pages are read by agents, so they state current mechanics and boundaries — not rationale
 transcripts, not marketing, not a teaching sequence. A reader arrives looking up one fact.
 
-- State the current state. History belongs in commits and pull requests.
+- State current mechanics. Preserved reports belong under `docs/agent/history/`, explicitly marked as historical; never cite them as current acceptance.
 - One physical line per paragraph; code blocks, tables and list structure keep their own formatting.
 - Name the exact type, function, check or command instead of a metaphor.
 - Describe a boundary by what it prevents, not by how the code reaches it.
@@ -81,6 +86,7 @@ transcripts, not marketing, not a teaching sequence. A reader arrives looking up
 `python3 scripts/check_docs.py` verifies pair completeness, matching structure, byte-identical code
 blocks, the language switcher and that every relative link target exists. It runs as part of
 `python3 -m unittest discover -s scripts -p '*_test.py'`.
+
 
 The check proves the pair was consistent at these exact contents; it cannot judge whether the two sides
 say the same thing, or whether the wording is accurate. That is the reviewer's half of the contract.

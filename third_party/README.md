@@ -1,0 +1,116 @@
+# Third-party notices and source / 第三方归属与源码
+
+本项目贡献适用 MIT；第三方材料保留各自版权和许可，不因收进仓库而改为 MIT。下面集中说明本仓实际使用、分发的第三方材料；原始 LICENSE、NOTICE、版权文件及文件头保留在各源码包内，方便阅读的副本在源码清单对应的许可目录中。没有单独的根目录声明文件。
+
+## 站点资产：GSAP
+
+`site/assets/gsap.min.js` 是 GSAP 3.15.1 的原样副本，由 `site/build.py` 随站点发布，版权归 GreenSock；已经与固定上游源码中的 `dist/gsap.min.js` 核对。它适用 GreenSock Standard “No Charge” License（https://gsap.com/standard-license），不是本项目的 MIT，也不应标为 OSI 开源许可。原文件头保留，不手工修改或去掉声明。站点不加载外部脚本。
+
+官方许可网页原始快照和便于阅读的正文记录于源码资料；抓取时间为 2026-11-15 Asia/Shanghai，只代表当时的正式网页，不冒充带版本号的历史法律文本。分发或修改该资产仍应遵守原条款。
+
+## Go 依赖、标准库与 SQLite
+
+引擎依赖版本由 `engine/go.mod`、`engine/go.sum` 固定。Go 标准库及第三方模块各自保留原许可；SQLite 既有其原始公共领域说明，也有生成实现和嵌入材料的独立许可，不能一概重新标为 MIT。
+
+原生二进制发布保留实际目标运行依赖的完整许可与 NOTICE，以及构建清单；现有 `go-runtime-licenses.txt` 是保留许可输入，不是所有开发依赖和所有平台的完整物料清单。发布包内 `licenses/retained-runtime-notices.txt` 保留该输入，`licenses/target-runtime-notices.txt` 按实际目标收集原文，`build-manifest.json` 记录编译器与运行模块。发布源码、二进制或安装包时，须核对实际分发范围并携带适用原文；归档源码不替代这项责任。
+
+## 开发工具与独立客户端
+
+站点的 `@playwright/test`、`playwright`、`playwright-core` 来自同一固定版本 Playwright，原 LICENSE/NOTICE 随源码保留。Mage、nfpm、actionlint 的完整工具源码和 JSONSchema 测试套件单独保存；工具的独立开发依赖、托管 Actions、操作系统 SDK、外部浏览器、agent 与模型服务不是本项目引擎依赖，不冒称整个执行环境都已归档。
+
+macOS 客户端、Monaspace 字体（SIL Open Font License 1.1）及 SwiftTerm（MIT）由独立仓库 https://github.com/SheathedSharp/option-berth-macos 分发并维护许可。本仓源码和原生引擎发布包不包含这些客户端资产，不能替另一个仓库重新许可。
+
+第三方名称只说明来源、兼容或依赖，不表示认可或背书；代码许可不授予商标权。新增或升级材料时，直接维护下方来源、版本和本地修改记录，保留适用版权、LICENSE 和 NOTICE；不另设源码管理框架或开发门禁。
+
+## 源码资料
+
+这里保存固定版本的完整上游源码，供直接查看、解压和继续开发。所有归档均为上游原样，未作本地修改（no local modifications）。不启用 vendor，不改变 Go 的依赖解析，也没有专用下载、同步或校验流程。
+
+## 范围
+
+- 引擎按当前 Go 模块图保留 59 个选中模块的完整上游源码，其中 22 个出现在六目标生产导入并集中；另附可取得的 24 份模块发行 ZIP。模块 ZIP 是完整模块快照，不等于整个上游仓库。
+- 另有站点 GSAP、Playwright，modernc 对应的原始 SQLite，以及仓库声明的 Go 和固定构建工具源码。共 67 条顶层来源记录、90 个去重源码包。
+- Go 源码对应 go.mod 声明的 go1.25.0，不代表每个发布产物的编译器版本。Mage/nfpm/actionlint 是工具完整源码，不宣称封闭复制其独立开发依赖或整个 CI 环境。
+- 上游自带 vendor、测试资产及各自声明保留在原源码包中；下表的根许可不覆盖子树的独立许可。客户端字体/SwiftTerm 属于独立 macOS 仓库，不在本仓产品中分发。
+
+## 使用与维护
+
+从下表选版本，在本工作树外的新目录查看、解压；不要为了看源码运行其安装钩子或脚本。使用能过滤不安全路径/链接的解压工具：nfpm 原始测试夹具 `files/testdata/tree/symlinks/link1` 指向 `/etc/foo`，这里仅原样保存为数据，不应盲目展开。
+
+jsonschema 的 `testdata/JSON-Schema-Test-Suite` 是上游子模块；对应源码已单列，固定在 `83e866b46c9f9e7082fd51e83a61c5f2145a1ab7`，不是移动的 main。SQLite 同时保留 modernc 的实际 Go 实现与原始 SQLite 3.51.2 源码。
+
+以后有意升级组件时，按官方固定版本换入源码，保留 LICENSE/NOTICE/版权头，并直接更新本页的版本、来源和本地修改说明即可。没有额外清单一致性锁、自动更新器或开发前置门禁。已有二进制发布许可流程仍照常保留。
+
+## 固定版本与来源
+
+| 组件 Component | 版本 Version | 官方来源 Source | 源码 Archive | 原许可 License |
+|---|---|---|---|---|
+| `github.com/Microsoft/go-winio` | `v0.6.2` | [固定来源](https://github.com/Microsoft/go-winio/tree/3c9576c9346a1892dee136329e7e15309e82fb4f) | [完整上游](sources/upstream/Microsoft--go-winio--3c9576c9346a1892dee136329e7e15309e82fb4f.tar.gz) · [模块 ZIP](sources/modules/github.com--Microsoft--go-winio@v0.6.2.zip) | [原文](licenses/components/github.com--Microsoft--go-winio@v0.6.2) |
+| `github.com/bahlo/generic-list-go` | `v0.2.0` | [固定来源](https://github.com/bahlo/generic-list-go/tree/89fb9b4cdfd4b5295651f72e9f892f1595b4d6c9) | [完整上游](sources/upstream/bahlo--generic-list-go--89fb9b4cdfd4b5295651f72e9f892f1595b4d6c9.tar.gz) · [模块 ZIP](sources/modules/github.com--bahlo--generic-list-go@v0.2.0.zip) | [原文](licenses/components/github.com--bahlo--generic-list-go@v0.2.0) |
+| `github.com/buger/jsonparser` | `v1.1.2` | [固定来源](https://github.com/buger/jsonparser/tree/a69e7e01cd4ad67bdfd3ac2c080b9212af16f4b0) | [完整上游](sources/upstream/buger--jsonparser--a69e7e01cd4ad67bdfd3ac2c080b9212af16f4b0.tar.gz) · [模块 ZIP](sources/modules/github.com--buger--jsonparser@v1.1.2.zip) | [原文](licenses/components/github.com--buger--jsonparser@v1.1.2) |
+| `github.com/cpuguy83/go-md2man/v2` | `v2.0.6` | [固定来源](https://github.com/cpuguy83/go-md2man/tree/441631534462b74c098953dbd8d5f6210994b0bf) | [完整上游](sources/upstream/cpuguy83--go-md2man--441631534462b74c098953dbd8d5f6210994b0bf.tar.gz) | [原文](licenses/components/github.com--cpuguy83--go-md2man--v2@v2.0.6) |
+| `github.com/creack/pty` | `v1.1.9` | [固定来源](https://github.com/creack/pty/tree/3a6a957789163cacdfe0e291617a1c8e80612c11) | [完整上游](sources/upstream/creack--pty--3a6a957789163cacdfe0e291617a1c8e80612c11.tar.gz) | [原文](licenses/components/github.com--creack--pty@v1.1.9) |
+| `github.com/davecgh/go-spew` | `v1.1.1` | [固定来源](https://github.com/davecgh/go-spew/tree/8991bc29aa16c548c550c7ff78260e27b9ab7c73) | [完整上游](sources/upstream/davecgh--go-spew--8991bc29aa16c548c550c7ff78260e27b9ab7c73.tar.gz) | [原文](licenses/components/github.com--davecgh--go-spew@v1.1.1) |
+| `github.com/dlclark/regexp2` | `v1.11.0` | [固定来源](https://github.com/dlclark/regexp2/tree/05e6ac2ab64bbfb3b0ece82156906edbe794b140) | [完整上游](sources/upstream/dlclark--regexp2--05e6ac2ab64bbfb3b0ece82156906edbe794b140.tar.gz) | [原文](licenses/components/github.com--dlclark--regexp2@v1.11.0) |
+| `github.com/dustin/go-humanize` | `v1.0.1` | [固定来源](https://github.com/dustin/go-humanize/tree/9ec74ab2f7a7161664182fd4e5e292fccffbc75f) | [完整上游](sources/upstream/dustin--go-humanize--9ec74ab2f7a7161664182fd4e5e292fccffbc75f.tar.gz) · [模块 ZIP](sources/modules/github.com--dustin--go-humanize@v1.0.1.zip) | [原文](licenses/components/github.com--dustin--go-humanize@v1.0.1) |
+| `github.com/google/go-cmp` | `v0.6.0` | [固定来源](https://github.com/google/go-cmp/tree/c3ad8435e7bef96af35732bc0789e5a2278c6d5f) | [完整上游](sources/upstream/google--go-cmp--c3ad8435e7bef96af35732bc0789e5a2278c6d5f.tar.gz) | [原文](licenses/components/github.com--google--go-cmp@v0.6.0) |
+| `github.com/google/pprof` | `v0.0.0-20250317173921-a4b03ec1a45e` | [固定来源](https://github.com/google/pprof/tree/a4b03ec1a45e1b7f16c441907485dd0efb33cccb) | [完整上游](sources/upstream/google--pprof--a4b03ec1a45e1b7f16c441907485dd0efb33cccb.tar.gz) | [原文](licenses/components/github.com--google--pprof@v0.0.0-20250317173921-a4b03ec1a45e) |
+| `github.com/google/uuid` | `v1.6.0` | [固定来源](https://github.com/google/uuid/tree/0f11ee6918f41a04c201eceeadf612a377bc7fbc) | [完整上游](sources/upstream/google--uuid--0f11ee6918f41a04c201eceeadf612a377bc7fbc.tar.gz) · [模块 ZIP](sources/modules/github.com--google--uuid@v1.6.0.zip) | [原文](licenses/components/github.com--google--uuid@v1.6.0) |
+| `github.com/hashicorp/golang-lru/v2` | `v2.0.7` | [固定来源](https://github.com/hashicorp/golang-lru/tree/d8515860cebc7b25ff2d29fada3f10a43611c28b) | [完整上游](sources/upstream/hashicorp--golang-lru--d8515860cebc7b25ff2d29fada3f10a43611c28b.tar.gz) | [原文](licenses/components/github.com--hashicorp--golang-lru--v2@v2.0.7) |
+| `github.com/inconshreveable/mousetrap` | `v1.1.0` | [固定来源](https://github.com/inconshreveable/mousetrap/tree/4e8053ee7ef85a6bd26368364a6d27f1641c1d21) | [完整上游](sources/upstream/inconshreveable--mousetrap--4e8053ee7ef85a6bd26368364a6d27f1641c1d21.tar.gz) · [模块 ZIP](sources/modules/github.com--inconshreveable--mousetrap@v1.1.0.zip) | [原文](licenses/components/github.com--inconshreveable--mousetrap@v1.1.0) |
+| `github.com/invopop/jsonschema` | `v0.14.0` | [固定来源](https://github.com/invopop/jsonschema/tree/2c57d6074bf9004aaaf1fc9c07ff0ea730b23de7) | [完整上游](sources/upstream/invopop--jsonschema--2c57d6074bf9004aaaf1fc9c07ff0ea730b23de7.tar.gz) · [模块 ZIP](sources/modules/github.com--invopop--jsonschema@v0.14.0.zip) | [原文](licenses/components/github.com--invopop--jsonschema@v0.14.0) |
+| `github.com/kr/pretty` | `v0.3.0` | [固定来源](https://github.com/kr/pretty/tree/a883a8422cd235c67c6c4fdcb7bbb022143e10b1) | [完整上游](sources/upstream/kr--pretty--a883a8422cd235c67c6c4fdcb7bbb022143e10b1.tar.gz) | [原文](licenses/components/github.com--kr--pretty@v0.3.0) |
+| `github.com/kr/pty` | `v1.1.1` | [固定来源](https://github.com/kr/pty/tree/282ce0e5322c82529687d609ee670fac7c7d917c) | [完整上游](sources/upstream/kr--pty--282ce0e5322c82529687d609ee670fac7c7d917c.tar.gz) | [原文](licenses/components/github.com--kr--pty@v1.1.1) |
+| `github.com/kr/text` | `v0.2.0` | [固定来源](https://github.com/kr/text/tree/702c74938df48b97370179f33ce2107bd7ff3b3e) | [完整上游](sources/upstream/kr--text--702c74938df48b97370179f33ce2107bd7ff3b3e.tar.gz) | [原文](licenses/components/github.com--kr--text@v0.2.0) |
+| `github.com/mattn/go-isatty` | `v0.0.20` | [固定来源](https://github.com/mattn/go-isatty/tree/a7c02353c47bc4ec6b30dc9628154ae4fe760c11) | [完整上游](sources/upstream/mattn--go-isatty--a7c02353c47bc4ec6b30dc9628154ae4fe760c11.tar.gz) · [模块 ZIP](sources/modules/github.com--mattn--go-isatty@v0.0.20.zip) | [原文](licenses/components/github.com--mattn--go-isatty@v0.0.20) |
+| `github.com/ncruces/go-strftime` | `v1.0.0` | [固定来源](https://github.com/ncruces/go-strftime/tree/7be8eef566cc7f1ae99e76af8f8208913758a28d) | [完整上游](sources/upstream/ncruces--go-strftime--7be8eef566cc7f1ae99e76af8f8208913758a28d.tar.gz) · [模块 ZIP](sources/modules/github.com--ncruces--go-strftime@v1.0.0.zip) | [原文](licenses/components/github.com--ncruces--go-strftime@v1.0.0) |
+| `github.com/pb33f/ordered-map/v2` | `v2.3.1` | [固定来源](https://github.com/pb33f/ordered-map/tree/a94c5774d0a85efe4cea88ea45e67d0619919044) | [完整上游](sources/upstream/pb33f--ordered-map--a94c5774d0a85efe4cea88ea45e67d0619919044.tar.gz) · [模块 ZIP](sources/modules/github.com--pb33f--ordered-map--v2@v2.3.1.zip) | [原文](licenses/components/github.com--pb33f--ordered-map--v2@v2.3.1) |
+| `github.com/pmezard/go-difflib` | `v1.0.0` | [固定来源](https://github.com/pmezard/go-difflib/tree/792786c7400a136282c1664665ae0a8db921c6c2) | [完整上游](sources/upstream/pmezard--go-difflib--792786c7400a136282c1664665ae0a8db921c6c2.tar.gz) | [原文](licenses/components/github.com--pmezard--go-difflib@v1.0.0) |
+| `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | [固定来源](https://github.com/remyoudompheng/bigfft/tree/24d4a6f8daece64d3c9a7660d4ee0974c4e31021) | [完整上游](sources/upstream/remyoudompheng--bigfft--24d4a6f8daece64d3c9a7660d4ee0974c4e31021.tar.gz) · [模块 ZIP](sources/modules/github.com--remyoudompheng--bigfft@v0.0.0-20230129092748-24d4a6f8daec.zip) | [原文](licenses/components/github.com--remyoudompheng--bigfft@v0.0.0-20230129092748-24d4a6f8daec) |
+| `github.com/rogpeppe/go-internal` | `v1.6.1` | [固定来源](https://github.com/rogpeppe/go-internal/tree/76dc4b3fc37c97df8520f01985a79bbac5d1585d) | [完整上游](sources/upstream/rogpeppe--go-internal--76dc4b3fc37c97df8520f01985a79bbac5d1585d.tar.gz) | [原文](licenses/components/github.com--rogpeppe--go-internal@v1.6.1) |
+| `github.com/russross/blackfriday/v2` | `v2.1.0` | [固定来源](https://github.com/russross/blackfriday/tree/4c9bf9512682b995722660a4196c0013228e2049) | [完整上游](sources/upstream/russross--blackfriday--4c9bf9512682b995722660a4196c0013228e2049.tar.gz) | [原文](licenses/components/github.com--russross--blackfriday--v2@v2.1.0) |
+| `github.com/santhosh-tekuri/jsonschema/v6` | `v6.0.3` | [固定来源](https://github.com/santhosh-tekuri/jsonschema/tree/b0fc661f4939578bc429f408c18202573dbafcc4) | [完整上游](sources/upstream/santhosh-tekuri--jsonschema--b0fc661f4939578bc429f408c18202573dbafcc4.tar.gz) · [模块 ZIP](sources/modules/github.com--santhosh-tekuri--jsonschema--v6@v6.0.3.zip) | [原文](licenses/components/github.com--santhosh-tekuri--jsonschema--v6@v6.0.3) |
+| `github.com/sirupsen/logrus` | `v1.9.3` | [固定来源](https://github.com/sirupsen/logrus/tree/d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd) | [完整上游](sources/upstream/sirupsen--logrus--d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd.tar.gz) | [原文](licenses/components/github.com--sirupsen--logrus@v1.9.3) |
+| `github.com/spf13/cobra` | `v1.10.2` | [固定来源](https://github.com/spf13/cobra/tree/88b30ab89da2d0d0abb153818746c5a2d30eccec) | [完整上游](sources/upstream/spf13--cobra--88b30ab89da2d0d0abb153818746c5a2d30eccec.tar.gz) · [模块 ZIP](sources/modules/github.com--spf13--cobra@v1.10.2.zip) | [原文](licenses/components/github.com--spf13--cobra@v1.10.2) |
+| `github.com/spf13/pflag` | `v1.0.9` | [固定来源](https://github.com/spf13/pflag/tree/10438578954bba2527fe5cae3684d4532b064bbe) | [完整上游](sources/upstream/spf13--pflag--10438578954bba2527fe5cae3684d4532b064bbe.tar.gz) · [模块 ZIP](sources/modules/github.com--spf13--pflag@v1.0.9.zip) | [原文](licenses/components/github.com--spf13--pflag@v1.0.9) |
+| `github.com/stretchr/testify` | `v1.11.1` | [固定来源](https://github.com/stretchr/testify/tree/2a57335dc9cd6833daa820bc94d9b40c26a7917d) | [完整上游](sources/upstream/stretchr--testify--2a57335dc9cd6833daa820bc94d9b40c26a7917d.tar.gz) | [原文](licenses/components/github.com--stretchr--testify@v1.11.1) |
+| `github.com/yuin/goldmark` | `v1.4.13` | [固定来源](https://github.com/yuin/goldmark/tree/c0856327b39b00b39b5d7e1f5ed0eed8bb1b6a23) | [完整上游](sources/upstream/yuin--goldmark--c0856327b39b00b39b5d7e1f5ed0eed8bb1b6a23.tar.gz) | [原文](licenses/components/github.com--yuin--goldmark@v1.4.13) |
+| `go.yaml.in/yaml/v3` | `v3.0.4` | [固定来源](https://github.com/yaml/go-yaml/tree/c3552c15f996075a7634df5159d9161c67bf3d76) | [完整上游](sources/upstream/yaml--go-yaml--c3552c15f996075a7634df5159d9161c67bf3d76.tar.gz) | [原文](licenses/components/go.yaml.in--yaml--v3@v3.0.4) |
+| `go.yaml.in/yaml/v4` | `v4.0.0-rc.2` | [固定来源](https://github.com/yaml/go-yaml/tree/79a895ba05137f58781f9f6ff38a0f04c02816bc) | [完整上游](sources/upstream/yaml--go-yaml--79a895ba05137f58781f9f6ff38a0f04c02816bc.tar.gz) · [模块 ZIP](sources/modules/go.yaml.in--yaml--v4@v4.0.0-rc.2.zip) | [原文](licenses/components/go.yaml.in--yaml--v4@v4.0.0-rc.2) |
+| `golang.org/x/exp` | `v0.0.0-20251023183803-a4bb9ffd2546` | [固定来源](https://github.com/golang/exp/tree/a4bb9ffd2546b4ac9773d60f1e9a6ff4ba82ad23) | [完整上游](sources/upstream/golang--exp--a4bb9ffd2546b4ac9773d60f1e9a6ff4ba82ad23.tar.gz) · [模块 ZIP](sources/modules/golang.org--x--exp@v0.0.0-20251023183803-a4bb9ffd2546.zip) | [原文](licenses/components/golang.org--x--exp@v0.0.0-20251023183803-a4bb9ffd2546) |
+| `golang.org/x/mod` | `v0.33.0` | [固定来源](https://github.com/golang/mod/tree/27761a2ad800eabb86324226bb5e39adb07759da) | [完整上游](sources/upstream/golang--mod--27761a2ad800eabb86324226bb5e39adb07759da.tar.gz) | [原文](licenses/components/golang.org--x--mod@v0.33.0) |
+| `golang.org/x/net` | `v0.50.0` | [固定来源](https://github.com/golang/net/tree/ebddb99633e0fc35d135f62e9400678492c1d3be) | [完整上游](sources/upstream/golang--net--ebddb99633e0fc35d135f62e9400678492c1d3be.tar.gz) | [原文](licenses/components/golang.org--x--net@v0.50.0) |
+| `golang.org/x/sync` | `v0.20.0` | [固定来源](https://github.com/golang/sync/tree/ec11c4a93de22cde2abe2bf74d70791033c2464c) | [完整上游](sources/upstream/golang--sync--ec11c4a93de22cde2abe2bf74d70791033c2464c.tar.gz) · [模块 ZIP](sources/modules/golang.org--x--sync@v0.20.0.zip) | [原文](licenses/components/golang.org--x--sync@v0.20.0) |
+| `golang.org/x/sys` | `v0.41.0` | [固定来源](https://github.com/golang/sys/tree/fc646e489fd944b6f77d327ab77f1a4bab81d5ad) | [完整上游](sources/upstream/golang--sys--fc646e489fd944b6f77d327ab77f1a4bab81d5ad.tar.gz) · [模块 ZIP](sources/modules/golang.org--x--sys@v0.41.0.zip) | [原文](licenses/components/golang.org--x--sys@v0.41.0) |
+| `golang.org/x/telemetry` | `v0.0.0-20260209163413-e7419c687ee4` | [固定来源](https://github.com/golang/telemetry/tree/e7419c687ee41e0f7037de5124a0d02c1a09341d) | [完整上游](sources/upstream/golang--telemetry--e7419c687ee41e0f7037de5124a0d02c1a09341d.tar.gz) | [原文](licenses/components/golang.org--x--telemetry@v0.0.0-20260209163413-e7419c687ee4) |
+| `golang.org/x/text` | `v0.29.0` | [固定来源](https://github.com/golang/text/tree/e69f31bf9cf2f46bd3325bc9bad37fe9001731c2) | [完整上游](sources/upstream/golang--text--e69f31bf9cf2f46bd3325bc9bad37fe9001731c2.tar.gz) · [模块 ZIP](sources/modules/golang.org--x--text@v0.29.0.zip) | [原文](licenses/components/golang.org--x--text@v0.29.0) |
+| `golang.org/x/tools` | `v0.42.0` | [固定来源](https://github.com/golang/tools/tree/009367f5c17a8d4c45a961a3a509277190a9a6f0) | [完整上游](sources/upstream/golang--tools--009367f5c17a8d4c45a961a3a509277190a9a6f0.tar.gz) | [原文](licenses/components/golang.org--x--tools@v0.42.0) |
+| `golang.org/x/tools/go/expect` | `v0.1.1-deprecated` | [固定来源](https://github.com/golang/tools/tree/9b68bc9966ee62cbe4704dea268ca17f0d2cd8a7) | [完整上游](sources/upstream/golang--tools--9b68bc9966ee62cbe4704dea268ca17f0d2cd8a7.tar.gz) | [原文](licenses/components/golang.org--x--tools--go--expect@v0.1.1-deprecated) |
+| `golang.org/x/tools/go/packages/packagestest` | `v0.1.1-deprecated` | [固定来源](https://github.com/golang/tools/tree/9b68bc9966ee62cbe4704dea268ca17f0d2cd8a7) | [完整上游](sources/upstream/golang--tools--9b68bc9966ee62cbe4704dea268ca17f0d2cd8a7.tar.gz) | [原文](licenses/components/golang.org--x--tools--go--packages--packagestest@v0.1.1-deprecated) |
+| `gopkg.in/check.v1` | `v1.0.0-20201130134442-10cb98267c6c` | [固定来源](https://github.com/go-check/check/tree/10cb98267c6cb43ea9cd6793f29ff4089c306974) | [完整上游](sources/upstream/go-check--check--10cb98267c6cb43ea9cd6793f29ff4089c306974.tar.gz) | [原文](licenses/components/gopkg.in--check.v1@v1.0.0-20201130134442-10cb98267c6c) |
+| `gopkg.in/errgo.v2` | `v2.1.0` | [固定来源](https://github.com/go-errgo/errgo/tree/f768c5ab0476c50e978b039312180859c10fe8c0) | [完整上游](sources/upstream/go-errgo--errgo--f768c5ab0476c50e978b039312180859c10fe8c0.tar.gz) | [原文](licenses/components/gopkg.in--errgo.v2@v2.1.0) |
+| `gopkg.in/yaml.v3` | `v3.0.1` | [固定来源](https://github.com/go-yaml/yaml/tree/f6f7691b1fdeb513f56608cd2c32c51f8194bf51) | [完整上游](sources/upstream/go-yaml--yaml--f6f7691b1fdeb513f56608cd2c32c51f8194bf51.tar.gz) · [模块 ZIP](sources/modules/gopkg.in--yaml.v3@v3.0.1.zip) | [原文](licenses/components/gopkg.in--yaml.v3@v3.0.1) |
+| `modernc.org/cc/v4` | `v4.27.1` | [固定来源](https://gitlab.com/cznic/cc/-/tree/v4.27.1) | [完整上游](sources/upstream/cznic--cc--v4.27.1.tar.gz) | [原文](licenses/components/modernc.org--cc--v4@v4.27.1) |
+| `modernc.org/ccgo/v4` | `v4.30.1` | [固定来源](https://gitlab.com/cznic/ccgo/-/tree/v4.30.1) | [完整上游](sources/upstream/cznic--ccgo--v4.30.1.tar.gz) | [原文](licenses/components/modernc.org--ccgo--v4@v4.30.1) |
+| `modernc.org/fileutil` | `v1.3.40` | [固定来源](https://gitlab.com/cznic/fileutil/-/tree/v1.3.40) | [完整上游](sources/upstream/cznic--fileutil--v1.3.40.tar.gz) | [原文](licenses/components/modernc.org--fileutil@v1.3.40) |
+| `modernc.org/gc/v2` | `v2.6.5` | [固定来源](https://gitlab.com/cznic/gc/-/tree/v2.6.5) | [完整上游](sources/upstream/cznic--gc--v2.6.5.tar.gz) | [原文](licenses/components/modernc.org--gc--v2@v2.6.5) |
+| `modernc.org/gc/v3` | `v3.1.1` | [固定来源](https://gitlab.com/cznic/gc/-/tree/v3.1.1) | [完整上游](sources/upstream/cznic--gc--v3.1.1.tar.gz) | [原文](licenses/components/modernc.org--gc--v3@v3.1.1) |
+| `modernc.org/goabi0` | `v0.2.0` | [固定来源](https://gitlab.com/cznic/goabi0/-/tree/v0.2.0) | [完整上游](sources/upstream/cznic--goabi0--v0.2.0.tar.gz) | [原文](licenses/components/modernc.org--goabi0@v0.2.0) |
+| `modernc.org/libc` | `v1.67.6` | [固定来源](https://gitlab.com/cznic/libc/-/tree/v1.67.6) | [完整上游](sources/upstream/cznic--libc--v1.67.6.tar.gz) · [模块 ZIP](sources/modules/modernc.org--libc@v1.67.6.zip) | [原文](licenses/components/modernc.org--libc@v1.67.6) |
+| `modernc.org/mathutil` | `v1.7.1` | [固定来源](https://gitlab.com/cznic/mathutil/-/tree/v1.7.1) | [完整上游](sources/upstream/cznic--mathutil--v1.7.1.tar.gz) · [模块 ZIP](sources/modules/modernc.org--mathutil@v1.7.1.zip) | [原文](licenses/components/modernc.org--mathutil@v1.7.1) |
+| `modernc.org/memory` | `v1.11.0` | [固定来源](https://gitlab.com/cznic/memory/-/tree/v1.11.0) | [完整上游](sources/upstream/cznic--memory--v1.11.0.tar.gz) · [模块 ZIP](sources/modules/modernc.org--memory@v1.11.0.zip) | [原文](licenses/components/modernc.org--memory@v1.11.0) |
+| `modernc.org/opt` | `v0.1.4` | [固定来源](https://gitlab.com/cznic/opt/-/tree/v0.1.4) | [完整上游](sources/upstream/cznic--opt--v0.1.4.tar.gz) | [原文](licenses/components/modernc.org--opt@v0.1.4) |
+| `modernc.org/sortutil` | `v1.2.1` | [固定来源](https://gitlab.com/cznic/sortutil/-/tree/v1.2.1) | [完整上游](sources/upstream/cznic--sortutil--v1.2.1.tar.gz) | [原文](licenses/components/modernc.org--sortutil@v1.2.1) |
+| `modernc.org/sqlite` | `v1.46.1` | [固定来源](https://gitlab.com/cznic/sqlite/-/tree/v1.46.1) | [完整上游](sources/upstream/cznic--sqlite--v1.46.1.tar.gz) · [模块 ZIP](sources/modules/modernc.org--sqlite@v1.46.1.zip) | [原文](licenses/components/modernc.org--sqlite@v1.46.1) |
+| `modernc.org/strutil` | `v1.2.1` | [固定来源](https://gitlab.com/cznic/strutil/-/tree/v1.2.1) | [完整上游](sources/upstream/cznic--strutil--v1.2.1.tar.gz) | [原文](licenses/components/modernc.org--strutil@v1.2.1) |
+| `modernc.org/token` | `v1.1.0` | [固定来源](https://gitlab.com/cznic/token/-/tree/v1.1.0) | [完整上游](sources/upstream/cznic--token--v1.1.0.tar.gz) | [原文](licenses/components/modernc.org--token@v1.1.0) |
+| `GSAP` | `3.15.1` | [固定来源](https://github.com/greensock/GSAP/tree/5e6c35ff8eedea12d4f229129def635277d8b0f2) | [完整上游](sources/upstream/greensock--GSAP--5e6c35ff8eedea12d4f229129def635277d8b0f2.tar.gz) | [原文](licenses/gsap-standard-license.txt) |
+| `Playwright` | `1.63.0` | [固定来源](https://github.com/microsoft/playwright/tree/1b025d7e20a026371cd5f98ba0cdce48892737c8) | [完整上游](sources/upstream/microsoft--playwright--1b025d7e20a026371cd5f98ba0cdce48892737c8.tar.gz) | [原文](licenses/components/Playwright@1.63.0) |
+| `SQLite` | `3.51.2` | [固定来源](https://github.com/sqlite/sqlite/tree/ba76c160c735437de974c6ea24c890a663214c6b) | [完整上游](sources/upstream/sqlite--sqlite--ba76c160c735437de974c6ea24c890a663214c6b.tar.gz) | [原文](licenses/components/SQLite@3.51.2) |
+| `JSON-Schema-Test-Suite` | `83e866b46c9f9e7082fd51e83a61c5f2145a1ab7` | [固定来源](https://github.com/json-schema-org/JSON-Schema-Test-Suite/tree/83e866b46c9f9e7082fd51e83a61c5f2145a1ab7) | [完整上游](sources/upstream/json-schema-org--JSON-Schema-Test-Suite--83e866b46c9f9e7082fd51e83a61c5f2145a1ab7.tar.gz) | [原文](licenses/components/JSON-Schema-Test-Suite@83e866b46c9f9e7082fd51e83a61c5f2145a1ab7) |
+| `Go` | `go1.25.0` | [固定来源](https://github.com/golang/go/tree/6e676ab2b809d46623acb5988248d95d1eb7939c) | [完整上游](sources/upstream/golang--go--6e676ab2b809d46623acb5988248d95d1eb7939c.tar.gz) | [原文](licenses/components/Go@go1.25.0) |
+| `Mage` | `v1.17.2` | [固定来源](https://github.com/magefile/mage/tree/0953947c1673fd745a51c032aadeb3c63f9f3368) | [完整上游](sources/upstream/magefile--mage--0953947c1673fd745a51c032aadeb3c63f9f3368.tar.gz) | [原文](licenses/components/Mage@v1.17.2) |
+| `nfpm` | `v2.46.0` | [固定来源](https://github.com/goreleaser/nfpm/tree/8a958ae83323164c347966d511f09b6c742c5dde) | [完整上游](sources/upstream/goreleaser--nfpm--8a958ae83323164c347966d511f09b6c742c5dde.tar.gz) | [原文](licenses/components/nfpm@v2.46.0) |
+| `actionlint` | `v1.7.7` | [固定来源](https://github.com/rhysd/actionlint/tree/03d0035246f3e81f36aed592ffb4bebf33a03106) | [完整上游](sources/upstream/rhysd--actionlint--03d0035246f3e81f36aed592ffb4bebf33a03106.tar.gz) | [原文](licenses/components/actionlint@v1.7.7) |
+
+阅读指南：[中文指南](../docs/third-party.zh.md) / [English](../docs/third-party.md)。

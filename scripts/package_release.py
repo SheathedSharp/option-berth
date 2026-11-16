@@ -93,7 +93,10 @@ def package(root: Path, system: str, arch: str, output: Path) -> list[Path]:
         notices = stage / "licenses"
         notices.mkdir()
         shutil.copyfile(root / "engine/LICENSE", notices / "engine-LICENSE")
-        shutil.copyfile(root / "THIRD_PARTY_NOTICES.md", notices / "third-party-notices.md")
+        attribution, boundary, _ = (root / "third_party/README.md").read_text(encoding="utf-8").partition("\n## 源码资料\n")
+        if not boundary:
+            raise ValueError("third-party guide is missing the source-material boundary")
+        (notices / "third-party-notices.md").write_text(attribution + "\n", encoding="utf-8")
         shutil.copyfile(root / "third_party/go-runtime-licenses.txt", notices / "retained-runtime-notices.txt")
         text, modules = runtime_notices(root, env)
         (notices / "target-runtime-notices.txt").write_text(text)
