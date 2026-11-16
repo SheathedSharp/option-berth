@@ -15,7 +15,11 @@ import (
 // file. The run offsets are on disk, so the same generation split the host
 // would compute is available offline.
 func TestOfflineRunRangeReadsOnlyTheCurrentGeneration(t *testing.T) {
-	t.Setenv("BERTH_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("BERTH_HOME", home)
+	// BERTH_DB overrides BERTH_HOME for the database; without it this test
+	// would write into the shared test home and see another test's exits.
+	t.Setenv("BERTH_DB", filepath.Join(home, "option-berth.db"))
 	logPath := filepath.Join(t.TempDir(), "api.log")
 	oldText := "old generation failed\n"
 	newText := "new generation failed\n"
