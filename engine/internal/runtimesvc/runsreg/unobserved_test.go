@@ -1,6 +1,7 @@
 package runsreg
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -106,6 +107,24 @@ func TestRestoreRecordsAnUnobservedEndingForADeadImportedRun(t *testing.T) {
 	}
 	if len(reg.Exits()) != 1 {
 		t.Fatalf("retry duplicated the ending: %+v", reg.Exits())
+	}
+}
+
+// A run this process spawned has a child reaper. Prune must leave it alone:
+// recording an unobserved ending here would race the reaper and downgrade the
+// real exit code and reason to "ended_unobserved".
+func TestPruneLeavesThisProcessesChildrenToTheirReaper(t *testing.T) {
+	reg := testRegistry() // every pid answers "not alive"
+	reg.Register(Record{
+		ID: "child", PID: 424245, PPID: os.Getpid(), Group: "demo", Name: "api",
+		StartedAt: time.Date(2026, 11, 16, 6, 0, 0, 0, time.UTC),
+	})
+	reg.Prune()
+	if exits := reg.Exits(); len(exits) != 0 {
+		t.Fatalf("Prune raced the reaper: %+v", exits)
+	}
+	if got := reg.List(); len(got) != 1 || got[0].ID != "child" {
+		t.Fatalf("the reaper's run was pruned: %+v", got)
 	}
 }
 
