@@ -619,6 +619,16 @@ A listener option-berth did not start is reported by the start half the same way
 skipped, with a reason and hint naming the process and port. `--force` only skips the graceful stop;
 it does not take over a process option-berth did not start.
 
+Before the stop, `restart` reads the same code comparison `status` publishes (through the narrow
+`groups.code` call) for the services it is about to stop, and prints a warning before stopping when a
+running service's `sources:` changed since it started, or the executable that run started was rebuilt
+after it. The warning never blocks the restart and never invents a build command: it says the restart
+will keep running the old build, or that it will start the new binary. `--json` carries the same facts
+as `warnings` (`service`, `code_changed`, `code_changed_files`, `executable_changed`); the field is
+absent when there is nothing to warn about. A comparison that did not run (a run predating the fact,
+a deleted snapshot, an older runtime service without `groups.code`) produces no warning — unknown is
+not "unchanged".
+
 ### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 
 Stops all services in the project's manifest and, once the action confirms they can be released,

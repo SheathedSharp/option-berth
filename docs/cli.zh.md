@@ -515,6 +515,13 @@ JSON 值，不混入诊断。旧 runtime service 不认识 `progress`，旧 CLI 
 启动半段对「监听者不是 option-berth 启动的进程」的报告方式与 `up` 相同：跳过，并在原因和
 hint 里写出进程与端口。`--force` 只跳过优雅停止，不会接管 option-berth 没启动的进程。
 
+停止之前，`restart` 通过窄读 `groups.code` 拿到与 `status` 相同的代码比较，只针对即将停止的
+服务；运行中服务的 `sources:` 相对启动时有变化，或该次运行启动的可执行文件在之后被重建时，
+在停止前打印 warning。warning 不阻止重启，也不替调用者编造构建命令：它只说明重启会继续跑旧
+构建，或会启动新二进制。`--json` 用 `warnings` 带上同样的事实（`service`、`code_changed`、
+`code_changed_files`、`executable_changed`）；没有可警告的事实就缺省。没有跑成的比较（运行早于
+该事实、快照已删、旧 runtime service 不支持 `groups.code`）不产生 warning——未知不等于未变化。
+
 ### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 
 停止该项目清单里的全部服务，动作后确认可释放时交还 `port: auto` 的预留。
