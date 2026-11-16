@@ -843,10 +843,14 @@ appear in public help.
 - `oberth version --check` reads the latest release tag and reports whether this machine is behind; `--check --json` adds
   `latest` on top of the original fields. It only reads release information: it does not download, does not install, and does not replace the running binary. Terminal commands reuse the same
   check result: the first screen shows the local version with a full upgrade block, and any other command that writes human output ends with a two-line upgrade footer when this build is behind.
-  A release is announced once per build. The result is cached for 5 minutes on success and 30 minutes on failure, a command waits at most 1 second for it,
-  and `BERTH_NO_UPDATE_CHECK=1` turns the automatic notices off. JSON output, `--help` and an explicit `--check` never add the footer.
+  A release is announced once per build. A successful result is cached for 5 minutes. The first screen may wait up to 2 seconds for the answer, because it is
+  where the version was asked for; every other command only reads an answer that is ready or nearly ready, waiting at most 250 milliseconds; an explicit
+  `--check` may wait up to 6 seconds. A failure is remembered with its kind: a check this budget cut off is retried after 2 minutes, while an unreachable
+  release feed or an answer that is not a release is remembered for 30 minutes. `BERTH_NO_UPDATE_CHECK=1` turns the automatic notices off. JSON output,
+  `--help` and an explicit `--check` never add the footer.
   The check reads GitHub's release metadata and a CDN copy of the tag list, so a slow or blocked GitHub does not hide a release.
-  When no source answers, `--check` exits non-zero and explains why, while the terminal paths stay silent. The check result is cached in `BERTH_HOME/update-check.json`
+  When no source answers, `--check` exits non-zero and explains why, and no terminal path turns an unknown answer into "latest": the first screen says the
+  update check is unavailable and names `oberth version --check`, while the footer stays silent. The check result is cached in `BERTH_HOME/update-check.json`
   (default `~/.option-berth/update-check.json`), reused only for these notices and not a runtime fact.
 
 `oberth version --json`'s stdout is one JSON value:
