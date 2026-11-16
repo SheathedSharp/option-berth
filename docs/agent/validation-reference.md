@@ -383,7 +383,10 @@ Windows verification, which local tests cannot replace.
 The `versioncheck` unit tests use a local HTTP server to simulate the release page redirect and the
 releases API, and do not contact real GitHub; cache reads and writes use a temporary directory. The
 automatic check on the first screen is enabled only in terminal sessions, and does not fire when the
-test process's stdout is not a terminal.
+test process's stdout is not a terminal. They separate the three ways a check can fail — a server that
+never answers, a connection that is refused, and a server that answers with 500 — and prove that only
+the first is retried on the short window. They do not measure how long a real release feed takes, so
+the two budgets are pinned as documented values rather than derived from a measurement.
 
 The Linux package tests generate `.deb`/`.rpm` from fixture archives with `nfpm` and check control
 fields, install paths, license, and md5sums; when `dpkg-deb` is available the package is read with
