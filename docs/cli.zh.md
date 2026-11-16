@@ -289,9 +289,13 @@ Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填�
 **只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。`config` 改的是凭据，不是同意。
 `oberth attn on` 与 `oberth attn off [--forget]` 只翻转一个 `enabled` 布尔值，不联网。
 `oberth attn test` 用当前有效配置探测一次。`oberth attn status` 报告解析结果、不可用时的
-固定原因，以及本地质量账本摘要；`--json` 同时输出完整 `quality` 对象。`oberth doctor`
-增加一行离线状态；人读 `status` 在未启用且当前有异常时，每两周提示一次，`BERTH_NO_TIPS=1`
-可关闭。
+固定原因，以及本地质量账本摘要。`--json` 输出的是决策文档：同意与配置字段，加上一个只回答
+「是否有任务在观测、是否有事情发生」的 `quality`——`activity`、`records_read`、
+`assessment_records`、`model_calls`、`cache_hits`、`feedback_records`、`unique_cases`、
+`labeled_cases`、`unlabeled_cases` 和 `sessions`。`--quality` 把该对象换成下文描述的完整
+质量报告；`--since` 与 `--quality-project` 收窄的正是这份报告，因此它们隐含 `--quality`。
+计数为零也留在文档里，不省略。`oberth doctor` 增加一行离线状态；人读 `status` 在未启用且当前
+有异常时，每两周提示一次，`BERTH_NO_TIPS=1` 可关闭。
 
 `oberth attn assess` 是一次性 runner。`--dry-run` 打印当前事件将要发送的脱敏请求体但不发送；
 `--follow` 让同一循环在任务生命周期内持续运行，以 NDJSON 输出 `subscribed`、仅变化的手递
@@ -319,11 +323,11 @@ Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填�
 `oberth attn assess` / `assess --follow` 会在 `$BERTH_HOME/quality/events.ndjson`
 留下脱敏的本地质量观测。开发 agent 在真实交互后可用
 `oberth attn feedback --file <json>` 回写人工标签和动作结果，再用
-`oberth attn status --json [--since 168h]` 查看 `quality` 中的标注覆盖率、assessment
-可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、模型的
-`needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
+`oberth attn status --json --quality [--since 168h] [--quality-project <name>]` 查看 `quality`
+中的标注覆盖率、assessment 可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、
+模型的 `needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、
-模型调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
+模型调用、缓存命中和无事件轮询数量，它同样在默认摘要里；没有真实反馈时指标保持 `null`。
 
 `on` 表示允许评估，不表示已有任务会话运行。开发 skill 可以在相关运行任务中，明确当前
 worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入一个现有 runner。它必须复用自己
