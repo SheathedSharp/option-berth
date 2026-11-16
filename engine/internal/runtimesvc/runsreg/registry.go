@@ -425,7 +425,14 @@ func (r *Registry) Prune() {
 	r.mu.Unlock()
 
 	for _, rec := range removed {
+		// The ending must be durable before the mirror entry disappears. When
+		// it is not, keep the entry so the next startup can retry; a dead run
+		// that is already invisible to readers still has its evidence on disk.
+		if !r.recordUnobservedLocked(rec) {
+			continue
+		}
 		r.mirrorRemoveLocked(rec)
+		_ = codeid.Remove(rec.ID)
 	}
 }
 

@@ -38,6 +38,7 @@ func (r *Registry) Restore(consume func(func([]runs.Entry) ([]runs.Entry, error)
 		// Existing memory wins on a retry. In particular, importing an old
 		// same-PID entry must not replace a newer live registration.
 		pending = make([]Record, 0, len(entries))
+		var keepOnFailure []runs.Entry
 		for _, e := range entries {
 			if existing[e.PID] {
 				continue
@@ -55,6 +56,12 @@ func (r *Registry) Restore(consume func(func([]runs.Entry) ([]runs.Entry, error)
 			// Positive reuse/death evidence is rejected before publication.
 			// Unknown birth evidence stays unknown; control still verifies it.
 			if (r.Alive != nil && !r.Alive(rec.PID)) || r.pidReused(rec.PID, rec) {
+				// The run ended while no host was watching. Record the ending
+				// now; if it cannot be made durable, keep the mirror entry so a
+				// later startup can retry instead of losing the only evidence.
+				if !r.recordUnobservedLocked(rec) {
+					keepOnFailure = append(keepOnFailure, e)
+				}
 				continue
 			}
 			pending = append(pending, rec)
@@ -64,13 +71,14 @@ func (r *Registry) Restore(consume func(func([]runs.Entry) ([]runs.Entry, error)
 		}
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		replacement := make([]runs.Entry, 0, len(r.runs)+len(pending))
+		replacement := make([]runs.Entry, 0, len(r.runs)+len(pending)+len(keepOnFailure))
 		for _, rec := range r.runs {
 			replacement = append(replacement, mirrorEntry(rec))
 		}
 		for _, rec := range pending {
 			replacement = append(replacement, mirrorEntry(rec))
 		}
+		replacement = append(replacement, keepOnFailure...)
 		return replacement, nil
 	})
 	if err != nil {

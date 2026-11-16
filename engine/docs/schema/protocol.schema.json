@@ -2662,7 +2662,8 @@
             "stopped",
             "ready_timeout",
             "dependency_timeout",
-            "dependency_not_ready"
+            "dependency_not_ready",
+            "ended_unobserved"
           ]
         },
         "at": {
