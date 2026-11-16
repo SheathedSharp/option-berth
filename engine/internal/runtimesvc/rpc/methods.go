@@ -696,8 +696,11 @@ type RunsRegisterParams struct {
 	Name  string `json:"name"`
 	// Cmd and Cwd are what it was started with, and StartedAt when it began;
 	// PortHint is the port it is expected to bind, if the caller knows one.
-	Cmd       string `json:"cmd"`
-	Cwd       string `json:"cwd"`
+	// Argv is the exact vector Cmd was joined from; a caller that sends it
+	// makes the run restartable without re-parsing the display string.
+	Cmd       string   `json:"cmd"`
+	Argv      []string `json:"argv,omitempty"`
+	Cwd       string   `json:"cwd"`
 	PortHint  *int   `json:"port_hint,omitempty"`
 	StartedAt string `json:"started_at"`
 	// ID lets the caller name the run itself. Absent, the registry gives it one,
@@ -744,7 +747,11 @@ type RunRecord struct {
 	Group string `json:"group"`
 	Name  string `json:"name"`
 	Cmd   string `json:"cmd"`
-	Cwd   string `json:"cwd"`
+	// Argv is the exact vector Cmd was joined from. It is absent for a run
+	// started by a version that did not record it; that run cannot be
+	// restarted faithfully, and its recorded start line remains the path.
+	Argv []string `json:"argv,omitempty"`
+	Cwd  string   `json:"cwd"`
 	// StartedAt is RFC 3339, and Ports are the ones the last scan saw this run
 	// holding.
 	StartedAt string `json:"started_at"`

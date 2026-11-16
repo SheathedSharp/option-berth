@@ -86,9 +86,13 @@ type Handle struct {
 	PPID int
 
 	// Manifest placement.
-	Group    string
-	Name     string
-	Cmd      string
+	Group string
+	Name  string
+	Cmd   string
+	// Argv is the exact argument vector the process was started with. Cmd is
+	// its display/join form; only Argv can be executed again without guessing
+	// where the quotes were.
+	Argv     []string
 	Cwd      string
 	PortHint int
 
@@ -137,6 +141,7 @@ func Spawn(ctx context.Context, req Request) (*Handle, error) {
 		PPID:      os.Getpid(),
 		StartedAt: time.Now(),
 		Cmd:       strings.Join(req.Argv, " "),
+		Argv:      append([]string(nil), req.Argv...),
 		Cwd:       cwd,
 		PortHint:  req.PortHint,
 		Detached:  req.Detach,

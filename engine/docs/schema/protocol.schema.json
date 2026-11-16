@@ -1555,6 +1555,12 @@
         "cmd": {
           "type": "string"
         },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "cwd": {
           "type": "string"
         },
@@ -1666,6 +1672,12 @@
         },
         "cmd": {
           "type": "string"
+        },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "cwd": {
           "type": "string"
@@ -2021,6 +2033,12 @@
         },
         "cmd": {
           "type": "string"
+        },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "cwd": {
           "type": "string"
