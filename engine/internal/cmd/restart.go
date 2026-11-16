@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/restartout"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
@@ -74,6 +76,15 @@ func restartRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Read the code facts before the stop: a source change is why the restart
+	// will run the same old build, and the warning is only actionable while the
+	// caller can still cancel. It is best effort — an older host without
+	// groups.code or an unreadable snapshot leaves the restart unchanged.
+	warnings := restartCodeWarnings(cmd.Context(), c, startParams)
+	if !restartJSON {
+		printRestartWarnings(warnings)
+	}
+
 	stop := rpc.GroupsKillParams{
 		Force:   restartForce,
 		Release: true,
@@ -103,6 +114,7 @@ func restartRun(cmd *cobra.Command, args []string) error {
 			return result, err
 		},
 		func(doc restartout.Document, complete bool) error {
+			doc.Warnings = warnings
 			return reportRestart(doc, complete, snapshot)
 		})
 }
@@ -223,6 +235,81 @@ func restartGroup(params rpc.GroupsStartParams) string {
 	}
 	group, _ := projectAt(wd)
 	return group
+}
+
+// restartCodeWarnings reads the same code comparison status publishes, through
+// the narrow groups.code call, for the services this restart is about to stop.
+// It is best effort: an older runtime service without the method, or a failed
+// read, leaves the restart exactly as it was — a warning is not worth blocking
+// a stop the caller explicitly asked for.
+func restartCodeWarnings(ctx context.Context, c *client.Client, params rpc.GroupsStartParams) []restartout.Warning {
+	group := restartGroup(params)
+	if group == "" {
+		return nil
+	}
+	var result rpc.GroupsCodeResult
+	if err := c.Call(ctx, "groups.code", rpc.GroupsCodeParams{Name: group}, &result); err != nil {
+		return nil
+	}
+	return restartWarnings(result.Services, restartOnly)
+}
+
+// restartWarnings projects code facts onto the warnings a restart publishes. A
+// null verdict means unknown and produces no warning: the command must not
+// claim a change it did not observe.
+func restartWarnings(codes []rpc.ServiceCode, only []string) []restartout.Warning {
+	selected := make(map[string]bool, len(only))
+	for _, name := range only {
+		if name = strings.TrimSpace(name); name != "" {
+			selected[name] = true
+		}
+	}
+	out := make([]restartout.Warning, 0, len(codes))
+	for _, code := range codes {
+		if len(selected) > 0 && !selected[code.Name] {
+			continue
+		}
+		codeChanged := code.Changed != nil && *code.Changed
+		executableChanged := code.ExecutableChangedSinceStart != nil && *code.ExecutableChangedSinceStart
+		if !codeChanged && !executableChanged {
+			continue
+		}
+		warning := restartout.Warning{
+			Service: code.Name, CodeChanged: codeChanged, ExecutableChanged: executableChanged,
+		}
+		if codeChanged && code.ChangedFiles != nil {
+			files := *code.ChangedFiles
+			warning.CodeChangedFiles = &files
+		}
+		out = append(out, warning)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Service < out[j].Service })
+	return out
+}
+
+// printRestartWarnings is the human half: what the stop is about to replace,
+// printed before the stop so the caller can still cancel it.
+func printRestartWarnings(warnings []restartout.Warning) {
+	codeChanged := false
+	for _, warning := range warnings {
+		parts := make([]string, 0, 2)
+		if warning.CodeChanged {
+			codeChanged = true
+			detail := "sources changed since it started"
+			if warning.CodeChangedFiles != nil {
+				detail += fmt.Sprintf(" (%d %s)", *warning.CodeChangedFiles,
+					pluralWord(*warning.CodeChangedFiles, "file"))
+			}
+			parts = append(parts, detail)
+		}
+		if warning.ExecutableChanged {
+			parts = append(parts, "executable was rebuilt after this run")
+		}
+		fmt.Printf("%s %s's %s\n", display.Yellow("warning:"), warning.Service, strings.Join(parts, " and "))
+	}
+	if codeChanged {
+		fmt.Println(display.Dim("restart does not rebuild sources; build first if these changes need it"))
+	}
 }
 
 // adHocRestartHint builds one start line per requested name that the ledger
