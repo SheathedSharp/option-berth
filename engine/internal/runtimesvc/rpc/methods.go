@@ -344,6 +344,12 @@ type ServiceCode struct {
 	// snapshots kept per-file evidence.
 	ChangedFiles *int    `json:"code_changed_files,omitempty" jsonschema:"nullable"`
 	Hint         *string `json:"code_hint,omitempty" jsonschema:"nullable"`
+	// The executable facts are the compiled-artifact counterpart of Changed:
+	// a directly-run binary rebuilt after the run began. Nullable like the
+	// status fields; absent means unknown, never "unchanged".
+	ExecutablePath              *string `json:"executable_path,omitempty" jsonschema:"nullable"`
+	ExecutableModifiedAt        *string `json:"executable_modified_at,omitempty" jsonschema:"nullable"`
+	ExecutableChangedSinceStart *bool   `json:"executable_changed_since_start,omitempty" jsonschema:"nullable"`
 }
 
 type GroupsKillParams struct {

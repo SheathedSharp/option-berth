@@ -59,12 +59,15 @@ func serviceCodes(group state.Group) []rpc.ServiceCode {
 			continue
 		}
 		out = append(out, rpc.ServiceCode{
-			Name:         svc.Name,
-			RunID:        *svc.RunID,
-			CodeHead:     svc.CodeHead,
-			Changed:      svc.CodeChangedSinceStart,
-			ChangedFiles: svc.CodeChangedFiles,
-			Hint:         svc.CodeHint,
+			Name:                        svc.Name,
+			RunID:                       *svc.RunID,
+			CodeHead:                    svc.CodeHead,
+			Changed:                     svc.CodeChangedSinceStart,
+			ChangedFiles:                svc.CodeChangedFiles,
+			Hint:                        svc.CodeHint,
+			ExecutablePath:              svc.ExecutablePath,
+			ExecutableModifiedAt:        svc.ExecutableModifiedAt,
+			ExecutableChangedSinceStart: svc.ExecutableChangedSinceStart,
 		})
 	}
 	return out
