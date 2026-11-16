@@ -10,7 +10,7 @@ Use the [documentation index](index.md) to select a task. Below are common rules
 
 ## Common rules
 
-- Commands work on the current directory (or an explicit path / project name). With no manifest, run oberth init first.
+- Commands work on the current directory (or an explicit path / project name). With no manifest, run oberth init first: a command that needs the manifest answers `not_found` with that step in the hint.
 - Default output is for humans; with plain `--json`, stdout holds exactly one JSON value. Explicit streaming commands emit one value per line, with errors written to stderr.
 - Following logs and other streaming commands use NDJSON: one JSON value per line.
 - Exit codes: 0 success, 1 run failure, 2 argument or option error, 130 interrupted by Ctrl-C.
@@ -610,6 +610,10 @@ Only services the manifest declares can be restarted. A run started with `oberth
 manifest entry: stop it first if it is still running, then start that command again. When
 `restart --only` names such a run and the run ledger knows it, the `not_found` hint prints the
 recorded start line (cwd, group, name, port and command) instead of pointing back at `status`.
+That hint does not depend on the manifest being there: a worktree with no `oberth.yaml` at all
+still gets the recorded start line, because the run ledger rather than the manifest is what knows
+it. A name the ledger does not know falls back to the missing-manifest `not_found` and its
+`oberth init` hint.
 
 A listener option-berth did not start is reported by the start half the same way `up` reports it:
 skipped, with a reason and hint naming the process and port. `--force` only skips the graceful stop;
