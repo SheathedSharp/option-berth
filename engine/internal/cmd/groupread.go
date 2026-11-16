@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/docker"
@@ -280,7 +281,21 @@ func directRunHistory(ctx context.Context) (directRunRegistry, error) {
 		return directRunRegistry{}, err
 	}
 	exits = append(exits, unobservedExitRows()...)
+	// servicefacts consumes exits newest first and keeps the first row per
+	// service. The derived ending has no exit time (no host observed it), so
+	// order it by the run's start; otherwise an older durable crash would be
+	// the first row and would remain the service's last outcome.
+	sort.SliceStable(exits, func(i, j int) bool {
+		return runExitTime(exits[i]).After(runExitTime(exits[j]))
+	})
 	return directRunRegistry{reg: runs.Load(), exits: exits}, nil
+}
+
+func runExitTime(row store.RunExitRow) time.Time {
+	if !row.ExitedAt.IsZero() {
+		return row.ExitedAt
+	}
+	return row.StartedAt
 }
 
 // unobservedExitRows projects the mirror's dead runs into the durable shape the

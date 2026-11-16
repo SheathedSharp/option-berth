@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 // A dead run still in the mirror is the newest generation. Its unobserved
@@ -55,5 +58,46 @@ func TestMergeExitRecordsLetsTheDurableExitWin(t *testing.T) {
 	got := mergeExitRecords([]rpc.RunRecord{durable}, []rpc.RunRecord{derived})
 	if len(got) != 1 || got[0].Reason != "crashed" {
 		t.Fatalf("merged = %+v, want the durable record only", got)
+	}
+}
+
+// The service row is built from directRunHistory when no host answers. Its
+// reducer keeps the first exit per service, so the derived ending must be
+// ordered by the run's start; otherwise the older durable crash stays the
+// service's last outcome.
+func TestLocalServiceFactsPreferTheUnobservedEnding(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	base := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	db, err := store.Open(store.Path())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := db.AppendRunExit(store.RunExitRow{
+		ID: "old", PID: 111, Group: "demo", Name: "api",
+		Code: 1, Reason: "crashed",
+		StartedAt: base.Add(-time.Hour), ExitedAt: base,
+	}); err != nil {
+		t.Fatalf("AppendRunExit: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runs.Add(runs.Entry{
+		PID: 999999999, ID: "new", Group: "demo", Name: "api",
+		StartedAt: base.Add(time.Minute).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("writing the mirror: %v", err)
+	}
+
+	history, err := directRunHistory(context.Background())
+	if err != nil {
+		t.Fatalf("directRunHistory: %v", err)
+	}
+	evidence, ok := history.ServiceFacts()[servicefacts.Key{Group: "demo", Service: "api"}]
+	if !ok || evidence.LastExit == nil {
+		t.Fatalf("service facts = %+v, want the api exit", evidence)
+	}
+	if evidence.LastExit.Reason != state.ExitEndedUnobserved || evidence.LastExit.RunID != "new" {
+		t.Fatalf("last exit = %+v, want the unobserved ending", evidence.LastExit)
 	}
 }
