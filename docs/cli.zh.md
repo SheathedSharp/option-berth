@@ -495,7 +495,7 @@ JSON 值，不混入诊断。旧 runtime service 不认识 `progress`，旧 CLI 
 ],"started":["api"],"skipped":[],"errors":["worker"]}
 ~~~
 
-### oberth restart [project] [--only name,...] [--force] [--allow-outside-home] [--json]
+### oberth restart [project] [--only name,...] [--run id|name] [--force] [--allow-outside-home] [--json]
 
 先停止再按清单重新启动项目服务。人读输出先报告停止结果，空一行后报告启动结果。
 `--only` 只重启点名的服务，依赖和其他服务保持运行；
@@ -505,12 +505,20 @@ JSON 值，不混入诊断。旧 runtime service 不认识 `progress`，旧 CLI 
 
 取消或传输失败若发生在已获得停止回执之后，仍会报告该回执及已经收到的逐服务结果。JSON 保持既有 `stopped`/`services`/`start_id` 结构；没有启动终结回复时，`started`、`skipped` 和 `errors` 为 null（未知），而不是成功的空汇总。操作错误仍按标准错误结构写入 stderr，并保留非零退出码（中断为 130）。人读输出同样保留已知结果，不打印启动终结汇总。停止失败绝不启动服务；尚未获得任何停止回执就失败时，不会捏造回执。
 
-只有清单声明的服务可以重启。`oberth start` 启动的运行没有清单条目：如果它仍在运行，先停止，
-再重新执行那条命令。`restart --only` 点名这类运行且运行账本认识它时，`not_found` 的 hint 会
-打印记录下来的启动命令（cwd、group、name、port 与命令），而不是指回 `status`。
-这条 hint 不依赖清单是否存在：worktree 里根本没有 `oberth.yaml` 时同样给出记录下来的启动命令，
-因为知道这条命令的是运行账本而不是清单。账本不认识的名称则回到「没有可用清单」的 `not_found`
-及其 `oberth init` hint。
+`oberth start` 启动的运行没有清单条目：`--run <id|name>` 用记录的 argv 重启它。它通过
+`groups.kill` 的 run id 选择器精确停止该运行（无端口运行也包含，退出记录为 `stopped`），
+再用记录的 argv、cwd、group、name 和 port hint 通过宿主重新启动。argv 是启动时的精确向量，
+从此版本开始记录；早于该版本的运行无法忠实重放，返回 `not_found` 并给出记录的启动行，
+不猜引号。名字只在同组恰好一个活运行时接受；id 永远无歧义。`--run` 与 `--only` 选择不同对象，
+不能组合。`--json` 返回 `restarted_of`（原运行 id）、`stopped`（运行已经结束时缺省）以及新的
+`run_id`、`pid`、`log_path`。精确运行停止需要宿主声明 `groups.kill.runs`；旧宿主会被拒绝，
+而不是把停止放宽到整个服务或组。
+
+不带 `--run` 时，清单没有声明的运行不能重启。`restart --only` 点名这类运行且运行账本认识它时，
+`not_found` 的 hint 会打印记录下来的启动命令（cwd、group、name、port 与命令），而不是指回
+`status`。这条 hint 不依赖清单是否存在：worktree 里根本没有 `oberth.yaml` 时同样给出记录下来的
+启动命令，因为知道这条命令的是运行账本而不是清单。账本不认识的名称则回到「没有可用清单」的
+`not_found` 及其 `oberth init` hint。
 
 启动半段对「监听者不是 option-berth 启动的进程」的报告方式与 `up` 相同：跳过，并在原因和
 hint 里写出进程与端口。`--force` 只跳过优雅停止，不会接管 option-berth 没启动的进程。
