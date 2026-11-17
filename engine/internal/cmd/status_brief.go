@@ -344,6 +344,11 @@ func listenerOnPort(ports []state.Port, port int) *state.Port {
 // split by service name hid a stale generation that still used a declared
 // name and left every other listener as a bare number; attribution has to
 // follow the run identity, not the label.
+//
+// A live run that holds no listener is still a run option-berth owns: `down`
+// stops it and `restart --run` replays it, so leaving it out of every section
+// makes an `oberth start -d` worker reachable only by scanning `ps`. Those rows
+// carry an empty `ports`.
 func listenerAttribution(doc statusDocument) ([]briefAdHocRun, []briefUnownedPort) {
 	covered := make(map[int]bool, len(doc.Worktree.Services))
 	for _, svc := range doc.Worktree.Services {
@@ -369,17 +374,13 @@ func listenerAttribution(doc statusDocument) ([]briefAdHocRun, []briefUnownedPor
 			})
 			continue
 		}
-		key := run.ID
-		if key == "" {
-			key = fmt.Sprintf("%s/%d", run.Group, run.RootPID)
-		}
-		item, ok := byRun[key]
+		item, ok := byRun[adHocRunKey(run.ID, run.Group, run.RootPID)]
 		if !ok {
 			item = &briefAdHocRun{
 				Name: run.Name, RunID: run.ID, Group: run.Group, PID: run.RootPID,
 				Ports: []int{},
 			}
-			byRun[key] = item
+			byRun[adHocRunKey(run.ID, run.Group, run.RootPID)] = item
 		}
 		if !slices.Contains(item.Ports, port.Port) {
 			item.Ports = append(item.Ports, port.Port)
@@ -402,6 +403,7 @@ func listenerAttribution(doc statusDocument) ([]briefAdHocRun, []briefUnownedPor
 		item.Cwd = entry.Cwd
 		item.StartedAt = normalizeStartedAt(entry.StartedAt)
 	}
+	addLiveRunsWithoutListeners(doc, snapshot, byRun)
 
 	out := make([]briefAdHocRun, 0, len(byRun))
 	for _, item := range byRun {
@@ -416,4 +418,53 @@ func listenerAttribution(doc statusDocument) ([]briefAdHocRun, []briefUnownedPor
 	})
 	sort.Slice(unowned, func(i, j int) bool { return unowned[i].Port < unowned[j].Port })
 	return out, unowned
+}
+
+// adHocRunKey is the identity a listener row and a mirror entry are joined on.
+// The run id is the real identity; a row from a producer that publishes none
+// falls back to the root process, which is the only evidence it carries.
+func adHocRunKey(runID, group string, rootPID int) string {
+	if runID != "" {
+		return runID
+	}
+	return fmt.Sprintf("%s/%d", group, rootPID)
+}
+
+// addLiveRunsWithoutListeners fills in the runs this worktree started that hold
+// no listener, so they are attributable from the brief document instead of only
+// from `ps`. A run a running service row already names stays in `services`: the
+// row is its home and repeating it here would publish one process twice.
+//
+// Only the mirror's live entries are considered — Load has already hidden the
+// dead ones — and only this worktree's group, because a run belonging to
+// another checkout is that checkout's fact.
+func addLiveRunsWithoutListeners(doc statusDocument, snapshot *runs.Registry, byRun map[string]*briefAdHocRun) {
+	if snapshot == nil || doc.manifestMissing && doc.Worktree.Name == "" {
+		return
+	}
+	named := make(map[string]bool, len(doc.Worktree.Services))
+	for _, svc := range doc.Worktree.Services {
+		if svc.RunID != nil && *svc.RunID != "" {
+			named[*svc.RunID] = true
+		}
+	}
+	for _, entry := range snapshot.Active() {
+		if entry.GroupOf() != doc.Worktree.Name {
+			continue
+		}
+		key := adHocRunKey(entry.ID, entry.GroupOf(), entry.PID)
+		if _, seen := byRun[key]; seen || named[entry.ID] {
+			continue
+		}
+		byRun[key] = &briefAdHocRun{
+			Name:      entry.NameOf(),
+			RunID:     entry.ID,
+			Group:     entry.GroupOf(),
+			PID:       entry.PID,
+			Cmd:       entry.Cmd,
+			Cwd:       entry.Cwd,
+			StartedAt: normalizeStartedAt(entry.StartedAt),
+			Ports:     []int{},
+		}
+	}
 }
