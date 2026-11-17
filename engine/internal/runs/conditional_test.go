@@ -2,6 +2,7 @@ package runs
 
 import (
 	"os"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -40,7 +41,7 @@ func TestRemoveIfMatchComparesGenerationNotLabels(t *testing.T) {
 				t.Fatalf("RemoveIfMatch = (%v, %v), want %v", removed, err, tt.remove)
 			}
 			got, present := load().Runs[current.PID]
-			if present == tt.remove || (present && got != current) {
+			if present == tt.remove || (present && !reflect.DeepEqual(got, current)) {
 				t.Fatalf("mirror changed incorrectly: (%+v, %v)", got, present)
 			}
 			if !tt.remove {
@@ -131,7 +132,7 @@ func TestRemoveIfMatchSeesReplacementInsideFileLock(t *testing.T) {
 	if err != nil || out.err != nil || out.removed {
 		t.Fatalf("writer=%v deletion=%+v", err, out)
 	}
-	if got := load().Runs[next.PID]; got != next {
+	if got := load().Runs[next.PID]; !reflect.DeepEqual(got, next) {
 		t.Fatalf("replacement lost: %+v", got)
 	}
 }

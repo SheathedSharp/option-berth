@@ -373,6 +373,7 @@ func registerParams(h *spawn.Handle) rpc.RunsRegisterParams {
 		PPID:             h.PPID,
 		ID:               &h.ID,
 		Cmd:              h.Cmd,
+		Argv:             append([]string(nil), h.Argv...),
 		Cwd:              h.Cwd,
 		StartedAt:        h.StartedAt.Format(time.RFC3339),
 	}
@@ -440,6 +441,7 @@ func fallbackEntry(h *spawn.Handle) runs.Entry {
 		Group:     h.Group,
 		Name:      h.Name,
 		Cmd:       h.Cmd,
+		Argv:      append([]string(nil), h.Argv...),
 		Cwd:       h.Cwd,
 		PortHint:  h.PortHint,
 		StartedAt: h.StartedAt.Format(time.RFC3339),

@@ -19,7 +19,9 @@ func TestRunExitsRoundTripAndReopen(t *testing.T) {
 	}
 	row := RunExitRow{
 		ID: "run-1", PID: 123, Group: "shop", Name: "api",
-		Cmd: "python3 api.py", Cwd: "/home/me/code/shop", PortHint: 8123,
+		Cmd: "python3 api.py --port 8123", Argv: []string{"python3", "api.py", "--port", "8123"},
+		Cwd:       "/home/me/code/shop",
+		PortHint:  8123,
 		StartedAt: started, ConfigPath: "/home/me/code/shop/oberth.yaml",
 		StartID: "start-1", Origin: "cli", LogPath: "/tmp/api.log", LogOffset: 17,
 		Code: 7, Reason: "crashed", ExitedAt: exited,

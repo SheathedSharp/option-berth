@@ -21,7 +21,7 @@ func liveRunRecord(entry runs.Entry) rpc.RunRecord {
 	record := rpc.RunRecord{
 		ID: entry.ID, PID: entry.PID,
 		Group: entry.GroupOf(), Name: entry.NameOf(),
-		Cmd: entry.Cmd, Cwd: entry.Cwd,
+		Cmd: entry.Cmd, Argv: append([]string(nil), entry.Argv...), Cwd: entry.Cwd,
 		StartedAt: entry.StartedAt, Status: "running",
 	}
 	if entry.PortHint > 0 {
@@ -36,7 +36,8 @@ func exitRunRecord(row store.RunExitRow) rpc.RunRecord {
 	code := row.Code
 	record := rpc.RunRecord{
 		ID: row.ID, PID: row.PID, Group: row.Group, Name: row.Name,
-		Cmd: row.Cmd, Cwd: row.Cwd, StartedAt: row.StartedAt.UTC().Format(time.RFC3339),
+		Cmd: row.Cmd, Argv: append([]string(nil), row.Argv...),
+		Cwd: row.Cwd, StartedAt: row.StartedAt.UTC().Format(time.RFC3339),
 		Ports: []int{}, Status: "exited", ConfigPath: row.ConfigPath,
 		StartID: row.StartID, Origin: row.Origin, LogPath: row.LogPath,
 		LogOffset: &row.LogOffset,

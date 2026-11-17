@@ -28,7 +28,7 @@ func TestSilentGroupStopUsesCapturedBirthAndScope(t *testing.T) {
 	rt := &HostContext{}
 	rt.SetRuns(reg)
 	snap := state.Snapshot{Ports: []state.Port{{PID: 424241, Port: 12501, Group: ptr("demo")}}}
-	targets, receipt, err := captureSilentGroupStop(rt, snap, "demo", map[string]bool{"web": true, "worker": true}, nil, "stopped", false)
+	targets, receipt, err := captureSilentGroupStop(rt, snap, "demo", map[string]bool{"web": true, "worker": true}, nil, nil, "stopped", false)
 	if err != nil || len(targets) != 1 || targets[0].PID != 424242 || targets[0].Name != "worker" || !targets[0].StartedAt.Equal(at) || receipt == nil {
 		t.Fatalf("targets=%+v error=%v", targets, err)
 	}
@@ -36,7 +36,7 @@ func TestSilentGroupStopUsesCapturedBirthAndScope(t *testing.T) {
 	if signaled != 424242 {
 		t.Fatal("captured receipt was not used")
 	}
-	_, receipt, err = captureSilentGroupStop(rt, snap, "demo", nil, nil, "stopped", true)
+	_, receipt, err = captureSilentGroupStop(rt, snap, "demo", nil, nil, nil, "stopped", true)
 	if err != nil || receipt != nil {
 		t.Fatalf("dry run receipt=%v error=%v", receipt != nil, err)
 	}
@@ -54,7 +54,7 @@ func TestSilentGroupStopFollowsTheExpectedRunNotTheService(t *testing.T) {
 	rt := &HostContext{}
 	rt.SetRuns(reg)
 	targets, _, err := captureSilentGroupStop(rt, state.Snapshot{}, "demo", nil,
-		map[string]string{"worker": "run-timed-out"}, "", false)
+		map[string]string{"worker": "run-timed-out"}, nil, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestSilentGroupStopFollowsTheExpectedRunNotTheService(t *testing.T) {
 func TestSilentGroupStopRejectsMissingIdentityBeforeSignals(t *testing.T) {
 	rt := &HostContext{}
 	rt.SetRuns(&capturedStopFixture{capture: GroupStopCapture{Runs: []GroupStopRun{{Owner: state.Run{RootPID: 424242}}}}})
-	targets, receipt, err := captureSilentGroupStop(rt, state.Snapshot{}, "demo", nil, nil, "", false)
+	targets, receipt, err := captureSilentGroupStop(rt, state.Snapshot{}, "demo", nil, nil, nil, "", false)
 	if err == nil || len(targets) != 0 || receipt != nil {
 		t.Fatalf("targets=%+v error=%v", targets, err)
 	}

@@ -306,7 +306,8 @@ func (r *Registry) ExitForPID(pid int) (Exit, bool) {
 func storeRow(e Exit) store.RunExitRow {
 	return store.RunExitRow{
 		ID: e.ID, PID: e.PID, Group: e.Group, Name: e.Name, Cmd: e.Cmd,
-		Cwd: e.Cwd, PortHint: e.PortHint, StartedAt: e.StartedAt,
+		Argv: append([]string(nil), e.Argv...),
+		Cwd:  e.Cwd, PortHint: e.PortHint, StartedAt: e.StartedAt,
 		ConfigPath: e.ConfigPath, StartID: e.StartID, Origin: e.Origin,
 		LogPath: e.LogPath, LogOffset: e.LogOffset, Code: e.Code,
 		Reason: e.Reason, ExitedAt: e.ExitedAt, LastLines: e.LastLines,
@@ -317,7 +318,8 @@ func exitFromStore(row store.RunExitRow) Exit {
 	return Exit{
 		Record: Record{
 			ID: row.ID, PID: row.PID, Group: row.Group, Name: row.Name,
-			Cmd: row.Cmd, Cwd: row.Cwd, PortHint: row.PortHint,
+			Cmd: row.Cmd, Argv: append([]string(nil), row.Argv...),
+			Cwd: row.Cwd, PortHint: row.PortHint,
 			StartedAt: row.StartedAt, ConfigPath: row.ConfigPath,
 			StartID: row.StartID, Origin: row.Origin, LogPath: row.LogPath,
 			LogOffset: row.LogOffset,

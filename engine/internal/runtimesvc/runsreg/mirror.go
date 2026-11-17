@@ -17,6 +17,7 @@ func sameRun(a, b Record) bool {
 func mirrorEntry(rec Record) runs.Entry {
 	return runs.Entry{
 		PID: rec.PID, Tag: rec.Group, ID: rec.ID, Cmd: rec.Cmd,
+		Argv:      append([]string(nil), rec.Argv...),
 		StartedAt: rec.StartedAt.Format(time.RFC3339Nano),
 		Group:     rec.Group, Name: rec.Name, Cwd: rec.Cwd, PPID: rec.PPID,
 		PortHint: rec.PortHint, SpecHash: rec.SpecHash,

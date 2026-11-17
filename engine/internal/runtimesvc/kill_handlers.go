@@ -19,6 +19,7 @@ func init() {
 	RegisterHandler("ports.kill", handlePortsKill)
 	RegisterHandler("groups.kill", handleGroupsKill)
 	RegisterCapability(rpc.CapabilityKillExpectRuns)
+	RegisterCapability(rpc.CapabilityKillRuns)
 }
 
 func handlePortsKill(ctx context.Context, req *Request) (any, error) {
@@ -221,6 +222,20 @@ func groupTargetsFor(snap state.Snapshot, name string, only map[string]bool) []k
 			continue
 		}
 		if only != nil && (p.Run == nil || !only[p.Run.Name]) {
+			continue
+		}
+		out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
+	}
+	return out
+}
+
+// runGroupTargets is the exact-run port pass: only listeners attributed to one
+// of the named run ids are targets. A row with no run attribution is not
+// proven to belong to the caller's run, so it is left alone.
+func runGroupTargets(snap state.Snapshot, name string, runs map[string]bool) []killer.Target {
+	var out []killer.Target
+	for _, p := range snap.Ports {
+		if p.Run == nil || !inSnapshotGroup(p, name) || !runs[p.Run.ID] {
 			continue
 		}
 		out = append(out, killer.Target{Port: p.Port, BindAddress: p.BindAddress})
