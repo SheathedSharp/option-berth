@@ -29,6 +29,18 @@ func TestPublicObservationKeepsANarrowTable(t *testing.T) {
 	}
 }
 
+// A verdict that reports a recovery limits nothing, but it is the only place
+// "healthy since when" exists: dropping it would make a machine that just came
+// back indistinguishable from one that was never degraded.
+func TestPublicObservationKeepsARecovery(t *testing.T) {
+	recovered := publicObservation(&rpc.ObservationStatus{
+		State: state.ObservationObservable, RecoveredAt: "2026-01-01T00:01:00Z",
+	})
+	if recovered == nil || recovered.RecoveredAt == "" {
+		t.Fatalf("recovered observation = %+v, want it published", recovered)
+	}
+}
+
 func TestScanGroupsObservedPublishesNarrowCoverage(t *testing.T) {
 	t.Setenv("BERTH_HOME", t.TempDir())
 	dir := t.TempDir()

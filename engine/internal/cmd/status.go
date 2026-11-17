@@ -532,8 +532,14 @@ func localStatusGroup(ctx context.Context, root, name string, pp []ports.Listeni
 // verdict is a fact the reader needs before treating an empty port list as
 // idle — including an observable verdict whose table is narrow, because
 // absence from that table is unknown rather than free.
+//
+// It also keeps a verdict that reports a recovery, even though nothing limits
+// the table any more: "healthy since when" is a fact only that object carries,
+// and dropping it would leave an agent unable to tell a machine that has always
+// been fine from one that just came back.
 func publicObservation(obs *rpc.ObservationStatus) *rpc.ObservationStatus {
-	if obs == nil || (obs.State == string(ports.ObservationObservable) && !obs.Narrow()) {
+	if obs == nil ||
+		(obs.State == string(ports.ObservationObservable) && !obs.Narrow() && obs.RecoveredAt == "") {
 		return nil
 	}
 	return obs
@@ -782,17 +788,21 @@ func printStatusHead(doc statusDocument) {
 	}
 	fmt.Println(head)
 
-	if doc.Observation != nil {
+	// The line speaks only when the table is limited or unreadable. A verdict
+	// that only reports a recovery limits nothing, so it stays a --json fact
+	// instead of a warning above a complete list of listeners.
+	if obs := doc.Observation; obs != nil &&
+		(obs.Narrow() || obs.State != string(ports.ObservationObservable)) {
 		// An observable narrow table still lists this user's ports; saying
 		// "unknown" above them would erase what the reader can see. Only a
 		// verdict that could not read a table takes the stronger word.
 		label := display.Yellow("unknown")
-		if doc.Observation.State == string(ports.ObservationObservable) {
+		if obs.State == string(ports.ObservationObservable) {
 			label = display.Yellow("limited")
 		}
-		statusLine("listeners", label+" · "+doc.Observation.Detail)
-		if doc.Observation.Hint != "" {
-			statusLine("next", doc.Observation.Hint)
+		statusLine("listeners", label+" · "+obs.Detail)
+		if obs.Hint != "" {
+			statusLine("next", obs.Hint)
 		}
 	}
 }
