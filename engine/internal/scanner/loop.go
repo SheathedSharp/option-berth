@@ -137,8 +137,9 @@ type Options struct {
 	ScanContext func(ctx context.Context, include Include) ([]ports.ListeningPort, error)
 
 	// ScanSource takes precedence over ScanContext and also reports which
-	// collector answered. Production uses this seam: a narrow source like the
-	// Darwin lsof fallback cannot see other users' sockets, so the snapshot has
+	// collector answered. Production uses this seam: an alternative collector
+	// from the platform's chain cannot promise what the primary one does (the
+	// Darwin lsof fallback cannot see other users' sockets), so the snapshot has
 	// to publish that coverage with the rows instead of letting absence read as
 	// "not listening".
 	ScanSource func(ctx context.Context, include Include) ([]ports.ListeningPort, string, error)
@@ -696,10 +697,10 @@ func (l *Loop) read(ctx context.Context, include Include) scanReading {
 			verdict: l.partialObservation(err, source),
 		}
 		if narrow {
-			// Production's narrow collector (the Darwin lsof fallback) either
-			// answers whole or reports a simultaneous failure, so a named
-			// source with partial rows does not occur there. Keep the coverage
-			// sentence authoritative if it ever does.
+			// An alternative collector from the platform's chain either answers
+			// whole or reports a simultaneous failure, so a named source with
+			// partial rows does not occur there. Keep the coverage sentence
+			// authoritative if it ever does.
 			reading.verdict = l.observableObservation(source)
 		}
 		return reading
@@ -725,9 +726,10 @@ func (l *Loop) partialObservation(reason error, source string) *state.Observatio
 	return partial
 }
 
-// observableObservation records that this scan could see the machine, though a
-// narrow source (netstat, ss) cannot show every owner. Publishing the coverage
-// alongside the rows is what stops "no owner" from reading as "nothing there".
+// observableObservation records that this scan could see the machine, though the
+// alternative collector that answered cannot promise everything the primary one
+// does. Publishing the coverage alongside the rows is what stops "no owner" from
+// reading as "nothing there".
 func (l *Loop) observableObservation(source string) *state.Observation {
 	return &state.Observation{
 		State:     state.ObservationObservable,

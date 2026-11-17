@@ -118,3 +118,18 @@ func TestScanFindsIsolatedListener(t *testing.T) {
 	}
 	t.Fatalf("native capture missed isolated listener pid=%d port=%d", os.Getpid(), port)
 }
+
+// A platform whose chain has one collector has nothing to fall back to: a failed
+// pass carries its own reason, never a dangling "; fallback:" with nothing after
+// it.
+func TestSingleCollectorChainReportsItsOwnReason(t *testing.T) {
+	_, source, err := collectListenersSource("windows", func(string, ...string) ([]byte, []byte, error) {
+		return nil, nil, nil
+	})
+	if source != "" {
+		t.Fatalf("source = %q, want the unnamed primary", source)
+	}
+	if err == nil || strings.Contains(err.Error(), "fallback") {
+		t.Fatalf("error = %v, want the collector's own reason and no fallback clause", err)
+	}
+}
