@@ -1017,6 +1017,12 @@ func printStatusListeners(doc statusDocument) {
 		if name == "" {
 			name = "unknown"
 		}
+		// A run holding no listener has no port to put in front of its name;
+		// writing the empty list would leave a line that starts with a space.
+		if len(run.Ports) == 0 {
+			parts = append(parts, name+" (run, no port)")
+			continue
+		}
 		parts = append(parts, portsText(run.Ports)+" (run "+name+")")
 	}
 	for _, listener := range unowned {

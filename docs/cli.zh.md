@@ -131,6 +131,7 @@ depends on · listeners · code · failed · next · drafts · last look），�
 失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
 `port: auto` 尚未分配时会显示 auto port unassigned。`listeners` 行给每个未被运行中服务行
 命名的监听一个归属：属于另一个运行的端口写成该运行的名字（`8082 (run finance-web)`），
+没有监听的在跑运行只写它自己的名字（`worker (run, no port)`），
 没有运行拥有的监听标为 `unowned`，并在进程表可读时带上进程名和 pid
 （`9090 (unowned: node, pid 1234)`）。`resources` 行写 `N declared running`；清单之外的运行
 由 listener 行点名，所以没有任何声明服务在跑的工作树不会被读成空闲。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是
@@ -249,15 +250,23 @@ JSON 顶层固定包含：
 }
 ~~~
 
+<<<<<<< HEAD
 `worktree.manifest_missing` 只在没有 `oberth.yaml` 声明这个 worktree 时出现且为 `true`，于是空的
 `services` 表示「没有可读的清单」而不是「没有声明服务」。完整文档用 `config_path` 为 null 说同一件事；
 brief 丢掉了路径，没有这个标志，brief 读者就分不清一个等待 `oberth init` 的 checkout 和一个已经配置
 好、只是空闲的 checkout。清单存在时该键不出现。
 
 `worktree.ad_hoc_runs` 给每个未被运行中服务行命名的监听一个归属。运行按 run id 识别，不按名字：
+=======
+`worktree.ad_hoc_runs` 给每个未被运行中服务行命名的监听一个归属，此外还列出这个 worktree 启动、
+但完全没有监听的在跑运行。运行按 run id 识别，不按名字：
+>>>>>>> origin/main
 清单没有声明的 `oberth start` 运行、仍用着声明服务名字的旧代际、以及声明服务的运行额外持有的
-端口都会出现在这里。每行带 `name`、`run_id`、`group`、`pid`，运行 mirror 还保留时带记录的
-`cmd`、`cwd` 和 `started_at`（缺省表示未知），以及排好序的 `ports`。`worktree.unowned_ports`
+端口都会出现在这里，没有端口的运行同样在内——它是 option-berth 拥有的进程，`down` 会停它、
+`restart --run` 会重放它，漏掉它就只能去翻进程表才找得到。每行带 `name`、`run_id`、`group`、
+`pid`，运行 mirror 还保留时带记录的 `cmd`、`cwd` 和 `started_at`（缺省表示未知），以及排好序的
+`ports`；没有端口时 `ports` 是空数组。运行中服务行已经命名的运行不会在这里重复：服务行就是它的
+归属。`worktree.unowned_ports`
 是剩下的一类：没有 option-berth 运行拥有的监听，每项带 `port`，进程表可读时还带 `pid` 和
 `command`。`ports` 仍是扁平的监听列表；运行中服务的 `port_actual`、`ad_hoc_runs` 和
 `unowned_ports` 合起来覆盖其中的每一项。声明服务的监听者若属于别的进程，由该服务的

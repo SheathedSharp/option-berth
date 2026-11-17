@@ -625,6 +625,63 @@ func TestStatusSummarySaysDeclaredAndStillShowsAdHocRuns(t *testing.T) {
 	}
 }
 
+// A run started with `oberth start -d` and holding no listener is still a run
+// option-berth owns. Status has to name it: `down` stops it, and a reader who
+// cannot see it falls back to scanning `ps`. The brief contract says ad_hoc_runs
+// names such runs while they are alive; without this a portless run is invisible
+// and only its absence from every section reveals it.
+func TestBriefStatusNamesALiveRunThatHoldsNoListener(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	started := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	pid := os.Getpid()
+	if err := runs.Add(runs.Entry{
+		PID: pid, ID: "portless-run", Group: "shop", Name: "portless",
+		Cmd: "sh -c while true", Cwd: "/work/shop", StartedAt: started.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("writing the mirror: %v", err)
+	}
+	doc := statusScopeFixture()
+
+	brief := briefStatusFrom(doc)
+	var found *briefAdHocRun
+	for i := range brief.Worktree.AdHocRuns {
+		if brief.Worktree.AdHocRuns[i].RunID == "portless-run" {
+			found = &brief.Worktree.AdHocRuns[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("ad_hoc_runs = %+v, want the live portless run named", brief.Worktree.AdHocRuns)
+	}
+	if found.Name != "portless" || found.PID != pid || found.Cmd != "sh -c while true" {
+		t.Fatalf("portless run = %+v, want its recorded facts", *found)
+	}
+	if found.Ports == nil || len(found.Ports) != 0 {
+		t.Fatalf("ports = %v, want an empty array rather than a missing field", found.Ports)
+	}
+}
+
+// A run a running service row already names must not be listed twice: the
+// service row is its home. A portless declared worker therefore stays out of
+// ad_hoc_runs while its service row is running.
+func TestBriefStatusDoesNotRepeatARunAServiceRowNames(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	pid := os.Getpid()
+	if err := runs.Add(runs.Entry{
+		PID: pid, ID: "api-run", Group: "shop", Name: "api",
+		Cmd: "go run ./cmd/api", Cwd: "/work/shop",
+	}); err != nil {
+		t.Fatalf("writing the mirror: %v", err)
+	}
+	doc := statusScopeFixture()
+
+	brief := briefStatusFrom(doc)
+	for _, run := range brief.Worktree.AdHocRuns {
+		if run.RunID == "api-run" {
+			t.Fatalf("ad_hoc_runs = %+v, want no row for a run its service row already names", brief.Worktree.AdHocRuns)
+		}
+	}
+}
+
 // An empty `services` array means two different things, and a brief reader
 // cannot ask the full document to tell them apart. "No oberth.yaml declares
 // this worktree" sends the reader to `oberth init`; "the manifest declares no
