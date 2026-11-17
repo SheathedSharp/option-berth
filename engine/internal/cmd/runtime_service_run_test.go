@@ -283,7 +283,7 @@ func TestRunForegroundRuntimeServiceServesUntilItsContextEnds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- runForegroundRuntimeService(ctx) }()
+	go func() { done <- runForegroundRuntimeService(ctx, false) }()
 
 	if err := client.WaitForSocket(context.Background(), socket, 10*time.Second); err != nil {
 		cancel()
