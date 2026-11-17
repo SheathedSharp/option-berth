@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
@@ -17,16 +18,25 @@ import (
 
 // liveRunRecord is one recorded live run as the wire record. runs.Load has
 // already pruned every dead pid, so what is left is a process that is running.
+//
+// This is the only conversion of a live entry: the log paths, the status
+// document and the restart hint all read a run through it, so a field added
+// here reaches every reader at once. A second conversion is how `logs --run`
+// once lost the log offset that `logs` had.
 func liveRunRecord(entry runs.Entry) rpc.RunRecord {
 	record := rpc.RunRecord{
 		ID: entry.ID, PID: entry.PID,
 		Group: entry.GroupOf(), Name: entry.NameOf(),
 		Cmd: entry.Cmd, Argv: append([]string(nil), entry.Argv...), Cwd: entry.Cwd,
-		StartedAt: entry.StartedAt, Status: "running",
+		StartedAt: normalizeStartedAt(entry.StartedAt), Status: "running",
+		Ports: []int{}, LogPath: entry.LogPath,
 	}
+	offset := entry.LogOffset
+	record.LogOffset = &offset
 	if entry.PortHint > 0 {
 		hint := entry.PortHint
 		record.PortHint = &hint
+		record.URL = "http://localhost:" + strconv.Itoa(hint)
 	}
 	return record
 }
@@ -53,27 +63,39 @@ func exitRunRecord(row store.RunExitRow) rpc.RunRecord {
 	return record
 }
 
-// runLedgerRecords is the whole ledger as records: live runs from the mirror,
-// ended runs from the store. It never starts a runtime service — explaining a
-// refusal is no reason to bring one up — and never takes the write path; the
-// ended half is read through a runtime service that already answers, or from the
-// store read-only when none does.
+
+// worktreeRuns is the single answer to "which runs belong to this worktree".
+// Every command reads it instead of re-deriving the set, because a command that
+// derives its own answer can disagree with the command next to it: `logs` once
+// refused a name `status` had just printed, and `status --brief` could not name
+// a run `restart --run` could replay. Those were not three bugs; they were three
+// copies of this question.
 //
-// The ended half only sharpens an answer the caller already has: an unreadable
-// store leaves the live records standing rather than replacing the refusal the
-// caller asked for with a storage error.
-func runLedgerRecords(ctx context.Context) []rpc.RunRecord {
-	registry := runs.Load()
-	records := make([]rpc.RunRecord, 0, len(registry.Runs))
-	for _, entry := range registry.Active() {
-		records = append(records, liveRunRecord(entry))
+// The runtime service owns the answer while it answers — it is the one writer of
+// run state — and the mirror plus the store are the same answer when it does not.
+// group scopes the answer to one worktree; "" asks for every run the ledger
+// holds, which only a caller explaining a refusal about an unknown project does.
+//
+// A nil client means the caller must not reach a host (explaining a refusal is no
+// reason to start one). Otherwise a host failure is returned rather than
+// silently answered from a possibly staler local copy.
+func worktreeRuns(ctx context.Context, c *client.Client, group string) ([]rpc.RunRecord, error) {
+	if c == nil {
+		return offlineRunRecords(ctx, group)
 	}
-	exits, err := storedRunExits(ctx)
-	if err != nil {
-		return records
+	var listed rpc.RunsListResult
+	if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
+		return nil, cliError(err)
 	}
-	for _, row := range exits {
-		records = append(records, exitRunRecord(row))
+	records := append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
+	if group == "" {
+		return records, nil
 	}
-	return records
+	out := records[:0]
+	for _, record := range records {
+		if record.Group == group {
+			out = append(out, record)
+		}
+	}
+	return out, nil
 }

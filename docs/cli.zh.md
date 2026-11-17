@@ -87,7 +87,8 @@ CLI 按 **agent 想做的事**分层，不按内部模块分：事实是「现�
 第二次运行会在 changed 中列出事实变化；--no-mark 只读不移动标记。
 
 `--only api,worker` 只保留这些服务及其 `depends_on` 的传递闭包；`ports[]`、`exits[]` 和
-`changed` 里的服务/端口变化一起收窄，`machine:` 与 git 摘要保持不变。名称必须已经声明：
+`changed` 里的服务/端口变化一起收窄，`machine:`、`runs` 与 git 摘要保持不变——`runs` 列出的是
+清单没有声明的运行，服务选择无法代表它们。名称必须已经声明：
 未知名称返回 `not_found` 并列出可选服务，空名称按参数错误处理。过滤发生在完整快照和
 「上次看」标记写入之后，因此不会把部分状态写成下一次比较的基线。代码比较也只对选中的
 服务做，不会为范围外的服务重读源码。
@@ -131,7 +132,8 @@ depends on · listeners · code · failed · next · drafts · last look），�
 失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
 `port: auto` 尚未分配时会显示 auto port unassigned。`listeners` 行给每个未被运行中服务行
 命名的监听一个归属：属于另一个运行的端口写成该运行的名字（`8082 (run finance-web)`），
-没有监听的在跑运行只写它自己的名字（`worker (run, no port)`），
+没有监听的在跑运行写它自己的名字和 pid（`worker (run, no port, pid 1234)`）——`kill` 接受的是
+端口或 pid，写名字而不写 pid 的读者没法动手，
 没有运行拥有的监听标为 `unowned`，并在进程表可读时带上进程名和 pid
 （`9090 (unowned: node, pid 1234)`）。`resources` 行写 `N declared running`；清单之外的运行
 由 listener 行点名，所以没有任何声明服务在跑的工作树不会被读成空闲。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是
@@ -278,7 +280,11 @@ brief 丢掉了路径，没有这个标志，brief 读者就分不清一个等�
 直接读这个字段拼库名，不必自己算哈希。
 
 changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对用的原始监听事实，不是
-独立的产品对象，也不是整台机器的端口清单。exits 是最近 5 次结束运行的新到旧历史，
+独立的产品对象，也不是整台机器的端口清单。runs 是这个 worktree 拥有的全部在跑运行，
+不论清单是否声明、也不论它是否持有监听——brief 文档把这些投影成 `ad_hoc_runs`，两者是
+同一个集合。没有监听的运行只出现在这里，`oberth start -d` 起的 worker 因此不必靠 `ps`
+才看得见。null 表示运行集合没能读出来，空数组表示这个 worktree 没有在跑运行，两者不是
+同一个答案。exits 是最近 5 次结束运行的新到旧历史，
 不是当前失败集合；当前事实以 `worktree.services[].last_exit` 为准。`exits[].ports`
 描述退出运行仍持有的端口，所以已退出的运行保持空数组；失败端口在 `port_hint`，
 占用者在 `port_holder`。每条失败记录可带 `hint`（与 `groups.start` 的 per-service hint 同义），

@@ -85,8 +85,9 @@ used. The command only leaves a "last look" marker in its own state file, and a 
 factual changes in changed; --no-mark reads without moving the marker.
 
 `--only api,worker` keeps only those services and the transitive closure of their `depends_on`;
-service/port changes in `ports[]`, `exits[]` and `changed` narrow along with it, while `machine:` and
-the git summary stay unchanged. Names must already be declared: an unknown name returns `not_found`
+service/port changes in `ports[]`, `exits[]` and `changed` narrow along with it, while `machine:`,
+`runs` and the git summary stay unchanged — `runs` names runs the manifest does not declare, so a
+service selection cannot speak for it. Names must already be declared: an unknown name returns `not_found`
 and lists the available services, and an empty name is treated as an argument error. Filtering
 happens after the full snapshot and the "last look" marker are written, so it never writes a partial
 state as the baseline for the next comparison. Code comparison also runs only for the selected
@@ -142,7 +143,8 @@ red, ordinary stop dim), degrading to plain text under NO_COLOR. A portless work
 marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. The
 `listeners` line gives every listener that no running service row already names its own home: a port
 owned by another run is written with that run's name (`8082 (run finance-web)`), a live run holding no
-listener is written with its own name alone (`worker (run, no port)`), and a listener no
+listener is written with its own name and pid (`worker (run, no port, pid 1234)`) — the pid is
+what `kill` accepts, so the line stays actionable — and a listener no
 run owns is marked `unowned` with the process and pid when the process table could read them
 (`9090 (unowned: node, pid 1234)`). The `resources` line says `N declared running`; runs outside the
 manifest are named on the listener line instead, so a worktree with no declared service running does
@@ -325,7 +327,12 @@ directly to compose the database name instead of computing a hash themselves.
 
 changed is an optional field that is absent on the first run. ports is still the raw listener fact for
 scripts to verify against, not an independent product object and not a port list for the whole
-machine. exits is the newest-to-oldest history of the last 5 finished runs, not the current failure
+machine. runs is every live run this worktree owns, whether or not the manifest declares it and
+whether or not it holds a listener — the same set the brief document projects into `ad_hoc_runs`.
+A run with no listener appears only here, which is what keeps an `oberth start -d` worker visible
+without `ps`. Null means the run set could not be read; an empty array means the worktree has no live
+runs, and the two are not the same answer. exits is the newest-to-oldest history of the last 5
+finished runs, not the current failure
 set; current facts are authoritative in `worktree.services[].last_exit`. `exits[].ports` describes
 ports an exited run still holds, which is why exited runs keep an empty array; the failing port is in
 `port_hint` and the holder in `port_holder`. Each failure record may carry `hint` (synonymous with

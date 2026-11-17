@@ -3,8 +3,6 @@ package cmd
 import (
 	"context"
 	"os"
-	"strconv"
-	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
@@ -27,19 +25,7 @@ func offlineRunRecords(ctx context.Context, group string) ([]rpc.RunRecord, erro
 			if group != "" && entry.GroupOf() != group {
 				continue
 			}
-			record := rpc.RunRecord{
-				ID: entry.ID, PID: entry.PID, Group: entry.GroupOf(), Name: entry.NameOf(),
-				Cmd: entry.Cmd, Cwd: entry.Cwd, StartedAt: normalizeStartedAt(entry.StartedAt),
-				Ports: []int{}, Status: "running", LogPath: entry.LogPath,
-			}
-			offset := entry.LogOffset
-			record.LogOffset = &offset
-			if entry.PortHint > 0 {
-				hint := entry.PortHint
-				record.PortHint = &hint
-				record.URL = "http://localhost:" + strconv.Itoa(hint)
-			}
-			records = append(records, record)
+			records = append(records, liveRunRecord(entry))
 		}
 	}
 
@@ -52,22 +38,7 @@ func offlineRunRecords(ctx context.Context, group string) ([]rpc.RunRecord, erro
 			if group != "" && row.Group != group {
 				continue
 			}
-			code := row.Code
-			record := rpc.RunRecord{
-				ID: row.ID, PID: row.PID, Group: row.Group, Name: row.Name,
-				Cmd: row.Cmd, Cwd: row.Cwd, StartedAt: row.StartedAt.UTC().Format(time.RFC3339),
-				Ports: []int{}, Status: "exited", ConfigPath: row.ConfigPath,
-				StartID: row.StartID, Origin: row.Origin, LogPath: row.LogPath,
-				LogOffset: &row.LogOffset, ExitCode: &code, Reason: row.Reason,
-				ExitedAt:  row.ExitedAt.UTC().Format(time.RFC3339),
-				LastLines: append([]string{}, row.LastLines...),
-			}
-			if row.PortHint > 0 {
-				hint := row.PortHint
-				record.PortHint = &hint
-				record.URL = "http://localhost:" + strconv.Itoa(hint)
-			}
-			records = append(records, record)
+			records = append(records, exitRunRecord(row))
 		}
 	}
 	records = append(records, unobservedEndings(group)...)
@@ -90,67 +61,33 @@ func dedupeRunRecords(records []rpc.RunRecord) []rpc.RunRecord {
 	return out
 }
 
-// currentRunForLogPath finds the generation whose bytes the default `logs
-// <service>` read should show. It asks the runtime service when one answers
-// and uses local evidence otherwise, so a stopped host does not mix the
-// current generation with the ones before it. A record whose log path moved or
-// whose start offset was never recorded is not usable as a scope.
-func currentRunForLogPath(ctx context.Context, c *client.Client, target, logPath string) (rpc.RunRecord, []rpc.RunRecord, bool) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return rpc.RunRecord{}, nil, false
-	}
-	group, _ := projectAt(wd)
+// currentRunForLogs resolves the generation a name refers to right now, from the
+// one run-set resolver. Every log reader goes through it, so the default read
+// and the ad-hoc-name fallback cannot disagree about which generation is "now".
+// group "" means the checkout the command runs in; a target outside any project
+// has no current run to resolve.
+//
+// It answers unconditionally on purpose: what makes a generation usable as a
+// scope (a matching path, a recorded start) is the caller's rule, and the two
+// callers have different rules.
+func currentRunForLogs(ctx context.Context, c *client.Client, group, target string) (rpc.RunRecord, []rpc.RunRecord, bool) {
 	if group == "" {
-		return rpc.RunRecord{}, nil, false
-	}
-	var records []rpc.RunRecord
-	if c != nil {
-		var listed rpc.RunsListResult
-		if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
+		wd, err := os.Getwd()
+		if err != nil {
 			return rpc.RunRecord{}, nil, false
 		}
-		records = append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
-	} else {
-		records, _ = offlineRunRecords(ctx, group)
-	}
-	rec, err := selectRunForLogs(records, group, target, "current")
-	if err != nil || rec.LogPath != logPath || rec.LogOffset == nil {
-		return rpc.RunRecord{}, nil, false
-	}
-	return rec, records, true
-}
-
-// recordedRunLogPath answers a name the manifest does not declare. `oberth
-// start -d --name X` records the log its run writes, and status publishes that
-// name in ad_hoc_runs and in the exit hint `oberth logs X --once`; without this
-// the reader is sent to a command that refuses the very name it was told.
-// Only a current generation with a recorded path answers: a run that logged
-// nowhere has no file to open, and guessing one would invent evidence.
-func recordedRunLogPath(ctx context.Context, c *client.Client, group, target string) (string, bool) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", false
-	}
-	if group == "" {
 		group, _ = projectAt(wd)
 	}
 	if group == "" {
-		return "", false
+		return rpc.RunRecord{}, nil, false
 	}
-	var records []rpc.RunRecord
-	if c != nil {
-		var listed rpc.RunsListResult
-		if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
-			return "", false
-		}
-		records = append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
-	} else {
-		records, _ = offlineRunRecords(ctx, group)
+	records, err := worktreeRuns(ctx, c, group)
+	if err != nil {
+		return rpc.RunRecord{}, nil, false
 	}
 	rec, err := selectRunForLogs(records, group, target, "current")
-	if err != nil || rec.LogPath == "" {
-		return "", false
+	if err != nil {
+		return rpc.RunRecord{}, nil, false
 	}
-	return rec.LogPath, true
+	return rec, records, true
 }
