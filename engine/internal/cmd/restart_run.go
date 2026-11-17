@@ -49,11 +49,10 @@ func restartAdHocRun(cmd *cobra.Command, args []string) error {
 			"restart the runtime service with `oberth runtime service restart`, then retry")
 	}
 
-	var listed rpc.RunsListResult
-	if err := c.Call(cmd.Context(), "runs.list", rpc.Empty{}, &listed); err != nil {
-		return cliError(err)
+	records, err := worktreeRuns(cmd.Context(), c, "")
+	if err != nil {
+		return err
 	}
-	records := append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
 	rec, err := selectNamedRun(records, group, restartRunFlag)
 	if err != nil {
 		return err
