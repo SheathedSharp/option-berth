@@ -13,6 +13,17 @@ const (
 	ssListeners
 	netstatListeners
 	darwinNetstatListeners
+	// linuxNetstatListeners is `netstat -tlnp`, which reads the same kernel
+	// socket table as `ss -tlnp` in the older format:
+	//
+	//	Proto Recv-Q Send-Q Local Address  Foreign Address  State   PID/Program name
+	//	tcp        0      0 127.0.0.1:631  0.0.0.0:*        LISTEN  -
+	//	tcp6       0      0 :::8080        :::*             LISTEN  1234/node
+	//
+	// The state column is what separates a listener from every other TCP row, and
+	// the last column is "-" whenever this user may not inspect the owner, so a
+	// missing pid is an unknown owner rather than no owner.
+	linuxNetstatListeners
 )
 
 // socketRecord contains only acquired facts. The much wider ListeningPort
@@ -140,6 +151,17 @@ func decodeSocket(line string, format listenerFormat) (socketRecord, bool) {
 			return record, false
 		}
 		record.pid, record.process = parseSSUsers(line)
+	case linuxNetstatListeners:
+		// Without -p the owner column is absent; the row is then a fact about
+		// the port and nothing about the process, which is exactly what
+		// AttributesPID says this collector cannot always promise.
+		if count < 6 || (columns[0] != "tcp" && columns[0] != "tcp6") || columns[5] != "LISTEN" {
+			return record, false
+		}
+		endpoint, v6 = columns[3], columns[0] == "tcp6"
+		if count > 6 {
+			record.pid, record.process = parseNetstatProgram(columns[6])
+		}
 	default:
 		return record, false
 	}
@@ -205,6 +227,22 @@ func parseSSUsers(line string) (int, string) {
 		return 0, name
 	}
 	return pid, name
+}
+
+// parseNetstatProgram reads netstat's "pid/program" column. "-" means this user
+// may not inspect the socket's owner: the port is still a fact, the process is
+// not. A program name keeps its own spaces only up to the first one, because
+// netstat's column layout has no quoting of its own.
+func parseNetstatProgram(field string) (int, string) {
+	pidText, process, separated := strings.Cut(field, "/")
+	if !separated {
+		return 0, ""
+	}
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid < 0 {
+		return 0, ""
+	}
+	return pid, process
 }
 
 // normalizeBind keeps wildcard family explicit while preserving literal IPv6

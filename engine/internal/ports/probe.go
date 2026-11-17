@@ -33,7 +33,7 @@ type ProbeResult struct {
 	Hint   string
 	Err    error
 	// Source names the collector that answered when it was not the platform's
-	// primary one ("lsof" on Darwin). Empty means the primary collector.
+	// primary one (see chain). Empty means the primary collector.
 	Source string
 }
 
@@ -43,11 +43,11 @@ type ProbeResult struct {
 // allowed to look": sandboxes deny the syscall without denying exec, so the
 // command exits 0 with a valid-looking empty table.
 //
-// Source is set when a Darwin fallback collector answered (listenerSourceLsofName):
-// the process can see its own listeners, but the table it read is narrower than
-// the primary one, and a reader deciding that a *foreign* port is absent needs
-// to know that. It never changes the verdict — the probe only ever asks about a
-// socket this process owns.
+// Source is set when an alternative collector answered instead of the platform's
+// primary one: the process can see its own listeners, but the table it read can
+// promise less than the primary one (see Capabilities), and a reader deciding
+// that a *foreign* port is absent needs to know that. It never changes the
+// verdict — the probe only ever asks about a socket this process owns.
 func ProbeListenerObservation(ctx context.Context) ProbeResult {
 	return probeListenerObservationSource(ctx, func(ctx context.Context, _, _ int) ([]ListeningPort, string, error) {
 		return scanContextSource(ctx)

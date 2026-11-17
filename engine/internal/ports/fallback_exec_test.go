@@ -61,9 +61,9 @@ func TestDarwinFallbackRunsThroughRealExec(t *testing.T) {
 	t.Setenv("PATH", shimDir)
 
 	// netstat exits 0 with no table at all. That is the shape of issue #156 and
-	// the only one that falls back: a printed header is a decodable table with
-	// zero rows, which the scan reports as a healthy empty observation rather
-	// than as a reason to switch collectors.
+	// one of the shapes that falls back: a printed header is a decodable table
+	// with zero rows, which the scan reports as a healthy empty observation
+	// rather than as a reason to switch collectors.
 	collectorShim(t, shimDir, "netstat", "exit 0\n")
 	// lsof's -Fpcltn record stream: pid, command, descriptor, family, endpoint.
 	collectorShim(t, shimDir, "lsof", "printf 'p900\\ncrelayd\\nf3\\ntIPv4\\nn127.0.0.1:18123\\n'\n")

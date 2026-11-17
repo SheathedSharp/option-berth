@@ -34,7 +34,13 @@ func TestListenerCommandFailureIsNotAnEmptyHealthyScan(t *testing.T) {
 		{"usage failure with prefix", "darwin", valid, "failure", collectorExit(2), true, 0},
 		{"interrupted with prefix", "darwin", valid, "", collectorExit(-1), true, 0},
 		{"canceled", "darwin", valid, "", context.Canceled, true, 0},
+		// A table that was printed and rejected stays a decoder problem: the
+		// alternative collector is never asked to paper over it.
+		{"unreadable darwin table", "darwin", darwinTCPHeader + "tcp4 0\n", "", nil, true, 0},
 		{"ss empty failure", "linux", "", "", collectorExit(1), true, 0},
+		{"ss missing", "linux", "", "", exec.ErrNotFound, true, 0},
+		{"warning on either linux rung", "linux", linuxSSTable, "incomplete output", nil, true, 0},
+		{"empty on both linux rungs", "linux", "", "", nil, true, 0},
 		{"netstat failure", "windows", "", "denied", collectorExit(1), true, 0},
 	}
 
@@ -56,33 +62,42 @@ func TestListenerCommandFailureIsNotAnEmptyHealthyScan(t *testing.T) {
 	}
 }
 
+// Every rung runs the one command its decoder understands, with fixed arguments
+// and no option derived from the environment. Rungs after the primary are
+// reached by making the ones before them report an executable they do not have.
 func TestListenerCommandUsesOnlyFixedPlatformArguments(t *testing.T) {
 	for _, tt := range []struct {
 		platform, tool string
 		args           []string
+		out            string
+		wantCalls      int
 	}{
-		{"darwin", "netstat", []string{"-anvl", "-p", "tcp"}},
-		{"linux", "ss", []string{"-tlnp"}},
-		{"windows", "netstat", []string{"-ano"}},
+		{"darwin", "netstat", []string{"-anvl", "-p", "tcp"},
+			darwinTCPHeader + "tcp4 0 0 127.0.0.1.18120 *.* LISTEN 0 0 128 128 node:900 0 0\n", 1},
+		{"darwin", "lsof", []string{"-a", "-n", "-P", "-w", "+c", "0", "-iTCP", "-sTCP:LISTEN", "-Fpcltn"},
+			"p900\ncrelayd\nf3\ntIPv4\nn127.0.0.1:18120\n", 2},
+		{"linux", "ss", []string{"-tlnp"}, linuxSSTable, 1},
+		{"linux", "netstat", []string{"-tlnp"},
+			"tcp 0 0 127.0.0.1:18120 0.0.0.0:* LISTEN 900/relayd\n", 2},
+		{"windows", "netstat", []string{"-ano"},
+			"  TCP    127.0.0.1:18120    0.0.0.0:0    LISTENING    900\n", 1},
 	} {
-		calls := 0
-		_, err := collectListeners(tt.platform, func(tool string, args ...string) ([]byte, []byte, error) {
-			calls++
-			if tool != tt.tool || !reflect.DeepEqual(args, tt.args) {
-				t.Fatalf("command = %s %v", tool, args)
-			}
-			switch tt.platform {
-			case "darwin":
-				return []byte(darwinTCPHeader), nil, nil
-			case "linux":
-				return []byte("State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"), nil, nil
-			default:
-				return []byte("  Proto  Local Address          Foreign Address        State           PID\n"), nil, nil
+		t.Run(tt.platform+" "+tt.tool, func(t *testing.T) {
+			calls := 0
+			_, err := collectListeners(tt.platform, func(tool string, args ...string) ([]byte, []byte, error) {
+				calls++
+				if tool != tt.tool {
+					return nil, nil, exec.ErrNotFound
+				}
+				if !reflect.DeepEqual(args, tt.args) {
+					t.Fatalf("command = %s %v, want %v", tool, args, tt.args)
+				}
+				return []byte(tt.out), nil, nil
+			})
+			if err != nil || calls != tt.wantCalls {
+				t.Fatalf("calls=%d error=%v, want %d calls and no error", calls, err, tt.wantCalls)
 			}
 		})
-		if err != nil || calls != 1 {
-			t.Fatalf("calls=%d error=%v", calls, err)
-		}
 	}
 	_, err := collectListeners("unsupported", func(string, ...string) ([]byte, []byte, error) {
 		t.Fatal("unsupported platform invoked a command")
@@ -117,4 +132,19 @@ func TestScanFindsIsolatedListener(t *testing.T) {
 		}
 	}
 	t.Fatalf("native capture missed isolated listener pid=%d port=%d", os.Getpid(), port)
+}
+
+// A platform whose chain has one collector has nothing to fall back to: a failed
+// pass carries its own reason, never a dangling "; fallback:" with nothing after
+// it.
+func TestSingleCollectorChainReportsItsOwnReason(t *testing.T) {
+	_, source, err := collectListenersSource("windows", func(string, ...string) ([]byte, []byte, error) {
+		return nil, nil, nil
+	})
+	if source != "" {
+		t.Fatalf("source = %q, want the unnamed primary", source)
+	}
+	if err == nil || strings.Contains(err.Error(), "fallback") {
+		t.Fatalf("error = %v, want the collector's own reason and no fallback clause", err)
+	}
 }
