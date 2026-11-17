@@ -44,9 +44,9 @@ class AreasTests(unittest.TestCase):
         self.assertEqual(needed(areas.areas_for([".github/workflows/ci.yml"])), set(areas.AREAS))
 
     def test_skill_pin_change_runs_the_engine_check_that_reads_it(self):
-        # Bumping the pin without re-running `Skill covers the agent contract`
-        # would leave the new pin unproven.
-        self.assertEqual(needed(areas.areas_for([".github/skill-contract-ref.txt"])), {"engine"})
+        # The pin lives in engine.yml. A workflow change already runs every
+        # area, so bumping it cannot skip `Skill covers the agent contract`.
+        self.assertEqual(needed(areas.areas_for([".github/workflows/engine.yml"])), set(areas.AREAS))
 
     def test_file_rules_match_exactly_not_by_prefix(self):
         self.assertEqual(needed(areas.areas_for(["install.sh.bak"])), set())

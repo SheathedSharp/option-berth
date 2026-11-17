@@ -25,7 +25,6 @@ AREAS: dict[str, tuple[str, ...]] = {
         "install.ps1",
         "uninstall.sh",
         "uninstall.ps1",
-        ".github/skill-contract-ref.txt",
     ),
     "windows": ("engine/", "install.ps1", "uninstall.ps1"),
     "git": (
