@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -338,21 +339,39 @@ func TestUpParamsPassesTheGroupName(t *testing.T) {
 }
 
 // TestUpParamsWithoutAConfig says what to do next rather than only failing.
+//
+// "There is no usable manifest" is an answer a caller branches on, so it is a
+// coded not_found refusal with the next step in the hint — never an internal
+// fault, and never the hint folded into the message.
 func TestUpParamsWithoutAConfig(t *testing.T) {
 	chdir(t, t.TempDir())
 	upOnly = []string(nil)
 
 	_, _, runErr := upParams(nil)
-	if runErr == nil {
-		t.Fatal("expected an error with no .oberth.yaml anywhere")
+	var coded *cliErr
+	if !errors.As(runErr, &coded) || coded.Code != "not_found" {
+		t.Fatalf("error = %v, want a not_found cliErr", runErr)
 	}
-	if !strings.Contains(runErr.Error(), "oberth init") {
-		t.Errorf("error should say how to make one: %v", runErr)
+	if !strings.Contains(coded.Msg, "no "+groups.ConfigName+" at or above") {
+		t.Errorf("message = %q, want it to name the missing manifest", coded.Msg)
+	}
+	if strings.Contains(coded.Msg, "hint:") {
+		t.Errorf("message = %q, want the hint in its own field", coded.Msg)
+	}
+	if !strings.Contains(coded.Hint, "oberth init") {
+		t.Errorf("hint = %q, want it to say how to make a manifest", coded.Hint)
+	}
+	if code, msg, hint := describe(runErr); code != "not_found" || msg != coded.Msg || hint != coded.Hint {
+		t.Errorf("describe = %q/%q/%q, want the coded refusal", code, msg, hint)
+	}
+	if got := reportError(io.Discard, runErr); got != exitFail {
+		t.Errorf("exit = %d, want %d", got, exitFail)
 	}
 }
 
 // TestUpParamsReportsABrokenConfig instead of pretending there is none: the
-// two problems have completely different fixes.
+// two problems have completely different fixes. It is the same not_found code —
+// the manifest is unusable either way — with a hint about the file that failed.
 func TestUpParamsReportsABrokenConfig(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, groups.ConfigName),
@@ -368,6 +387,13 @@ func TestUpParamsReportsABrokenConfig(t *testing.T) {
 	}
 	if !strings.Contains(runErr.Error(), "cannot be used") || !strings.Contains(runErr.Error(), "whitespace") {
 		t.Errorf("error = %v, want it to name the validation problem", runErr)
+	}
+	var coded *cliErr
+	if !errors.As(runErr, &coded) || coded.Code != "not_found" {
+		t.Fatalf("error = %v, want a not_found cliErr", runErr)
+	}
+	if coded.Hint == "" {
+		t.Errorf("hint is empty: %v", runErr)
 	}
 }
 

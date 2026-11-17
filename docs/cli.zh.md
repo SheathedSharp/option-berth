@@ -10,7 +10,7 @@
 
 ## 共通规则
 
-- 命令在当前目录（或显式的路径 / 项目名）上工作。没有清单时，先运行 oberth init。
+- 命令在当前目录（或显式的路径 / 项目名）上工作。没有清单时，先运行 oberth init：需要清单的命令以 `not_found` 返回，并在 hint 里给出这一步。
 - 默认输出给人读；普通 `--json` 时 stdout 恰好只有一个 JSON 值。显式流式命令每行一个值，错误写 stderr。
 - 跟随日志和其他流式命令使用 NDJSON：每行一个 JSON 值。
 - 退出码：0 成功，1 运行失败，2 参数或选项错误，130 被 Ctrl-C 中断。
@@ -512,6 +512,9 @@ JSON 值，不混入诊断。旧 runtime service 不认识 `progress`，旧 CLI 
 只有清单声明的服务可以重启。`oberth start` 启动的运行没有清单条目：如果它仍在运行，先停止，
 再重新执行那条命令。`restart --only` 点名这类运行且运行账本认识它时，`not_found` 的 hint 会
 打印记录下来的启动命令（cwd、group、name、port 与命令），而不是指回 `status`。
+这条 hint 不依赖清单是否存在：worktree 里根本没有 `oberth.yaml` 时同样给出记录下来的启动命令，
+因为知道这条命令的是运行账本而不是清单。账本不认识的名称则回到「没有可用清单」的 `not_found`
+及其 `oberth init` hint。
 
 启动半段对「监听者不是 option-berth 启动的进程」的报告方式与 `up` 相同：跳过，并在原因和
 hint 里写出进程与端口。`--force` 只跳过优雅停止，不会接管 option-berth 没启动的进程。
