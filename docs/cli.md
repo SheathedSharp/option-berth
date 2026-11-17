@@ -130,8 +130,13 @@ labels as fixed-width English columns (services · depends on · listeners · co
 drafts · last look) aligned by terminal display width. Each service gets its own line showing both the
 declared port and the current runtime facts; the service state word is colored (running green, failed
 red, ordinary stop dim), degrading to plain text under NO_COLOR. A portless worker is explicitly
-marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. Only
-listeners the manifest did not declare are listed separately. In the failure section each service
+marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. The
+`listeners` line gives every listener that no running service row already names its own home: a port
+owned by another run is written with that run's name (`8082 (run finance-web)`), and a listener no
+run owns is marked `unowned` with the process and pid when the process table could read them
+(`9090 (unowned: node, pid 1234)`). The `resources` line says `N declared running`; runs outside the
+manifest are named on the listener line instead, so a worktree with no declared service running does
+not read as idle. In the failure section each service
 shows only its most recent exit record, and only while that record is still the service's current
 `last_exit`: once the service has re-run, or the newest record is a normal exit or a `down` stop, the
 service leaves the failure section and the old record stays in the `exits[]` history. Different
@@ -166,11 +171,13 @@ Running services carry `stats` (`cpu_percent`, `memory_rss_bytes`, `thread_count
 `connections`). A service with a listener samples from the listener row; a portless worker samples
 from its running root process, so a worker no longer lacks resource data just because it holds no
 port. When there is no sample the fields are absent, meaning **unknown**, not 0.
-`worktree.running_services` is the number of declared services that are running; `worktree.resources`
-is the worktree aggregate of those service samples (`cpu_percent`, `memory_rss_bytes`, `services`
-being the number of contributing samples). The aggregate appears only when at least one service has a
-sample and makes the difference between `services` and `running_services` explicit; with no samples it
-is absent and never uses 0 to impersonate a measurement.
+`worktree.running_services` is the number of declared services that are running; it does not count
+runs the manifest does not declare. Read `worktree.ad_hoc_runs` and `worktree.unowned_ports` for the
+listeners those runs and processes hold. `worktree.resources` is the worktree aggregate of the
+declared services' samples (`cpu_percent`, `memory_rss_bytes`, `services` being the number of
+contributing samples). The aggregate appears only when at least one service has a sample and makes
+the difference between `services` and `running_services` explicit; with no samples it is absent and
+never uses 0 to impersonate a measurement.
 
 Running services also carry `manifest_hash` and `runtime_spec_hash`; when the two differ,
 `manifest_runtime_mismatch` is `true`, meaning the current process comes from an old manifest and
@@ -256,7 +263,12 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
                     "waiting_on": ["db"], "last_prepare_ms": null}}
     ],
     "ad_hoc_runs": [
-      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530, "ports": [8082]}
+      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530,
+       "cmd": "yarn dev", "cwd": "/work/demo/web",
+       "started_at": "2026-10-31T09:00:00Z", "ports": [8082]}
+    ],
+    "unowned_ports": [
+      {"port": 9090, "pid": 55120, "command": "python3 -m http.server 9090"}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
@@ -265,12 +277,16 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
 }
 ~~~
 
-`worktree.ad_hoc_runs` lists the runs started with `oberth start` whose listeners belong to this
-worktree but whose names are not declared services: `name`, `run_id`, `group`, `pid` and the `ports`
-each holds. `ports` stays the flat listener list; this is the attribution that list cannot carry, so
-a reader can tell a process oberth owns from a foreign one. A declared service's listener that another
-process owns is named by that service's `port_holder`; `ad_hoc_runs` is only for runs the manifest
-does not declare.
+`worktree.ad_hoc_runs` attributes every listener that no running service row already names. The run is
+identified by its run id, not by its name: an `oberth start` run the manifest does not declare, a stale
+generation that still uses a declared service's name, and a declared service's run holding an extra
+port all appear here. Each row carries `name`, `run_id`, `group`, `pid`, the recorded `cmd`, `cwd` and
+`started_at` when the run mirror still has them (absent means unknown), and the sorted `ports` it
+holds. `worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
+and `pid` and `command` when the process table supplied them. `ports` stays the flat listener list;
+together, a running service's `port_actual`, `ad_hoc_runs` and `unowned_ports` cover every entry in it.
+A declared service's listener that another process owns is named by that service's `port_holder`; an
+owned run is not repeated there.
 
 `worktree.identity` is exactly the value `${worktree}` expands to in the manifest. It is derived from
 the checkout's canonicalized root path, so the same checkout reads the same value every time; when a
