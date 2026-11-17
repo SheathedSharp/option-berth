@@ -48,7 +48,7 @@ func TestStartKickstartsTheGuiDomain(t *testing.T) {
 	if err := Current().Start(context.Background()); err != nil {
 		t.Fatalf("Start() = %v, want nil", err)
 	}
-	wantCalls(t, log, "kickstart "+guiJob())
+	wantCalls(t, log, "launchctl kickstart "+guiJob())
 }
 
 // Over SSH there is no GUI session, and launchd puts the same job in user/<uid>.
@@ -58,7 +58,7 @@ func TestStartFallsBackToTheUserDomain(t *testing.T) {
 	if err := Current().Start(context.Background()); err != nil {
 		t.Fatalf("Start() = %v, want nil", err)
 	}
-	wantCalls(t, log, "kickstart "+guiJob(), "kickstart "+userJob())
+	wantCalls(t, log, "launchctl kickstart "+guiJob(), "launchctl kickstart "+userJob())
 }
 
 // When neither domain takes the job the error has to name the command that was
@@ -84,7 +84,7 @@ func TestRestartReplacesTheRunningJob(t *testing.T) {
 	if err := Current().Restart(context.Background()); err != nil {
 		t.Fatalf("Restart() = %v, want nil", err)
 	}
-	wantCalls(t, log, "kickstart -k "+guiJob())
+	wantCalls(t, log, "launchctl kickstart -k "+guiJob())
 }
 
 // Active is a query: `print` succeeding means the job is loaded, and every
@@ -96,10 +96,10 @@ func TestActiveAsksLaunchdAboutBothDomains(t *testing.T) {
 		state bool
 		calls []string
 	}{
-		{"loaded in the gui domain", "exit 0", true, []string{"print " + guiJob()}},
+		{"loaded in the gui domain", "exit 0", true, []string{"launchctl print " + guiJob()}},
 		{"loaded in the user domain", "case \"$*\" in\n*gui/*) exit 1 ;;\nesac\nexit 0", true,
-			[]string{"print " + guiJob(), "print " + userJob()}},
-		{"not loaded", "exit 113", false, []string{"print " + guiJob(), "print " + userJob()}},
+			[]string{"launchctl print " + guiJob(), "launchctl print " + userJob()}},
+		{"not loaded", "exit 113", false, []string{"launchctl print " + guiJob(), "launchctl print " + userJob()}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			log := shim(t, "launchctl", testCase.body)

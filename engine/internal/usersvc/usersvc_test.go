@@ -17,7 +17,10 @@ func shim(t *testing.T, name, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls.log")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SHIM_LOG\"\n" + body + "\n"
+	// ${0##*/} is the program name, which "$*" does not carry: the assertion has to
+	// name the command as well as its arguments, or a shim for one supervisor would
+	// satisfy a test for the other.
+	script := "#!/bin/sh\nprintf '%s %s\\n' \"${0##*/}\" \"$*\" >> \"$SHIM_LOG\"\n" + body + "\n"
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 		t.Fatalf("writing the %s shim: %v", name, err)
 	}
