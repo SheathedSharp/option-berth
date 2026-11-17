@@ -13,8 +13,12 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = ROOT / "install.sh"
+UNINSTALLER = ROOT / "uninstall.sh"
 HELPER = ROOT / "scripts" / "install-path.sh"
 TAG = "v9.9.9"
+# OLD_TAG is what an upgrade starts from, so the binary a stopped unit was running
+# and the binary that replaces it are different files.
+OLD_TAG = "v9.8.0"
 
 
 def target():
@@ -91,15 +95,34 @@ def serve(root: Path, latest_available=True, fail_download=False, checksum_overr
     return server
 
 
-def build_release(root: Path, helper=True):
+# FIXTURE_BINARY is the oberth the archive contains. It answers the three questions the
+# installer asks a CLI — version, whether this process can see listeners, and whether a
+# runtime service is running — and appends every invocation to $BERTH_TEST_LOG, so a test
+# can order the installer's own steps against the supervisor's.
+FIXTURE_BINARY = """#!/bin/sh
+if [ -n "${BERTH_TEST_LOG:-}" ]; then printf 'oberth %s\\n' "$*" >>"$BERTH_TEST_LOG"; fi
+if [ "$1" = version ]; then
+	echo 'option-berth {tag} (fixture)'
+fi
+if [ "$1" = doctor ] && [ "${BERTH_FIXTURE_DOCTOR_OK:-1}" != 1 ]; then
+	exit 1
+fi
+if [ "$1" = runtime ] && [ "$3" = stop ]; then
+	echo '{"running": false}'
+fi
+exit 0
+"""
+
+
+def build_release(root: Path, helper=True, tag=TAG):
     system, arch = target()
     if not system or not arch:
         raise unittest.SkipTest(f"no release fixture for {platform.system()}/{platform.machine()}")
-    stem = f"option-berth-{TAG}-{system}-{arch}"
+    stem = f"option-berth-{tag}-{system}-{arch}"
     stage = root / "stage" / stem
     stage.mkdir(parents=True)
     oberth = stage / "oberth"
-    oberth.write_text("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'option-berth v9.9.9 (fixture)'; fi\nexit 0\n")
+    oberth.write_text(FIXTURE_BINARY.replace("{tag}", tag))
     oberth.chmod(0o755)
     if helper:
         shutil.copyfile(HELPER, stage / "install-path.sh")
@@ -107,7 +130,7 @@ def build_release(root: Path, helper=True):
     (stage / "licenses").mkdir()
     (stage / "licenses" / "engine-LICENSE").write_text("fixture engine licence\n")
     (stage / "build-manifest.json").write_text("{}\n")
-    archive = root / TAG / f"{stem}.tar.gz"
+    archive = root / tag / f"{stem}.tar.gz"
     archive.parent.mkdir(parents=True)
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(stage, arcname=stem)
@@ -126,8 +149,66 @@ class InstallTests(unittest.TestCase):
         self.home.mkdir()
         self.download = root / "download"
         self.download.mkdir()
+        self.shims = root / "shims"
+        self.shims.mkdir()
+        self.log = root / "calls.log"
         self.archive = None
         self.server = None
+        self.write_shims()
+
+    def write_shims(self, body="exit 0"):
+        """Put a fake launchctl and systemctl first on PATH.
+
+        Both are written whatever the platform: the scripts pick a supervisor by
+        `uname`, and a test that reached the real one would be a test that changed
+        this machine. Every invocation is appended to $BERTH_TEST_LOG, so a test can
+        assert the exact command and the order it ran in. body is the shell the fake
+        runs after logging; the default accepts everything.
+        """
+        for name in ("launchctl", "systemctl"):
+            shim = self.shims / name
+            shim.write_text(
+                "#!/bin/sh\n"
+                f'line="{name} $*"\n'
+                'if [ -n "${BERTH_TEST_BIN:-}" ] && [ -f "$BERTH_TEST_BIN" ]; then\n'
+                '  if command -v sha256sum >/dev/null 2>&1; then\n'
+                '    digest=$(sha256sum "$BERTH_TEST_BIN" | cut -d" " -f1)\n'
+                "  else\n"
+                '    digest=$(shasum -a 256 "$BERTH_TEST_BIN" | cut -d" " -f1)\n'
+                "  fi\n"
+                '  line="$line bin=$digest"\n'
+                "fi\n"
+                'printf \'%s\\n\' "$line" >>"$BERTH_TEST_LOG"\n'
+                f"{body}\n"
+            )
+            shim.chmod(0o755)
+
+    def calls(self, since=0):
+        """The command lines the fake supervisor and the fixture CLI logged."""
+        if not self.log.exists():
+            return []
+        return self.log.read_text().splitlines()[since:]
+
+    def install_env(self):
+        env = dict(os.environ)
+        env.update(
+            HOME=str(self.home),
+            # The supervisor comes from the shim directory; everything else (curl, tar,
+            # uname, id, dirname) still has to resolve, so the rest of PATH stays.
+            PATH=str(self.shims) + os.pathsep + os.environ.get("PATH", ""),
+            BERTH_TEST_LOG=str(self.log),
+            XDG_CONFIG_HOME="",
+        )
+        return env
+
+    def unit_path(self):
+        if platform.system() == "Darwin":
+            return self.home / "Library" / "LaunchAgents" / "com.sheathedsharp.option-berth.runtime.plist"
+        return self.home / ".config" / "systemd" / "user" / "option-berth-runtime.service"
+
+    @staticmethod
+    def digest(path):
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
     def start(self, latest_available=True, helper=True, raw_helper=False, fail_download=False,
               checksum_overrides=None):
@@ -148,9 +229,8 @@ class InstallTests(unittest.TestCase):
 
     def install(self, *args, version=TAG, extra_env=None):
         port = self.server.server_address[1]
-        env = dict(os.environ)
+        env = self.install_env()
         env.update(
-            HOME=str(self.home),
             BERTH_INSTALL_BASE_URL=f"http://127.0.0.1:{port}/download",
             BERTH_INSTALL_LATEST_URL=f"http://127.0.0.1:{port}/latest",
             BERTH_INSTALL_RAW_URL=f"http://127.0.0.1:{port}/raw",
@@ -158,6 +238,7 @@ class InstallTests(unittest.TestCase):
             BERTH_INSTALL_DIR=str(self.home / ".local" / "bin"),
         )
         env.pop("NO_MODIFY_PATH", None)
+        env.pop("BERTH_INSTALL_NO_SERVICE", None)
         if version:
             env["BERTH_INSTALL_VERSION"] = version
         else:
@@ -165,6 +246,15 @@ class InstallTests(unittest.TestCase):
         env.update(extra_env or {})
         return subprocess.run(
             ["sh", str(INSTALLER), *args],
+            env=env, capture_output=True, text=True, errors="replace", timeout=30,
+        )
+
+    def uninstall(self, *args, extra_env=None):
+        env = self.install_env()
+        env.update(BERTH_INSTALL_DIR=str(self.home / ".local" / "bin"))
+        env.update(extra_env or {})
+        return subprocess.run(
+            ["sh", str(UNINSTALLER), *args],
             env=env, capture_output=True, text=True, errors="replace", timeout=30,
         )
 
@@ -267,6 +357,152 @@ class InstallTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("checksum sources disagree", result.stderr)
         self.assertFalse(self.installed("oberth").exists())
+
+
+    # ------------------------------------------------------ user-level unit ---
+    # install.sh registers the runtime service with launchd or systemd --user. None of
+    # these tests reach the real supervisor: the fake one lives first on PATH.
+
+    def test_default_install_registers_the_unit(self):
+        self.start()
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        unit = self.unit_path()
+        self.assertTrue(unit.is_file(), f"no unit at {unit}\nstdout:{result.stdout}\nstderr:{result.stderr}")
+        text = unit.read_text()
+        self.assertIn(str(self.installed("oberth")), text)
+        self.assertIn("--persistent", text)
+        self.assertIn("BERTH_RUNTIME_SERVICE_DETACHED", text)
+
+        calls = self.calls()
+        if platform.system() == "Darwin":
+            self.assertIn("RunAtLoad", text)
+            self.assertIn("<key>KeepAlive</key>", text)
+            self.assertIn("SuccessfulExit", text)
+            self.assertTrue(any(line.startswith("launchctl bootout ") for line in calls), calls)
+            self.assertTrue(
+                any(line.startswith(f"launchctl bootstrap gui/{os.getuid()} ") and str(unit) in line
+                    for line in calls),
+                f"the agent was never loaded: {calls}",
+            )
+        else:
+            self.assertIn("Restart=on-failure", text)
+            self.assertIn("RestartSec=2", text)
+            self.assertIn("WantedBy=default.target", text)
+            self.assertIn("systemctl --user enable --now option-berth-runtime.service", calls)
+
+    def test_unit_records_the_runtime_environment(self):
+        self.start()
+        berth_home = self.root / "berth-home"
+        result = self.install(extra_env={"BERTH_HOME": str(berth_home)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = self.unit_path().read_text()
+        self.assertIn(str(berth_home), text)
+        self.assertIn("BERTH_RUNTIME_SERVICE_DETACHED", text)
+        if platform.system() == "Darwin":
+            # launchd opens these files itself, so the directory has to exist first.
+            self.assertIn(str(berth_home / "runtime-service.log"), text)
+            self.assertTrue(berth_home.is_dir())
+
+    def test_no_service_flag_writes_no_unit(self):
+        self.start()
+        result = self.install("--no-service")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.unit_path().exists())
+        self.assertFalse(
+            [line for line in self.calls() if line.split(" ")[0] in ("launchctl", "systemctl")],
+            "the installer asked a supervisor to do something under --no-service",
+        )
+
+    def test_no_service_environment_variable_writes_no_unit(self):
+        self.start()
+        result = self.install(extra_env={"BERTH_INSTALL_NO_SERVICE": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.unit_path().exists())
+
+    def test_no_service_leaves_an_existing_unit_running_but_says_so(self):
+        self.start()
+        self.assertEqual(self.install().returncode, 0)
+        self.assertTrue(self.unit_path().is_file())
+        before = len(self.calls())
+
+        result = self.install("--no-service")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.unit_path().is_file())
+        self.assertIn("left as it was", result.stdout)
+        self.assertFalse([line for line in self.calls(before) if line.startswith("launchctl bootout")])
+
+    def test_a_refusing_supervisor_only_warns(self):
+        self.start()
+        self.write_shims("echo 'refused' >&2\nexit 1")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.unit_path().is_file(), "the unit file is left for the next login")
+        self.assertIn("not started", result.stderr)
+        self.assertIn("installed  ", result.stdout)
+
+    def test_observation_failure_skips_registration(self):
+        self.start()
+        result = self.install(extra_env={"BERTH_FIXTURE_DOCTOR_OK": "0"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.unit_path().exists())
+        self.assertIn("not registered", result.stderr)
+        self.assertTrue(self.installed("oberth").is_file())
+
+    def test_upgrade_stops_the_unit_before_replacing_the_binary(self):
+        self.start()
+        build_release(self.download, tag=OLD_TAG)
+        first = self.install(version=OLD_TAG)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(self.unit_path().is_file())
+        old_digest = self.digest(self.installed("oberth"))
+        before = len(self.calls())
+
+        # BERTH_TEST_BIN makes the fake supervisor record which binary was on disk when
+        # it was called, which is what "before replacing" has to mean.
+        second = self.install(extra_env={"BERTH_TEST_BIN": str(self.installed("oberth"))})
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertNotEqual(old_digest, self.digest(self.installed("oberth")),
+                            "the upgrade installed the same bytes, so nothing was replaced")
+
+        upgrade = self.calls(before)
+        stop = [line for line in upgrade
+                if line.startswith(("launchctl bootout", "systemctl --user stop"))]
+        self.assertTrue(stop, f"the previous unit was never stopped: {upgrade}")
+        self.assertIn(f"bin={old_digest}", stop[0],
+                      "the unit was stopped after the new binary was already in place")
+        start = [index for index, line in enumerate(upgrade)
+                 if "bootstrap" in line or "enable --now" in line]
+        self.assertTrue(start, f"the new unit was never started: {upgrade}")
+        self.assertLess(upgrade.index(stop[0]), start[-1])
+
+    def test_uninstall_removes_the_unit(self):
+        self.start()
+        installer = self.install()
+        self.assertEqual(installer.returncode, 0, installer.stderr)
+        unit = self.unit_path()
+        self.assertTrue(unit.is_file())
+        before = len(self.calls())
+
+        result = self.uninstall()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(unit.exists(), "the unit survived the uninstall and would start a missing binary")
+        self.assertFalse(self.installed("oberth").exists())
+        removal = self.calls(before)
+        if platform.system() == "Darwin":
+            self.assertTrue(any(line.startswith("launchctl bootout ") for line in removal), removal)
+        else:
+            self.assertIn("systemctl --user disable --now option-berth-runtime.service", removal)
+        # The state directory is still the user's decision, not the uninstaller's.
+        self.assertTrue(self.installed("oberth").parent.is_dir())
+
+    def test_uninstall_without_a_supervisor_is_not_a_failure(self):
+        self.start()
+        self.assertEqual(self.install().returncode, 0)
+        self.write_shims("exit 127")
+        result = self.uninstall()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.unit_path().exists())
 
 
 if __name__ == "__main__":
