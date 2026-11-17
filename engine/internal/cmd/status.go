@@ -1052,8 +1052,15 @@ func printStatusListeners(doc statusDocument) {
 		}
 		// A run holding no listener has no port to put in front of its name;
 		// writing the empty list would leave a line that starts with a space.
+		// It carries the pid for the same reason the unowned line does: `kill`
+		// takes a port or a pid, so a name alone would be a fact the reader
+		// cannot act on.
 		if len(run.Ports) == 0 {
-			parts = append(parts, name+" (run, no port)")
+			detail := name + " (run, no port"
+			if run.PID > 0 {
+				detail += ", pid " + strconv.Itoa(run.PID)
+			}
+			parts = append(parts, detail+")")
 			continue
 		}
 		parts = append(parts, portsText(run.Ports)+" (run "+name+")")

@@ -132,7 +132,8 @@ depends on · listeners · code · failed · next · drafts · last look），�
 失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
 `port: auto` 尚未分配时会显示 auto port unassigned。`listeners` 行给每个未被运行中服务行
 命名的监听一个归属：属于另一个运行的端口写成该运行的名字（`8082 (run finance-web)`），
-没有监听的在跑运行只写它自己的名字（`worker (run, no port)`），
+没有监听的在跑运行写它自己的名字和 pid（`worker (run, no port, pid 1234)`）——`kill` 接受的是
+端口或 pid，写名字而不写 pid 的读者没法动手，
 没有运行拥有的监听标为 `unowned`，并在进程表可读时带上进程名和 pid
 （`9090 (unowned: node, pid 1234)`）。`resources` 行写 `N declared running`；清单之外的运行
 由 listener 行点名，所以没有任何声明服务在跑的工作树不会被读成空闲。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是

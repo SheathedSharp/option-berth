@@ -767,7 +767,8 @@ func TestNamelessWorktreeClaimsNoRuns(t *testing.T) {
 
 // The human reading of a live run with no listener: it has no port to put in
 // front of its name, and a bare name would read as a listener. The marker says
-// what it is, so a person does not go looking for a port that does not exist.
+// what it is, so a person does not go looking for a port that does not exist,
+// and the pid is there because that is what `kill` accepts.
 func TestHumanListenersNameAPortlessRun(t *testing.T) {
 	restore := display.NoColor
 	display.NoColor = true
@@ -780,7 +781,7 @@ func TestHumanListenersNameAPortlessRun(t *testing.T) {
 		}},
 	}
 	out := captureStdout(t, func() { printStatusListeners(doc) })
-	if !strings.Contains(out, "portless (run, no port)") {
-		t.Fatalf("human output = %q, want the portless marker", out)
+	if !strings.Contains(out, "portless (run, no port, pid 4242)") {
+		t.Fatalf("human output = %q, want the portless marker with the pid", out)
 	}
 }

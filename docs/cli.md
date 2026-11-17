@@ -143,7 +143,8 @@ red, ordinary stop dim), degrading to plain text under NO_COLOR. A portless work
 marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. The
 `listeners` line gives every listener that no running service row already names its own home: a port
 owned by another run is written with that run's name (`8082 (run finance-web)`), a live run holding no
-listener is written with its own name alone (`worker (run, no port)`), and a listener no
+listener is written with its own name and pid (`worker (run, no port, pid 1234)`) — the pid is
+what `kill` accepts, so the line stays actionable — and a listener no
 run owns is marked `unowned` with the process and pid when the process table could read them
 (`9090 (unowned: node, pid 1234)`). The `resources` line says `N declared running`; runs outside the
 manifest are named on the listener line instead, so a worktree with no declared service running does
