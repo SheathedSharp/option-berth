@@ -160,9 +160,21 @@ func (m *machine) engine() *engine {
 		},
 		groupOf:    m.groupOf,
 		alive:      m.alive,
+		groupAlive: m.groupAlive,
 		probe:      m.probe,
 		dockerStop: m.dockerStop,
 	}
+}
+
+// groupAlive answers for the group, not the leader: every live process that
+// reports the group keeps it alive.
+func (m *machine) groupAlive(pgid int) bool {
+	for pid, p := range m.procs {
+		if p.group == pgid || pid == pgid {
+			return true
+		}
+	}
+	return false
 }
 
 // stop runs one request against a given snapshot, so a case can inspect the

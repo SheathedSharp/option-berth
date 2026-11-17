@@ -111,3 +111,9 @@ func SetProcessGroup(command *exec.Cmd) {
 }
 
 func validSignalPID(pid int) bool { return pid > 0 && uint64(pid) < 1<<32 }
+
+// groupAlive has no separate Windows meaning: processGroup never reports a
+// group there, so a group unit is never built and this is unreachable in
+// practice. Answering false would be a claim the platform cannot make, so the
+// leader's own liveness is the honest approximation.
+func groupAlive(pgid int) bool { return pidAlive(pgid) }

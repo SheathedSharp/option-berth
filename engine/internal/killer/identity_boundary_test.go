@@ -608,3 +608,105 @@ func TestFailedEscalationDoesNotClaimTheHarderSignal(t *testing.T) {
 		t.Fatalf("method = %q, want the sigterm that was delivered, not a sigkill that was refused", rows[0].Method)
 	}
 }
+
+// A process that exits on its own before the signal is gone, not unverifiable.
+// The guard re-reads birth evidence at every signal; when the process is simply
+// no longer there, the evidence is necessarily gone too, and refusing the whole
+// stop with permission_denied turns a successful no-op into a failure. The pair
+// (gone, unreadable) has to be told apart: only unreadable-while-alive is the
+// recycled-pid danger the refusal exists for.
+func TestAGoneProcessIsNotAnUnverifiableIdentity(t *testing.T) {
+	m := newMachine(ProcessTable{42: {PID: 42}})
+	m.process(42).born = time.Unix(1000, 0)
+	// The process exits between planning and the signal; the fake's absence is
+	// what "gone" means, and its birth evidence goes with it.
+	e := m.engine()
+	reads := 0
+	inner := e.startTime
+	e.startTime = func(pid int) (time.Time, bool) {
+		reads++
+		if reads > 1 {
+			m.exit(pid)
+		}
+		return inner(pid)
+	}
+
+	rows := e.kill(context.Background(), nil, []Target{{PID: 42}}, Options{Force: true})
+
+	if len(m.signals) != 0 {
+		t.Fatalf("signalled a gone process: %v", m.signals)
+	}
+	if len(rows) != 1 || rows[0].OK || rows[0].Code != CodeNotFound {
+		t.Fatalf("rows = %+v, want the already-gone row rather than an identity refusal", rows)
+	}
+}
+
+// A group whose members have all exited is gone, and that is the ordinary end
+// state of a stop, not an identity failure. Pid liveness cannot answer for a
+// group, so the gone/unknown split has to ask the group.
+func TestAGoneGroupIsNotAnUnverifiableIdentity(t *testing.T) {
+	m := newMachine(ProcessTable{10: {PID: 10}, 11: {PID: 11, PPID: 10}})
+	m.process(10).born = time.Unix(1000, 0)
+	m.process(10).group = 10
+	m.process(11).group = 10
+	e := m.engine()
+	inner := e.startTime
+	reads := 0
+	e.startTime = func(pid int) (time.Time, bool) {
+		reads++
+		if reads > 2 {
+			m.exit(10)
+			m.exit(11)
+			return time.Time{}, false
+		}
+		return inner(pid)
+	}
+
+	rows := e.kill(context.Background(), []ports.ListeningPort{listener(3000, 10)},
+		[]Target{{Port: 3000}}, Options{Force: true})
+
+	for _, row := range rows {
+		if row.Code == CodePermissionDenied {
+			t.Fatalf("a gone group was reported as an unverifiable identity: %+v", rows)
+		}
+	}
+}
+
+// A group is named by its leader's pid but outlives it: members keep the pgid.
+// When the leader exits, groupOf(root) has nothing to answer with, and treating
+// that as "ownership changed" refuses a stop that still has live members to
+// signal — while reporting it as not_found, i.e. already done.
+//
+// A pgid cannot be recycled while the group is non-empty (POSIX keeps the group
+// alive as long as it has a member), so a live group is the same group.
+func TestALiveGroupIsStillOursWhenItsLeaderExits(t *testing.T) {
+	m := newMachine(ProcessTable{10: {PID: 10}, 11: {PID: 11, PPID: 10}})
+	m.process(10).born = time.Unix(1000, 0)
+	m.process(10).group = 10
+	m.process(11).group = 10
+	e := m.engine()
+	inner := e.startTime
+	reads := 0
+	e.startTime = func(pid int) (time.Time, bool) {
+		reads++
+		if pid == 10 && reads > 1 {
+			// The leader exits; the member keeps the group alive.
+			m.exit(10)
+			return time.Time{}, false
+		}
+		return inner(pid)
+	}
+
+	rows := e.kill(context.Background(), []ports.ListeningPort{listener(3000, 10)},
+		[]Target{{Port: 3000}}, Options{Force: true})
+
+	stoppedGroup := false
+	for _, s := range m.signals {
+		if s.group {
+			stoppedGroup = true
+		}
+	}
+	if !stoppedGroup {
+		t.Fatalf("live group never signalled: signals=%v rows=%+v", m.signals, rows)
+	}
+}

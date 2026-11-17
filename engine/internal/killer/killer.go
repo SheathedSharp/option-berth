@@ -145,9 +145,13 @@ type engine struct {
 	ctx context.Context
 	// Time and liveness: the wait between escalation probes, what is still
 	// running, and when it was born (the recycle check on claimed pids).
-	clock     Clock
-	alive     func(pid int) bool
-	startTime func(pid int) (time.Time, bool)
+	clock Clock
+	alive func(pid int) bool
+	// groupAlive asks whether a process group still has any member. A group is
+	// a subject in its own right — it outlives the leader that named it — so
+	// pid liveness above cannot answer for it.
+	groupAlive func(pgid int) bool
+	startTime  func(pid int) (time.Time, bool)
 	// Process facts: the table the request resolved against, and how to find
 	// the group a pid leads.
 	table    ProcessTable
@@ -177,6 +181,7 @@ func newEngine(ctx context.Context) *engine {
 		signalTree: func(pid int, force bool) error { return signalTreeContext(ctx, pid, force) },
 		groupOf:    processGroup,
 		alive:      pidAlive,
+		groupAlive: groupAlive,
 		startTime:  func(pid int) (time.Time, bool) { return ports.ProcessStartFreshContext(ctx, pid) },
 		probe:      func(port int, bind string) portState { return probePortContext(ctx, port, bind) },
 		dockerStop: func(name string) error { return docker.StopContainerContext(ctx, name) },

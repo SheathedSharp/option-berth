@@ -126,7 +126,7 @@ func (e *engine) stillUp(units, scratch []*unit) []*unit {
 // anyAlive answers whether the unit still has a process running.
 func (e *engine) anyAlive(u *unit) bool {
 	if u.pgid != 0 {
-		return e.alive(u.pgid)
+		return e.groupAlive(u.pgid)
 	}
 	return slices.ContainsFunc(u.pids, e.alive)
 }
