@@ -35,6 +35,8 @@ go build -o ../bin/oberth ./cmd/oberth
 
 Dependency versions remain in `engine/go.mod` and `engine/go.sum`. The [third-party source archives](../third-party.md) do not override module resolution. Resolve network or proxy problems deliberately; do not turn off checksum verification to make a build pass.
 
+`scripts/retry.sh` retries the network fetch of a tool install only (`go install`, `apt-get update`, `apt-get install`). Never wrap a test, vet, build or verification step with it: the retry would turn a real failure into a slower red build instead of a result about the change.
+
 ## Choose checks by side effect
 
 Read [validation.md](validation.md) first. A test name, a `-run` filter or a temporary `BERTH_HOME` does not make a package's `TestMain` safe. Review package setup and imported helpers before execution; use `go test -c` where only compilation is authorized.

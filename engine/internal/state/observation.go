@@ -9,9 +9,10 @@ type Observation struct {
 	State string `json:"state"`
 	Code  string `json:"code,omitempty"`
 	// Source names the collector that answered when it was not the platform's
-	// primary one ("lsof" on Darwin). A non-empty source means the table is
-	// narrow: it covers this user's sockets, so a port missing from it is
-	// unknown rather than free. Empty means the primary collector answered.
+	// primary one ("lsof" on Darwin, "netstat" on Linux). A non-empty source
+	// means the table can promise less than the primary one, so a port missing
+	// from it is unknown rather than free. Empty means the primary collector
+	// answered.
 	Source    string `json:"source,omitempty"`
 	Detail    string `json:"detail,omitempty"`
 	Hint      string `json:"hint,omitempty"`

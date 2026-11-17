@@ -1,0 +1,91 @@
+name: Dependabot auto-merge
+
+# Grouped minor and patch updates arrive on a schedule. Enabling the repository's
+# auto-merge lets one land as soon as the required checks pass instead of waiting
+# for a click; nothing here merges by itself and nothing bypasses a check.
+# Two kinds of update stay manual, and the pull request says why:
+#   - major updates, because each one needs a real review;
+#   - anything touching .github/workflows/ or .github/quality-gate-checks.json,
+#     because Gate integrity requires a maintainer author for those, which
+#     Dependabot is not, so auto-merge would wait forever.
+# This workflow is not a required check and is deliberately absent from
+# .github/quality-gate-checks.json.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    name: Dependabot / enable auto-merge
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # There is no checkout, so the repository comes from here and not from a
+      # local git remote.
+      GH_REPO: ${{ github.repository }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+    steps:
+      # No checkout: every step talks to the API through the pull request URL, so
+      # no code from the pull request head is ever executed.
+      - name: Read the update type
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Keep major updates for a human
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        shell: bash
+        run: echo "::notice::major update; auto-merge stays off and a human reviews it"
+
+      - name: Find changes that need a maintainer author
+        id: owned
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=$(gh pr diff --name-only "$PR_URL")
+          if printf '%s\n' "$changed" | grep -Eq '^(\.github/workflows/|\.github/quality-gate-checks\.json$)'; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Explain why a gate-owned change stays manual
+        if: steps.owned.outputs.found == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_URL" --body "自动合并没有开启：这个 PR 改动了 \`.github/workflows/\` 或 \`.github/quality-gate-checks.json\`。Gate integrity 要求这类改动由维护者提交，Dependabot 不是维护者，自动合并会一直等下去，请人工评审。"
+
+      - name: Enable auto-merge with a merge commit
+        if: steps.owned.outputs.found == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rebase re-runs this job; enabling an already enabled auto-merge
+          # would only produce a second error comment.
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = "true" ]; then
+            echo "auto-merge is already enabled"
+            exit 0
+          fi
+          if output=$(gh pr merge --auto --merge "$PR_URL" 2>&1); then
+            echo "auto-merge enabled with a merge commit"
+            exit 0
+          fi
+          # No retry, no --admin, no squash or rebase: report the exact error and
+          # fail the run so an auto-merge that cannot be enabled is visible.
+          echo "::error::gh pr merge --auto --merge failed: $(printf '%s' "$output" | tr '\n' ' ')"
+          body=$(printf "自动合并没能开启，需要人工处理。\n\n\`gh pr merge --auto --merge\` 返回：\n\n\`\`\`\n%s\n\`\`\`\n\n按约定不重试，也不绕过检查直接合并。若是首次运行，请先确认仓库设置里已开启 Allow auto-merge。\n" "$output")
+          gh pr comment "$PR_URL" --body "$body"
+          exit 1

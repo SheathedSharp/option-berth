@@ -187,17 +187,22 @@ func TestDarwinLsofEmptyMatchStaysASuspiciousEmptyTable(t *testing.T) {
 	}
 }
 
-func TestDarwinLsofFallbackIsNotUsedOnOtherPlatforms(t *testing.T) {
-	calls := 0
+// lsof is Darwin's alternative, not a universal one: another platform's chain
+// never reaches it, however its own collectors fail.
+func TestDarwinLsofIsNeverUsedOnAnotherPlatform(t *testing.T) {
+	var tried []string
 	run := func(name string, _ ...string) ([]byte, []byte, error) {
-		calls++
+		tried = append(tried, name)
 		if name == "lsof" {
 			t.Fatal("a non-darwin platform must not fall back to lsof")
 		}
 		return nil, nil, nil
 	}
-	if _, _, err := collectListenersSource("linux", run); err == nil || calls != 1 {
-		t.Fatalf("calls=%d err=%v, want one ss call and its own failure", calls, err)
+	if _, _, err := collectListenersSource("linux", run); err == nil {
+		t.Fatal("two silent collectors produced a healthy table")
+	}
+	if want := []string{"ss", "netstat"}; !reflect.DeepEqual(tried, want) {
+		t.Fatalf("collectors tried = %v, want %v", tried, want)
 	}
 }
 

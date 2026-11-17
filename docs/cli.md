@@ -23,17 +23,26 @@ Use the [documentation index](index.md) to select a task. Below are common rules
   - observation_bind_denied: the probe cannot even bind a local port, so services started from here cannot listen either.
   The hint points at retrying outside the sandbox, upgrading option-berth, or running
   `oberth doctor --only listener_observation` to check the current process.
+- Each platform reads the listener table with an ordered chain of collectors: `netstat` then `lsof`
+  on macOS, `ss` then `netstat` on Linux, and `netstat -ano` alone on Windows. The first one is the
+  primary and stays unnamed in `observation.source`; another one is named only when it answered
+  because the primary could not. The next collector is tried only when the pass before it left no
+  usable row: the tool is not installed, it exited 0 without printing a table, or its own diagnostics
+  invalidated a pass that had no readable row. Rows that were read end the round even when the pass
+  failed — they are published with their verdict and are never replaced by another tool's table — and
+  a table that was printed and could not be decoded is a decoder problem that is not retried either.
+  When every collector fails, the primary keeps its code and hint and the other collectors' reasons
+  are folded into the same `detail` sentence.
 - Starting with macOS 27, a child process launched by a parent that Apple has not signed
   (Go, Homebrew Python and so on) runs `netstat` and gets exit 0 with no TCP table. That
   "not one row" case is still treated as observation_empty and the self-proof probe decides it;
-  when the probe can see its own listener, this round falls back to collecting with `lsof` and
-  still reports observable. `observation.source` names the collector when it was not the primary one
-  (`lsof`); the primary collector leaves it empty. The `doctor` detail and the `runtime service status`
-  `observation` describe the same round.
-- This fallback is narrower than `netstat`, and reading the result requires knowing two things: a
-  non-root `lsof` cannot see other users' sockets, so a port held by a root process may be missing
-  from the table; and a single `lsof` reports a dual-stack wildcard socket only as `::`, without
-  adding the other address family. A row in the table is a fact, but absence is not: consumers read
+  when the probe can see its own listener, `lsof` answers this round and it still reports observable.
+  The `doctor` detail and the `runtime service status` `observation` describe the same round.
+- A named source is narrower than the primary table, and its `detail` sentence states the limits that
+  collector declares: a non-root `lsof` cannot see other users' sockets, so a port held by a root
+  process may be missing from it, and it reports a dual-stack wildcard socket only as `::`, without
+  adding the other address family; Linux `netstat` also reports a dual-stack wildcard socket under
+  one address family. A row in the table is a fact, but absence is not: consumers read
   `observation.source` before concluding that a port is free. `machine[].listening_known` is false
   for a port missing from a narrow table, `port: auto` verifies each candidate by binding it instead
   of trusting absence, and the human `status` prints `listening unknown`.

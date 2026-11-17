@@ -20,10 +20,11 @@ import (
 )
 
 // scanPorts and scanProbe are the observation seams. Production uses the real
-// collector and keeps the collector's name: a Darwin lsof fallback is still a
-// usable table for what it shows, but its absence is not evidence that a port
-// is free. Tests that exercise a later stage replace them so they do not depend
-// on the host's ability to read its own listener table.
+// collector chain and keeps the answering collector's name: an alternative like
+// the Darwin lsof fallback is still a usable table for what it shows, but its
+// absence is not evidence that a port is free. Tests that exercise a later stage
+// replace them so they do not depend on the host's ability to read its own
+// listener table.
 var (
 	scanPorts = func() ([]ports.ListeningPort, string, error) {
 		return ports.ScanContextSource(context.Background())
