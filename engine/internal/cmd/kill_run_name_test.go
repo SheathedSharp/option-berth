@@ -96,7 +96,10 @@ func TestRunTargetsPinTheRecordedGeneration(t *testing.T) {
 		ID: "run-a", PID: 4242, Group: "shop", Name: "api", Status: "running",
 		StartedAt: "2026-11-16T09:00:00Z",
 	}
-	targets := runTargets([]rpc.RunRecord{rec})
+	targets, err := runTargets([]rpc.RunRecord{rec})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(targets) != 1 {
 		t.Fatalf("targets = %+v", targets)
 	}
@@ -106,5 +109,16 @@ func TestRunTargetsPinTheRecordedGeneration(t *testing.T) {
 	}
 	if got.StartedAt.IsZero() || got.StartedAt.Format(time.RFC3339) != "2026-11-16T09:00:00Z" {
 		t.Fatalf("started_at = %v, want the recorded birth time", got.StartedAt)
+	}
+}
+
+// A run whose recorded start is missing cannot be pinned to its generation, so
+// it is refused rather than signalled blind — a pid alone may belong to a
+// different process by now.
+func TestRunTargetsRefuseAnUnpinnedGeneration(t *testing.T) {
+	_, err := runTargets([]rpc.RunRecord{{ID: "run-a", PID: 4242, Name: "api", Status: "running"}})
+	code, msg, _ := describe(err)
+	if code != "not_found" || !strings.Contains(msg, "run-a") {
+		t.Fatalf("code = %q msg = %q, want the unpinnable run", code, msg)
 	}
 }

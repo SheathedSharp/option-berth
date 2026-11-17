@@ -337,19 +337,21 @@ func namedRuns(records []rpc.RunRecord, group string, names []string) ([]rpc.Run
 
 // runTargets turns resolved runs into killer targets that pin the recorded
 // generation: the root pid plus the birth time the host recorded for it. The
-// birth time is what makes the stop safe against a recycled pid, and a run whose
-// start was never recorded cannot be pinned, so it is refused rather than
-// signalled blind.
-func runTargets(records []rpc.RunRecord) []killer.Target {
+// birth time is what makes the stop safe against a recycled pid, so a run whose
+// start was never recorded is refused rather than signalled blind — the same
+// rule the runtime service's own exact-run stop applies.
+func runTargets(records []rpc.RunRecord) ([]killer.Target, error) {
 	out := make([]killer.Target, 0, len(records))
 	for _, rec := range records {
-		target := killer.Target{PID: rec.PID, Name: rec.Name}
-		if at, err := time.Parse(time.RFC3339, rec.StartedAt); err == nil {
-			target.StartedAt = at
+		at, err := time.Parse(time.RFC3339, rec.StartedAt)
+		if err != nil || at.IsZero() {
+			return nil, failHint("not_found",
+				fmt.Sprintf("run %s has no recorded start time and cannot be pinned", rec.ID),
+				"restart it once with this version, or stop it by port or pid")
 		}
-		out = append(out, target)
+		out = append(out, killer.Target{PID: rec.PID, StartedAt: at, Name: rec.Name})
 	}
-	return out
+	return out, nil
 }
 
 // killTargets turns the numeric positional arguments into killer targets. The
@@ -443,7 +445,11 @@ func resolveKill(ctx context.Context, c *client.Client, args []string, snapshot 
 	if err != nil {
 		return killResolution{}, err
 	}
-	return killResolution{targets: runTargets(resolved), tree: true}, nil
+	targets, err := runTargets(resolved)
+	if err != nil {
+		return killResolution{}, err
+	}
+	return killResolution{targets: targets, tree: true}, nil
 }
 
 // positionalTarget treats a bare number as a port, unless nothing listens on
