@@ -14,15 +14,40 @@ ROOT = Path(__file__).resolve().parent.parent
 MIT_GRANT = "The above copyright notice and this permission notice"
 MIT_DISCLAIMER = 'THE SOFTWARE IS PROVIDED "AS IS"'
 
+# The project licenses stay byte-identical to the standard MIT text apart from
+# the copyright holders. GitHub scores a license file by word-set similarity
+# against a 98% threshold, so any extra prose in LICENSE makes the repository
+# report "Other" instead of MIT. Attribution belongs to third_party/README.md
+# and ships as licenses/third-party-notices.md inside release archives.
+MIT_LICENSE = '''MIT License
+
+Copyright (c) 2026 SheathedSharp
+Copyright (c) 2026 option-berth contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'''
+
 
 class LicenseTests(unittest.TestCase):
-    def test_project_licenses_list_only_project_copyright(self):
+    def test_project_licenses_stay_canonical_mit(self):
         for name in ("LICENSE", "engine/LICENSE"):
-            text = (ROOT / name).read_text()
-            self.assertIn("Copyright (c) 2026 SheathedSharp", text)
-            self.assertIn("third_party/README.md", text)
-            self.assertIn(MIT_GRANT, text)
-            self.assertIn(MIT_DISCLAIMER, text)
+            self.assertEqual((ROOT / name).read_text(), MIT_LICENSE, name)
 
     def test_third_party_notices_cover_the_shipped_assets(self):
         self.assertFalse((ROOT / "THIRD_PARTY_NOTICES.md").exists())
