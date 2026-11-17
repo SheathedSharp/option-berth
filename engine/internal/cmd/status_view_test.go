@@ -764,3 +764,23 @@ func TestNamelessWorktreeClaimsNoRuns(t *testing.T) {
 		t.Fatalf("nameless worktree claimed %+v", got)
 	}
 }
+
+// The human reading of a live run with no listener: it has no port to put in
+// front of its name, and a bare name would read as a listener. The marker says
+// what it is, so a person does not go looking for a port that does not exist.
+func TestHumanListenersNameAPortlessRun(t *testing.T) {
+	restore := display.NoColor
+	display.NoColor = true
+	t.Cleanup(func() { display.NoColor = restore })
+
+	doc := statusDocument{
+		Worktree: state.Group{Name: "shop"},
+		Runs: []rpc.RunRecord{{
+			ID: "portless-run", PID: 4242, Group: "shop", Name: "portless", Status: "running",
+		}},
+	}
+	out := captureStdout(t, func() { printStatusListeners(doc) })
+	if !strings.Contains(out, "portless (run, no port)") {
+		t.Fatalf("human output = %q, want the portless marker", out)
+	}
+}
