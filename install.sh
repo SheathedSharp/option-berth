@@ -7,7 +7,13 @@
 # The script resolves the latest engine release, downloads the archive for this
 # machine, verifies its SHA256 sidecar, and installs oberth into
 # ~/.local/bin. Licences and the build manifest stay in ~/.local/share/option-berth.
-# It starts no services and writes no Git data.
+# It writes no Git data.
+#
+# On macOS and Linux it also registers the runtime service as a user-level unit —
+# a launchd LaunchAgent or a systemd user unit — so one runtime service stays up
+# across logins instead of being started ad hoc by whichever command needed one.
+# Nothing here needs root, and a supervisor that is missing or refuses the unit is
+# a warning rather than a failed install.
 #
 # GitHub is reachable per host, not as a whole: github.com and
 # raw.githubusercontent.com can time out while api.github.com still answers. When
@@ -20,6 +26,7 @@
 #   --dir DIR          install directory (default: $HOME/.local/bin)
 #   --version TAG      install a pinned release instead of the latest
 #   --no-modify-path   leave shell startup files alone
+#   --no-service       do not register the user-level runtime service
 #
 # Environment:
 #   BERTH_INSTALL_MIRRORS  space-separated GitHub proxy prefixes, tried after the
@@ -28,6 +35,7 @@
 #   BERTH_INSTALL_VERSION  same as --version
 #   BERTH_INSTALL_DIR      same as --dir
 #   BERTH_INSTALL_QUIET=1  no progress bar
+#   BERTH_INSTALL_NO_SERVICE=1  same as --no-service
 set -eu
 
 REPO="${BERTH_INSTALL_REPO:-SheathedSharp/option-berth}"
@@ -43,6 +51,7 @@ VERSION="${BERTH_INSTALL_VERSION:-}"
 DIR="${BERTH_INSTALL_DIR:-$HOME/.local/bin}"
 DATA_DIR="${BERTH_INSTALL_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/option-berth}"
 MODIFY_PATH=1
+NO_SERVICE=0
 CHECKSUM=""
 
 if [ -t 2 ] && [ "${BERTH_INSTALL_QUIET:-0}" != 1 ]; then
@@ -66,11 +75,13 @@ Flags:
   --dir DIR          install directory (default: $HOME/.local/bin)
   --version TAG      install a pinned release instead of the latest
   --no-modify-path   leave shell startup files alone
+  --no-service       do not register the user-level runtime service
 
 Environment:
   BERTH_INSTALL_MIRRORS  space-separated GitHub proxy prefixes tried after the
                          official host. Empty disables the fallback.
   BERTH_INSTALL_QUIET=1  no progress bar
+  BERTH_INSTALL_NO_SERVICE=1  same as --no-service
 EOF
 }
 
@@ -90,6 +101,10 @@ while [ $# -gt 0 ]; do
 		MODIFY_PATH=0
 		shift
 		;;
+	--no-service)
+		NO_SERVICE=1
+		shift
+		;;
 	-h | --help)
 		usage
 		exit 0
@@ -102,6 +117,11 @@ done
 
 case "$DIR" in
 "~/"*) DIR="$HOME/${DIR#~/}" ;;
+esac
+
+case "${BERTH_INSTALL_NO_SERVICE:-0}" in
+0 | "") ;;
+*) NO_SERVICE=1 ;;
 esac
 
 os=$(uname -s)
@@ -340,6 +360,203 @@ download_raw() {
 	return 1
 }
 
+# ---------------------------------------------------------------- service ---
+#
+# The runtime service is a user-level unit on macOS and Linux: one process that
+# stays up across logins, owned by launchd or by systemd --user, instead of a
+# child that whichever command needed it happened to fork. Registering it is what
+# makes "the runtime service is running" a fact about the machine.
+#
+# Windows has no such unit here; install.ps1 installs the CLI only. Everything
+# below is best-effort by design: a missing or refusing supervisor is a warning,
+# never a failed install, and nothing here needs root.
+
+STATE_DIR="${BERTH_HOME:-$HOME/.option-berth}"
+SERVICE_FILE=""
+SERVICE_PRESENT=0
+
+case "$os" in
+darwin)
+	SERVICE_LABEL=com.sheathedsharp.option-berth.runtime
+	SERVICE_FILE="$HOME/Library/LaunchAgents/$SERVICE_LABEL.plist"
+	;;
+linux)
+	SERVICE_UNIT=option-berth-runtime.service
+	SERVICE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$SERVICE_UNIT"
+	;;
+esac
+
+if [ -n "$SERVICE_FILE" ] && [ -f "$SERVICE_FILE" ]; then
+	SERVICE_PRESENT=1
+fi
+
+# A path under `~/work & notes` is unusual, not impossible, and one unescaped
+# ampersand makes launchd reject the whole file.
+xml_escape() {
+	printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+# systemd reads % as a specifier, so a literal one has to be doubled.
+systemd_escape() {
+	printf '%s' "$1" | sed -e 's/%/%%/g'
+}
+
+# write_launch_agent records the agent launchd reads at login. RunAtLoad starts it
+# now as well, and KeepAlive restarts it only after a failure: a runtime service
+# stopped on purpose (`oberth runtime service stop`) stays stopped.
+#
+# BERTH_RUNTIME_SERVICE_DETACHED=1 says the logger already has a file for stdout and
+# stderr, so it must not mirror its lines there a second time.
+write_launch_agent() {
+	# launchd opens the two log paths itself and does not create what is missing, so
+	# the state directory has to exist before the agent is loaded.
+	if [ ! -d "$STATE_DIR" ]; then
+		mkdir -p -m 0700 "$STATE_DIR"
+	fi
+	binary=$(xml_escape "$DIR/oberth")
+	log=$(xml_escape "$STATE_DIR/runtime-service.log")
+	target="$SERVICE_FILE.new.$$"
+	cat >"$target" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>$SERVICE_LABEL</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$binary</string>
+		<string>runtime</string>
+		<string>service</string>
+		<string>run</string>
+		<string>--persistent</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>$log</string>
+	<key>StandardErrorPath</key>
+	<string>$log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>BERTH_RUNTIME_SERVICE_DETACHED</key>
+		<string>1</string>
+PLIST
+	if [ -n "${BERTH_HOME:-}" ]; then
+		cat >>"$target" <<PLIST
+		<key>BERTH_HOME</key>
+		<string>$(xml_escape "$BERTH_HOME")</string>
+PLIST
+	fi
+	cat >>"$target" <<PLIST
+	</dict>
+</dict>
+</plist>
+PLIST
+	mv -f "$target" "$SERVICE_FILE"
+}
+
+# write_systemd_unit records the unit systemd --user reads. Restart=on-failure keeps
+# a crashed runtime service coming back without resurrecting one stopped on purpose;
+# WantedBy=default.target is what `systemctl --user enable` links into.
+write_systemd_unit() {
+	binary=$(systemd_escape "$DIR/oberth")
+	target="$SERVICE_FILE.new.$$"
+	cat >"$target" <<UNIT
+[Unit]
+Description=option-berth runtime service
+
+[Service]
+ExecStart="$binary" runtime service run --persistent
+Restart=on-failure
+RestartSec=2
+Environment=BERTH_RUNTIME_SERVICE_DETACHED=1
+UNIT
+	if [ -n "${BERTH_HOME:-}" ]; then
+		echo "Environment=BERTH_HOME=$(systemd_escape "$BERTH_HOME")" >>"$target"
+	fi
+	cat >>"$target" <<UNIT
+
+[Install]
+WantedBy=default.target
+UNIT
+	mv -f "$target" "$SERVICE_FILE"
+}
+
+write_service_unit() {
+	mkdir -p "$(dirname "$SERVICE_FILE")"
+	case "$os" in
+	darwin) write_launch_agent ;;
+	linux) write_systemd_unit ;;
+	esac
+}
+
+# start_service hands the unit to the supervisor. launchd is asked in the GUI domain
+# first and the per-user domain second, because that is the difference between a
+# login session and an SSH one; systemd is asked once, and an unavailable user bus
+# (a container without systemd) only warns.
+start_service() {
+	case "$os" in
+	darwin)
+		uid=$(id -u)
+		launchctl bootout "gui/$uid/$SERVICE_LABEL" >/dev/null 2>&1 || true
+		if launchctl bootstrap "gui/$uid" "$SERVICE_FILE" >/dev/null 2>&1; then
+			echo "service    launchd agent loaded ($SERVICE_LABEL)"
+		elif launchctl bootstrap "user/$uid" "$SERVICE_FILE" >/dev/null 2>&1; then
+			echo "service    launchd agent loaded in the user domain ($SERVICE_LABEL)"
+		else
+			echo "service    not started: launchctl refused the agent; it stays at $SERVICE_FILE and loads at the next login" >&2
+		fi
+		;;
+	linux)
+		if ! systemctl --user daemon-reload >/dev/null 2>&1; then
+			echo "service    not started: systemctl --user is unavailable; the unit stays at $SERVICE_FILE" >&2
+			return 0
+		fi
+		if systemctl --user enable --now "$SERVICE_UNIT" >/dev/null 2>&1; then
+			echo "service    systemd user unit enabled ($SERVICE_UNIT)"
+		else
+			echo "service    not started: systemctl --user enable failed; the unit stays at $SERVICE_FILE" >&2
+		fi
+		;;
+	esac
+}
+
+# stop_service_for_upgrade stops what the previous install is running before its
+# binary is replaced. A unit left running would keep executing a file that is about
+# to change under it, and a runtime service started by an older install with
+# `run --detach` would hold the socket and the lock — the new unit would exit
+# "already running" and be restarted on every throttle.
+stop_service_for_upgrade() {
+	if [ "$NO_SERVICE" = 1 ]; then
+		return 0
+	fi
+	if [ -x "$DIR/oberth" ] && "$DIR/oberth" runtime service --help >/dev/null 2>&1; then
+		"$DIR/oberth" runtime service stop >/dev/null 2>&1 || true
+	fi
+	if [ "$SERVICE_PRESENT" != 1 ]; then
+		return 0
+	fi
+	case "$os" in
+	darwin)
+		uid=$(id -u)
+		launchctl bootout "gui/$uid/$SERVICE_LABEL" >/dev/null 2>&1 ||
+			launchctl bootout "user/$uid/$SERVICE_LABEL" >/dev/null 2>&1 || true
+		;;
+	linux)
+		systemctl --user stop "$SERVICE_UNIT" >/dev/null 2>&1 || true
+		;;
+	esac
+	echo "service    stopped the previous runtime service"
+}
+
 build_sources
 resolve_version
 
@@ -361,6 +578,8 @@ root="$tmp/option-berth-$VERSION-$os-$arch"
 for name in oberth; do
 	[ -f "$root/$name" ] || fail "archive is missing $name"
 done
+
+stop_service_for_upgrade
 
 mkdir -p "$DIR"
 for name in oberth; do
@@ -395,3 +614,19 @@ fi
 
 echo
 "$DIR/oberth" version || fail "installed $DIR/oberth, but it did not run"
+
+# The unit starts the runtime service on its own, so this process's own listener
+# observation decides whether it is registered at all: a blind machine would get a
+# blind runtime service that outlives the mistake. `oberth runtime service restart`
+# and every write command then find it through the supervisor instead of forking one.
+if [ "$NO_SERVICE" = 1 ]; then
+	if [ "$SERVICE_PRESENT" = 1 ]; then
+		echo "service    left as it was (--no-service): $SERVICE_FILE"
+	fi
+elif "$DIR/oberth" doctor --only listener_observation >/dev/null 2>&1; then
+	write_service_unit
+	start_service
+else
+	echo "service    not registered: \`$DIR/oberth doctor --only listener_observation\` did not pass," >&2
+	echo "service    so a unit started here would be blind; fix that check and rerun, or pass --no-service" >&2
+fi
