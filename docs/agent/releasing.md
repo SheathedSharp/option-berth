@@ -148,7 +148,11 @@ A genuine failure is never handled by deleting assertions, relaxing timeouts or 
    binaries and licenses from that same archive rather than building separate content.
 5. After verifying that all targets exist and hashing them, create a GitHub draft release, upload,
    download and verify, comparing every hash against the local pre-upload values, and only then promote
-   it to a public release.
+   it to a public release. Re-running the same tag's workflow resumes the draft it finds: every asset
+   already in the draft must be one of this version's asset names and byte-identical to the freshly
+   built input, only the missing names are uploaded, the complete set is downloaded and verified again,
+   and only then is the draft promoted. An asset is never overwritten or deleted, and a release that is
+   already public is refused rather than modified.
 
 Windows arm64 and some CLI archives are cross-built; having a downloadable archive is not the same as
 having verified every platform's lifecycle. The tag workflow checks out the triggering commit SHA
@@ -162,7 +166,14 @@ remote tag is not moved and the fix ships as the next version.
 Failure before verification: fix the real problem and start over; no version or tag needs cleaning up.
 Local commit/tag created but the atomic push failed: keep the result, check both sides' refs first, then
 decide how to retry; never rewrite the tag.
-Upload/verification failure: inspect leftover drafts and assets; never promote a failed draft to public.
+Upload/verification failure: inspect leftover drafts and assets; never promote a draft by hand.
+While the draft holds the same build, re-running the tag's workflow is the recovery path and needs no
+manual cleanup: the publication checks every asset the draft already holds, uploads only the missing
+names, and promotes only after the complete set verifies against this build. Resuming assumes that the
+re-run rebuilds identical bytes: a draft asset whose hash differs from the new build, or a name this
+version does not publish, stops the publication before any upload instead of mixing two builds.
+Deciding what to do with such a draft — including deleting it — is a person's call; publication never
+overwrites or deletes an asset to get past it.
 A network interruption may leave the client unable to confirm the final state — read the remote to
 establish it, and never infer "nothing happened" from a local error.
 A published version never gets overwritten assets or a moved tag; fix and ship the next version by

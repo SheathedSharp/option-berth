@@ -1,10 +1,11 @@
+"""Publication tests run against a release store, never against GitHub."""
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
-import shutil
-import subprocess
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("berth_publish", Path(__file__).with_name("publish_release.py"))
@@ -12,7 +13,93 @@ release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 
 
-class PublishAssetsTests(unittest.TestCase):
+class ReleaseStore:
+    """A release store standing in for `gh release`, without network access.
+
+    It holds what the remote side holds — the draft flag and a name-to-bytes map
+    — and refuses the writes a real release refuses: a second release for the
+    same tag, an upload over an existing asset name, the promotion of anything
+    that is not a draft. A test can therefore tell "uploaded once" from
+    "uploaded twice", and prove that no asset was overwritten or deleted.
+    """
+
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+        self.is_draft: bool | None = None
+        self.assets: dict[str, bytes] = {}
+        self.uploads: list[list[str]] = []
+        self.events: list[str] = []
+        self.promotions = 0
+        # A racing publisher: (is_draft, assets) that appears between the read
+        # and the create, so the create itself fails.
+        self.race: tuple[bool, dict[str, bytes]] | None = None
+        # Rewrites the downloaded copy, standing in for a remote set that is
+        # internally consistent yet is not this build.
+        self.corrupt_download = None
+
+    @property
+    def exists(self) -> bool:
+        return self.is_draft is not None
+
+    def seed(self, assets: dict[str, bytes], is_draft: bool = True) -> "ReleaseStore":
+        self.is_draft = is_draft
+        self.assets = dict(assets)
+        return self
+
+    def __call__(self, *args: str) -> subprocess.CompletedProcess:
+        if len(args) < 3 or args[0] != "release" or args[2] != self.tag:
+            raise AssertionError("unexpected gh invocation: " + " ".join(args))
+        handler = {"view": self.view, "create": self.create, "upload": self.upload,
+                   "download": self.download, "edit": self.edit}.get(args[1])
+        if handler is None:
+            raise AssertionError("unexpected gh release subcommand: " + args[1])
+        self.events.append(args[1])
+        return handler(list(args[3:]))
+
+    def view(self, rest: list[str]) -> subprocess.CompletedProcess:
+        if not self.exists:
+            raise RuntimeError("release not found")
+        payload = {"isDraft": self.is_draft,
+                   "assets": [{"name": name} for name in self.assets]}
+        return subprocess.CompletedProcess(["gh"], 0, stdout=json.dumps(payload), stderr="")
+
+    def create(self, rest: list[str]) -> None:
+        if self.race is not None:
+            self.seed(self.race[1], self.race[0])
+            self.race = None
+            raise RuntimeError("release already exists: " + self.tag)
+        if self.exists:
+            raise RuntimeError("release already exists: " + self.tag)
+        self.seed({})
+
+    def upload(self, rest: list[str]) -> None:
+        if not self.is_draft:
+            raise AssertionError("upload needs a draft release")
+        names = []
+        for path in map(Path, rest):
+            if path.name in self.assets:
+                raise AssertionError("refusing to overwrite " + path.name)
+            self.assets[path.name] = path.read_bytes()
+            names.append(path.name)
+        self.uploads.append(names)
+
+    def download(self, rest: list[str]) -> None:
+        if not self.exists:
+            raise AssertionError("download needs an existing release")
+        target = Path(rest[rest.index("--dir") + 1])
+        for name, data in self.assets.items():
+            (target / name).write_bytes(data)
+        if self.corrupt_download is not None:
+            self.corrupt_download(target)
+
+    def edit(self, rest: list[str]) -> None:
+        if rest != ["--draft=false"] or not self.is_draft:
+            raise AssertionError("only a draft release is promoted")
+        self.is_draft = False
+        self.promotions += 1
+
+
+class AssetVerificationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -42,11 +129,11 @@ class PublishAssetsTests(unittest.TestCase):
                          "a desktop application is a separate product and must not ride in this release")
         extra = self.root / "OptionBerth-v1.2.3-macos-arm64-adhoc.dmg"
         extra.write_bytes(b"not part of this release")
-        with patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:
+        store = ReleaseStore(self.tag)
+        with patch.object(release, "gh", store):
             with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
                 release.publish(self.root, self.tag)
-            gh.assert_not_called()
-            run.assert_not_called()
+            self.assertEqual(store.uploads, [])
 
     def test_unexpected_asset_fails_before_network_or_release_writes(self):
         # A matching checksum does not make an unrelated file part of the
@@ -55,11 +142,12 @@ class PublishAssetsTests(unittest.TestCase):
         data = b"synthetic extra asset"
         (self.root / name).write_bytes(data)
         (self.root / (name + ".sha256")).write_text(hashlib.sha256(data).hexdigest() + "  " + name + "\n")
-        with patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:
+        store = ReleaseStore(self.tag)
+        with patch.object(release, "gh", store):
             with self.assertRaisesRegex(ValueError, "incomplete or unexpected"):
                 release.publish(self.root, self.tag)
-            gh.assert_not_called()
-            run.assert_not_called()
+            self.assertEqual(store.uploads, [])
+            self.assertFalse(store.exists)
             self.assertFalse((self.root / "SHA256SUMS").exists())
 
     def test_missing_extra_corrupt_and_path_injection_are_rejected(self):
@@ -81,32 +169,138 @@ class PublishAssetsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.expected_assets(tag)
 
-    def test_roundtrip_must_match_local_assets_not_just_remote_checksums(self):
-        self._roundtrip(replace_archive=True)
+
+class PublishTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.tag = "v1.2.3"
+        for name in release.expected_assets(self.tag):
+            if not name.endswith(".sha256"):
+                (self.root / name).write_bytes(b"synthetic archive fixture")
+                digest = hashlib.sha256(b"synthetic archive fixture").hexdigest()
+                (self.root / (name + ".sha256")).write_text(digest + "  " + name + "\n")
+        self.store = ReleaseStore(self.tag)
+        gh = patch.object(release, "gh", self.store)
+        gh.start()
+        self.addCleanup(gh.stop)
+
+    def expected_upload(self) -> dict[str, bytes]:
+        """The exact bytes this invocation is expected to publish."""
+        assets = {path.name: path.read_bytes()
+                  for path in self.root.iterdir() if path.name != "SHA256SUMS"}
+        aggregate = "".join(path.read_text() for path in sorted(self.root.glob("*.sha256")))
+        return assets | {"SHA256SUMS": aggregate.encode()}
+
+    def test_first_publication_uploads_every_asset_once_and_promotes(self):
+        expected = self.expected_upload()
+        release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [sorted(expected)])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 1)
 
     def test_publish_occurs_only_after_matching_roundtrip(self):
-        self._roundtrip(replace_archive=False)
+        release.publish(self.root, self.tag)
+        self.assertEqual(self.store.events, ["view", "create", "upload", "download", "edit"])
+        self.assertEqual(self.store.promotions, 1)
+        self.assertFalse(self.store.is_draft)
 
-    def _roundtrip(self, replace_archive):
-        published = []
-        def fake_gh(*args):
-            if args[:2] == ("release", "download"):
-                target = Path(args[args.index("--dir") + 1])
-                for path in self.root.iterdir():
-                    shutil.copyfile(path, target / path.name)
-                if replace_archive:
-                    archive = next(target.glob("*.zip"))
-                    archive.write_bytes(b"different but internally consistent remote build")
-                    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-                    (target / (archive.name + ".sha256")).write_text(digest + "  " + archive.name + "\n")
-                    (target / "SHA256SUMS").write_text("".join(p.read_text() for p in sorted(target.glob("*.sha256"))))
-            if args[:2] == ("release", "edit"):
-                published.append(args)
-        with patch.object(release, "gh", side_effect=fake_gh), patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
-            if replace_archive:
-                with self.assertRaisesRegex(ValueError, "local"):
-                    release.publish(self.root, self.tag)
-                self.assertEqual(published, [])
-            else:
+    def test_roundtrip_must_match_local_assets_not_just_remote_checksums(self):
+        def different_build(target):
+            archive = next(target.glob("*.zip"))
+            data = b"different but internally consistent remote build"
+            archive.write_bytes(data)
+            (target / (archive.name + ".sha256")).write_text(
+                hashlib.sha256(data).hexdigest() + "  " + archive.name + "\n")
+            (target / "SHA256SUMS").write_text("".join(path.read_text() for path in sorted(target.glob("*.sha256"))))
+        self.store.corrupt_download = different_build
+        with self.assertRaisesRegex(ValueError, "local"):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.promotions, 0)
+        self.assertTrue(self.store.is_draft, "a failed publication must leave the draft in place")
+
+    def test_matching_draft_is_promoted_without_reuploading(self):
+        # A re-run of the same tag workflow rebuilds the identical set; the
+        # assets already in the draft are the ones this invocation would upload.
+        expected = self.expected_upload()
+        self.store.seed(expected)
+        release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertEqual(self.store.events, ["view", "download", "download", "edit"])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 1)
+
+    def test_partial_draft_uploads_only_the_missing_assets(self):
+        expected = self.expected_upload()
+        names = sorted(expected)
+        present = {name: expected[name] for name in names[:6]}
+        self.store.seed(present)
+        release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [names[6:]])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 1)
+
+    def test_draft_asset_with_different_content_fails_before_any_upload(self):
+        expected = self.expected_upload()
+        name = next(name for name in sorted(expected) if name.endswith(".deb"))
+        self.store.seed(expected | {name: b"an earlier build of the same name"})
+        with self.assertRaisesRegex(ValueError, "draft asset does not match this build: " + name):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertEqual(self.store.assets[name], b"an earlier build of the same name",
+                         "a draft asset is never overwritten")
+        self.assertTrue(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 0)
+
+    def test_unexpected_draft_asset_is_refused_and_kept(self):
+        expected = self.expected_upload()
+        stray = "OptionBerth-v1.2.3-macos-arm64-adhoc.dmg"
+        self.store.seed(expected | {stray: b"not part of this release"})
+        with self.assertRaisesRegex(ValueError, stray):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertIn(stray, self.store.assets, "an unexpected draft asset is neither deleted nor overwritten")
+        self.assertTrue(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 0)
+
+    def test_public_release_is_refused_and_left_untouched(self):
+        expected = self.expected_upload()
+        self.store.seed(expected, is_draft=False)
+        with self.assertRaisesRegex(RuntimeError, "never modified"):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 0)
+
+    def test_release_created_by_a_racing_run_is_resumed_as_a_draft(self):
+        # The release can appear between the state read and the create; the
+        # winner's draft is resumed instead of failing the whole run.
+        expected = self.expected_upload()
+        names = sorted(expected)
+        self.store.race = (True, {name: expected[name] for name in names[:4]})
+        release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [names[4:]])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 1)
+
+    def test_racing_run_that_published_a_release_is_refused(self):
+        self.store.race = (False, self.expected_upload())
+        with self.assertRaisesRegex(RuntimeError, "never modified"):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 0)
+
+    def test_unreadable_release_state_is_refused_not_treated_as_absent(self):
+        unreadable = subprocess.CompletedProcess(["gh"], 0, stdout='{"isDraft": "yes"}', stderr="")
+        with patch.object(release, "gh", return_value=unreadable):
+            with self.assertRaisesRegex(ValueError, "unreadable release state"):
                 release.publish(self.root, self.tag)
-                self.assertEqual(len(published), 1)
+        self.assertEqual(self.store.uploads, [])
+        self.assertFalse(self.store.exists, "an unknown state must not turn into a create")
