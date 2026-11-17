@@ -141,7 +141,8 @@ declared port and the current runtime facts; the service state word is colored (
 red, ordinary stop dim), degrading to plain text under NO_COLOR. A portless worker is explicitly
 marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. The
 `listeners` line gives every listener that no running service row already names its own home: a port
-owned by another run is written with that run's name (`8082 (run finance-web)`), and a listener no
+owned by another run is written with that run's name (`8082 (run finance-web)`), a live run holding no
+listener is written with its own name alone (`worker (run, no port)`), and a listener no
 run owns is marked `unowned` with the process and pid when the process table could read them
 (`9090 (unowned: node, pid 1234)`). The `resources` line says `N declared running`; runs outside the
 manifest are named on the listener line instead, so a worktree with no declared service running does
@@ -286,12 +287,16 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
 }
 ~~~
 
-`worktree.ad_hoc_runs` attributes every listener that no running service row already names. The run is
-identified by its run id, not by its name: an `oberth start` run the manifest does not declare, a stale
-generation that still uses a declared service's name, and a declared service's run holding an extra
-port all appear here. Each row carries `name`, `run_id`, `group`, `pid`, the recorded `cmd`, `cwd` and
-`started_at` when the run mirror still has them (absent means unknown), and the sorted `ports` it
-holds. `worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
+`worktree.ad_hoc_runs` attributes every listener that no running service row already names, plus every
+live run this worktree started that holds no listener at all. The run is identified by its run id, not
+by its name: an `oberth start` run the manifest does not declare, a stale generation that still uses a
+declared service's name, and a declared service's run holding an extra port all appear here, and so
+does a portless run — it is a process option-berth owns that `down` stops and `restart --run` replays,
+so leaving it out would make it reachable only by scanning the process table. Each row carries `name`,
+`run_id`, `group`, `pid`, the recorded `cmd`, `cwd` and `started_at` when the run mirror still has them
+(absent means unknown), and the sorted `ports` it holds, which is an empty array for a run holding
+none. A run a running service row already names is not repeated here: the service row is its home.
+`worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
 and `pid` and `command` when the process table supplied them. `ports` stays the flat listener list;
 together, a running service's `port_actual`, `ad_hoc_runs` and `unowned_ports` cover every entry in it.
 A declared service's listener that another process owns is named by that service's `port_holder`; an
