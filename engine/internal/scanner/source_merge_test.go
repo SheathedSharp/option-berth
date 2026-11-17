@@ -187,3 +187,35 @@ func TestFailedScanKeepsTheDegradationClock(t *testing.T) {
 		t.Fatalf("observation = %+v, want the same degradation still open", got)
 	}
 }
+
+// A merged read whose primary pass was partial keeps that verdict: the union
+// has readable rows, but the unread part of one rung's table is still unknown.
+func TestMergedPartialReadPublishesThePartialVerdict(t *testing.T) {
+	partial := &ports.ObservationError{
+		Code: ports.CodeObservationIncomplete, Detail: "netstat: unreadable row",
+		Hint: "run `oberth doctor --only listener_observation`", Partial: true,
+		Rows: []ports.ListeningPort{{Port: 18120, PID: 42, BindAddress: "127.0.0.1", IPVersion: "IPv4"}},
+	}
+	l := New(Options{
+		RuntimeServiceVersion: "test",
+		SourceLimit:           2,
+		ScanSources: func(context.Context, Include) ([]ports.ListeningPort, []string, error) {
+			return partial.Rows, []string{"netstat", "lsof"}, partial
+		},
+	})
+
+	snap, err := l.Snapshot(Include{})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	got := snap.Observation
+	if got == nil || got.State != state.ObservationPartial {
+		t.Fatalf("observation = %+v, want the partial verdict", got)
+	}
+	if want := []string{"netstat", "lsof"}; !reflect.DeepEqual(got.Sources, want) {
+		t.Fatalf("sources = %v, want %v", got.Sources, want)
+	}
+	if len(snap.Ports) != 1 || snap.Ports[0].Port != 18120 {
+		t.Fatalf("ports = %+v, want the readable row", snap.Ports)
+	}
+}

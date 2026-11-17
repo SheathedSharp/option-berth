@@ -749,17 +749,16 @@ func (l *Loop) read(ctx context.Context, include Include) scanReading {
 	}
 	if partial, ok := ports.PartialRows(err); ok {
 		// The readable rows are facts; the unreadable ones are not. Publish
-		// them together with the verdict so no port looks absent.
+		// them together with the verdict so no port looks absent. A merged read
+		// keeps the partial verdict: one of its rungs did not finish, and that
+		// is more than "the table is narrow". A single alternative keeps the
+		// coverage sentence, which is the stronger claim about absence.
 		reading := scanReading{
 			rows: partial, source: source, sources: sources, narrow: narrow, partial: true, partialCause: err,
 			verdict: l.partialObservation(err, source, sources),
 		}
-		if narrow {
-			// An alternative collector from the platform's chain either answers
-			// whole or reports a simultaneous failure, so a named source with
-			// partial rows does not occur there. Keep the coverage sentence
-			// authoritative if it ever does.
-			reading.verdict = l.observableObservation(source, sources)
+		if source != "" && len(sources) == 0 {
+			reading.verdict = l.observableObservation(source, nil)
 		}
 		return reading
 	}
