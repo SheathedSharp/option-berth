@@ -15,6 +15,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/usersvc"
 	"github.com/spf13/cobra"
 )
 
@@ -43,9 +44,13 @@ var runtimeServiceStopCmd = &cobra.Command{
 
 var runtimeServiceRestartCmd = &cobra.Command{
 	Use:   "restart",
-	Short: "Stop the runtime service if it is running, then start it detached",
-	RunE:  runtimeServiceRestartRun,
-	Args:  cobra.NoArgs,
+	Short: "Replace the running runtime service, through the user-level service unit when one is installed",
+	Long: "Replace the running runtime service.\n\n" +
+		"On a machine where install.sh registered the user-level service unit, the unit is\n" +
+		"restarted and the CLI never starts a runtime service of its own; without a unit the\n" +
+		"old behaviour applies: stop what is running, then start a detached one.",
+	RunE: runtimeServiceRestartRun,
+	Args: cobra.NoArgs,
 }
 
 var runtimeServicePathCmd = &cobra.Command{
@@ -61,6 +66,17 @@ var runtimeServiceLogCmd = &cobra.Command{
 	RunE:  runtimeServiceLogRun,
 	Args:  cobra.NoArgs,
 }
+
+// runtimeServiceSupervisor is the user-level service manager this command talks to.
+// On macOS and Linux install.sh registers a unit there, and the unit — not this
+// process — is the runtime service's owner, so `restart` and autostart ask the
+// supervisor instead of forking a child. A variable so a test can inject one and
+// assert what was asked.
+var runtimeServiceSupervisor = usersvc.Current()
+
+// supervisorSocketTimeout bounds how long a runtime service the supervisor started may
+// take to accept connections. A variable so a test does not spend the real budget.
+var supervisorSocketTimeout = client.AutostartTimeout
 
 func init() {
 	for _, command := range []*cobra.Command{runtimeServiceStatusCmd, runtimeServicePathCmd, runtimeServiceStopCmd, runtimeServiceRestartCmd} {
@@ -247,6 +263,9 @@ func runtimeServiceStopRun(cmd *cobra.Command, _ []string) error {
 
 func runtimeServiceRestartRun(cmd *cobra.Command, _ []string) error {
 	socket := runtimesvc.SocketPath()
+	if runtimeServiceSupervisor.Installed() {
+		return restartRuntimeServiceUnit(cmd.Context(), socket)
+	}
 	if conn, dialErr := connectRunning(cmd.Context()); dialErr == nil {
 		var ack rpc.OKResult
 		_ = conn.Call(cmd.Context(), "runtime.service.shutdown", rpc.Empty{}, &ack)
@@ -263,6 +282,38 @@ func runtimeServiceRestartRun(cmd *cobra.Command, _ []string) error {
 	if runtimeServiceJSONFlag {
 		return printJSON(map[string]any{"restarted": true, "socket": socket})
 	}
+	return nil
+}
+
+// restartRuntimeServiceUnit replaces the runtime service the user-level unit owns.
+//
+// It never detaches a child: the unit is the socket's and the lock's single owner,
+// so a process started here would either lose the lock or become a second runtime
+// service the supervisor knows nothing about — the very thing the unit exists to
+// prevent. A supervisor failure is returned as it is, because silently starting a
+// child instead would hide a unit that is broken.
+func restartRuntimeServiceUnit(ctx context.Context, socket string) error {
+	supervisor := runtimeServiceSupervisor
+	active, err := supervisor.Active(ctx)
+	if err != nil {
+		return fmt.Errorf("asking %s about the oberth runtime service: %w", supervisor.Name(), err)
+	}
+	if active {
+		err = supervisor.Restart(ctx)
+	} else {
+		err = supervisor.Start(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("%s did not restart the oberth runtime service: %w\nhint: `oberth runtime service log` and the supervisor's own log show why",
+			supervisor.Name(), err)
+	}
+	if waitErr := client.WaitForSocket(ctx, socket, supervisorSocketTimeout); waitErr != nil {
+		return fmt.Errorf("%w (the service unit was asked to start it; see %s)", waitErr, runtimesvc.LogPath())
+	}
+	if runtimeServiceJSONFlag {
+		return printJSON(map[string]any{"restarted": true, "socket": socket})
+	}
+	fmt.Printf("oberth runtime service restarted by %s\n", supervisor.Name())
 	return nil
 }
 
