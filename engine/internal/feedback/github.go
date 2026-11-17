@@ -35,33 +35,90 @@ var ghRun = func(ctx context.Context, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
-// GHAccount is how this installation reaches GitHub: the account `gh` is
-// signed in as, or the reason it cannot file through it.
+// GHState is the typed answer to "who files the report". There are five,
+// because "the probe reached github.com" and "a credential can file an issue"
+// are different facts: a stored credential files an issue while the validation
+// call behind it cannot reach the API.
+type GHState string
+
+const (
+	// GHSignedIn: gh holds a credential for github.com and named the account.
+	GHSignedIn GHState = "signed_in"
+	// GHCredentialUnconfirmed: a credential for github.com is stored, but the
+	// probe could not reach github.com, so the account is unconfirmed. A report
+	// is still attempted through it.
+	GHCredentialUnconfirmed GHState = "credential_unconfirmed"
+	// GHSignedOut: gh answered and holds no credential for github.com.
+	GHSignedOut GHState = "signed_out"
+	// GHNotInstalled: there is no gh binary to ask.
+	GHNotInstalled GHState = "not_installed"
+	// GHUnknown: gh answered something that does not say whether a credential
+	// exists. It is not evidence of being signed out.
+	GHUnknown GHState = "unknown"
+)
+
+// GHAccount is how this installation reaches GitHub: the credential gh holds
+// for github.com, or why a report cannot be attempted through it.
+//
+// The published `available` does not mean "the probe reached the API". It means
+// the gh path is worth attempting: gh is installed and has not said there is no
+// credential. An unreachable github.com does not stop `gh issue create`, so
+// treating it as unavailable is what made a filed report contradict its status.
 type GHAccount struct {
-	Available bool   `json:"available"`
-	Account   string `json:"account,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	State   GHState `json:"state"`
+	Account string  `json:"account,omitempty"`
+	Reason  string  `json:"reason,omitempty"`
+}
+
+// AttemptsGH is the one predicate the delivery path and the published channel
+// share, so a report cannot take a channel its status does not name.
+func (a GHAccount) AttemptsGH() bool {
+	switch a.State {
+	case GHSignedOut, GHNotInstalled:
+		return false
+	default:
+		// An unconfirmed or unknown probe is a reason to try, not a reason to
+		// stop: gh itself decides whether the report can be filed.
+		return true
+	}
+}
+
+// GHStatus is the published form of GHAccount: the state, plus the `available`
+// prediction derived from it. Only Published builds one, so the JSON cannot
+// disagree with the delivery path.
+type GHStatus struct {
+	Available bool    `json:"available"`
+	State     GHState `json:"state"`
+	Account   string  `json:"account,omitempty"`
+	Reason    string  `json:"reason,omitempty"`
+}
+
+// Published is how the account appears in `--json`.
+func (a GHAccount) Published() GHStatus {
+	return GHStatus{Available: a.AttemptsGH(), State: a.State, Account: a.Account, Reason: a.Reason}
 }
 
 // GHLogin reads the local gh credential. It never sends the report, creates
 // nothing and does not use a token any other component supplied.
+//
+// The status document is read even when gh exits non-zero: a signed-out gh
+// still prints the hosts it knows, and that document is the only thing that may
+// be reported as signed out.
 func GHLogin(ctx context.Context) GHAccount {
 	out, err := ghAuth(ctx, "auth", "status", "--json", "hosts")
-	if err == nil {
-		if account, known := githubAccount(out); known {
-			if account == "" {
-				return GHAccount{Reason: "gh is not signed in to github.com"}
-			}
-			return GHAccount{Available: true, Account: account}
-		}
+	if hosts, known := parseGHHosts(out); known {
+		return githubAccount(hosts)
 	}
-	// An older gh without --json still answers the one question that matters:
-	// is a credential present? It cannot name the account, which is why the
-	// structured form is tried first.
+	if errors.Is(err, exec.ErrNotFound) {
+		return GHAccount{State: GHNotInstalled, Reason: "gh is not installed"}
+	}
+	// An older gh without --json still answers the one question that matters
+	// with its exit status: a credential is present. It cannot name the
+	// account, which is why the structured form is tried first.
 	if _, fallbackErr := ghAuth(ctx, "auth", "status"); fallbackErr == nil {
-		return GHAccount{Available: true}
+		return GHAccount{State: GHSignedIn}
 	}
-	return GHAccount{Reason: ghReason(err)}
+	return GHAccount{State: GHUnknown, Reason: ghReason(err)}
 }
 
 // ghAuth runs one read with a fresh short deadline. The fallback must not
@@ -78,8 +135,10 @@ func ghReason(err error) string {
 		return "gh is not installed"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "gh did not answer in time"
+	case err == nil:
+		return "gh printed no account document"
 	default:
-		return "gh is not signed in"
+		return "gh could not report its sign-in state"
 	}
 }
 
@@ -88,34 +147,91 @@ type ghAuthHosts struct {
 }
 
 type ghAuthHost struct {
-	State  string `json:"state"`
-	Active bool   `json:"active"`
-	Login  string `json:"login"`
+	State       string `json:"state"`
+	Active      bool   `json:"active"`
+	Login       string `json:"login"`
+	TokenSource string `json:"tokenSource"`
+	Error       string `json:"error"`
 }
 
-// githubAccount picks the github.com login from `gh auth status --json hosts`.
-// known is false when the document is not the expected shape, which is how a
-// caller tells "an old gh" from "signed in somewhere else".
-func githubAccount(out []byte) (account string, known bool) {
+// credential names the stored credential behind this entry, or "" when there is
+// none. gh reports both where the token came from and, when it could reach
+// github.com, who it belongs to; an environment token has a source but no login.
+func (h ghAuthHost) credential() string {
+	if login := strings.TrimSpace(h.Login); login != "" {
+		return login
+	}
+	return strings.TrimSpace(h.TokenSource)
+}
+
+// parseGHHosts reads the `--json hosts` document. known is false when gh did
+// not print one, which is how a caller tells an old gh from a signed-out one.
+func parseGHHosts(out []byte) (map[string][]ghAuthHost, bool) {
+	if len(strings.TrimSpace(string(out))) == 0 {
+		return nil, false
+	}
 	var decoded ghAuthHosts
-	if err := json.Unmarshal(out, &decoded); err != nil {
-		return "", false
+	if err := json.Unmarshal(out, &decoded); err != nil || decoded.Hosts == nil {
+		return nil, false
 	}
-	hosts, ok := decoded.Hosts["github.com"]
-	if !ok {
-		return "", true
+	return decoded.Hosts, true
+}
+
+// githubAccount turns that document into the typed answer. The active entry is
+// the credential gh would use, so it is looked at before the others.
+func githubAccount(hosts map[string][]ghAuthHost) GHAccount {
+	entries := hosts["github.com"]
+	if len(entries) == 0 {
+		return GHAccount{State: GHSignedOut, Reason: "gh is not signed in to github.com"}
 	}
-	for _, host := range hosts {
-		if host.Active && host.State == "success" && strings.TrimSpace(host.Login) != "" {
-			return host.Login, true
+	ordered := make([]ghAuthHost, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Active {
+			ordered = append(ordered, entry)
 		}
 	}
-	for _, host := range hosts {
-		if host.State == "success" && strings.TrimSpace(host.Login) != "" {
-			return host.Login, true
+	for _, entry := range entries {
+		if !entry.Active {
+			ordered = append(ordered, entry)
 		}
 	}
-	return "", true
+	for _, entry := range ordered {
+		if entry.State == "success" && entry.credential() != "" {
+			return GHAccount{State: GHSignedIn, Account: strings.TrimSpace(entry.Login)}
+		}
+	}
+	for _, entry := range ordered {
+		if entry.credential() != "" {
+			return GHAccount{
+				State:   GHCredentialUnconfirmed,
+				Account: strings.TrimSpace(entry.Login),
+				Reason:  unreachableReason(entry.Error),
+			}
+		}
+	}
+	return GHAccount{State: GHSignedOut, Reason: "gh is not signed in to github.com"}
+}
+
+// unreachableReason is the sentence for a credential the probe could not
+// confirm. The gh error is bounded to one clause so a provider message cannot
+// paste a whole page into the status line.
+func unreachableReason(detail string) string {
+	const clause = "; the stored credential is still used when filing"
+	if detail = oneLine(detail, 120); detail == "" {
+		return "github.com is unreachable" + clause
+	}
+	return "github.com is unreachable (" + detail + ")" + clause
+}
+
+// oneLine keeps the first line of a tool's message and caps it, counting runes
+// so a multi-byte message is never cut in half.
+func oneLine(text string, limit int) string {
+	text = strings.TrimSpace(strings.SplitN(text, "\n", 2)[0])
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "…"
 }
 
 // Issue is the GitHub-side context of one filed report. It is read, never
@@ -146,7 +262,7 @@ func LookupIssues(ctx context.Context, account GHAccount, repo string, numbers [
 	if len(numbers) == 0 {
 		return lookup
 	}
-	if !account.Available {
+	if !account.AttemptsGH() {
 		lookup.Reason = account.Reason
 		return lookup
 	}
@@ -225,7 +341,7 @@ type Outcome struct {
 // OutcomeFor classifies one entry. A `url` channel entry is not a filed issue:
 // the person still had to press submit, so it is never counted as filed.
 func OutcomeFor(entry Entry, lookup IssueLookup) Outcome {
-	if entry.Channel != "gh" {
+	if entry.Channel != ChannelGH {
 		return Outcome{Status: OutcomeNotFiled}
 	}
 	number, ok := IssueNumber(entry.URL)
@@ -273,7 +389,7 @@ func FiledIssueNumbers(entries []Entry) []int {
 	seen := make(map[int]bool, len(entries))
 	numbers := make([]int, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Channel != "gh" {
+		if entry.Channel != ChannelGH {
 			continue
 		}
 		number, ok := IssueNumber(entry.URL)
@@ -299,7 +415,7 @@ type LedgerTotals struct {
 func Totals(entries []Entry) LedgerTotals {
 	totals := LedgerTotals{Total: len(entries)}
 	for _, entry := range entries {
-		if entry.Channel == "gh" {
+		if entry.Channel == ChannelGH {
 			totals.Filed++
 		} else {
 			totals.Prefilled++

@@ -10,7 +10,7 @@
 
 ## 共通规则
 
-- 命令在当前目录（或显式的路径 / 项目名）上工作。没有清单时，先运行 oberth init。
+- 命令在当前目录（或显式的路径 / 项目名）上工作。没有清单时，先运行 oberth init：需要清单的命令以 `not_found` 返回，并在 hint 里给出这一步。
 - 默认输出给人读；普通 `--json` 时 stdout 恰好只有一个 JSON 值。显式流式命令每行一个值，错误写 stderr。
 - 跟随日志和其他流式命令使用 NDJSON：每行一个 JSON 值。
 - 退出码：0 成功，1 运行失败，2 参数或选项错误，130 被 Ctrl-C 中断。
@@ -289,9 +289,13 @@ Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填�
 **只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。`config` 改的是凭据，不是同意。
 `oberth attn on` 与 `oberth attn off [--forget]` 只翻转一个 `enabled` 布尔值，不联网。
 `oberth attn test` 用当前有效配置探测一次。`oberth attn status` 报告解析结果、不可用时的
-固定原因，以及本地质量账本摘要；`--json` 同时输出完整 `quality` 对象。`oberth doctor`
-增加一行离线状态；人读 `status` 在未启用且当前有异常时，每两周提示一次，`BERTH_NO_TIPS=1`
-可关闭。
+固定原因，以及本地质量账本摘要。`--json` 输出的是决策文档：同意与配置字段，加上一个只回答
+「是否有任务在观测、是否有事情发生」的 `quality`——`activity`、`records_read`、
+`assessment_records`、`model_calls`、`cache_hits`、`feedback_records`、`unique_cases`、
+`labeled_cases`、`unlabeled_cases` 和 `sessions`。`--quality` 把该对象换成下文描述的完整
+质量报告；`--since` 与 `--quality-project` 收窄的正是这份报告，因此它们隐含 `--quality`。
+计数为零也留在文档里，不省略。`oberth doctor` 增加一行离线状态；人读 `status` 在未启用且当前
+有异常时，每两周提示一次，`BERTH_NO_TIPS=1` 可关闭。
 
 `oberth attn assess` 是一次性 runner。`--dry-run` 打印当前事件将要发送的脱敏请求体但不发送；
 `--follow` 让同一循环在任务生命周期内持续运行，以 NDJSON 输出 `subscribed`、仅变化的手递
@@ -319,11 +323,11 @@ Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填�
 `oberth attn assess` / `assess --follow` 会在 `$BERTH_HOME/quality/events.ndjson`
 留下脱敏的本地质量观测。开发 agent 在真实交互后可用
 `oberth attn feedback --file <json>` 回写人工标签和动作结果，再用
-`oberth attn status --json [--since 168h]` 查看 `quality` 中的标注覆盖率、assessment
-可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、模型的
-`needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
+`oberth attn status --json --quality [--since 168h] [--quality-project <name>]` 查看 `quality`
+中的标注覆盖率、assessment 可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、
+模型的 `needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、
-模型调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
+模型调用、缓存命中和无事件轮询数量，它同样在默认摘要里；没有真实反馈时指标保持 `null`。
 
 `on` 表示允许评估，不表示已有任务会话运行。开发 skill 可以在相关运行任务中，明确当前
 worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入一个现有 runner。它必须复用自己
@@ -508,6 +512,9 @@ JSON 值，不混入诊断。旧 runtime service 不认识 `progress`，旧 CLI 
 只有清单声明的服务可以重启。`oberth start` 启动的运行没有清单条目：如果它仍在运行，先停止，
 再重新执行那条命令。`restart --only` 点名这类运行且运行账本认识它时，`not_found` 的 hint 会
 打印记录下来的启动命令（cwd、group、name、port 与命令），而不是指回 `status`。
+这条 hint 不依赖清单是否存在：worktree 里根本没有 `oberth.yaml` 时同样给出记录下来的启动命令，
+因为知道这条命令的是运行账本而不是清单。账本不认识的名称则回到「没有可用清单」的 `not_found`
+及其 `oberth init` hint。
 
 启动半段对「监听者不是 option-berth 启动的进程」的报告方式与 `up` 相同：跳过，并在原因和
 hint 里写出进程与端口。`--force` 只跳过优雅停止，不会接管 option-berth 没启动的进程。
@@ -709,10 +716,13 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 - `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加
   `latest`。它只读发布信息，不下载、不安装，也不替换正在运行的二进制。终端命令复用同一份检查结果：
   首屏显示本机版本并给出完整升级块，其他输出给人看的命令在本机落后时以两行升级提示收尾。
-  同一构建对同一发布只提示一次。成功时缓存 5 分钟、失败时缓存 30 分钟，单次最多等待 1 秒，
+  同一构建对同一发布只提示一次。成功结果缓存 5 分钟。首屏最多等待 2 秒，因为版本正是在这里被问到的；
+  其他命令只读取已经就绪或接近就绪的答案，最多等 250 毫秒；显式 `--check` 最多等 6 秒。
+  失败会连同种类一起记下：被这份预算掐断的检查 2 分钟后重试，发布源不可达或应答不是发布标签的则记 30 分钟。
   `BERTH_NO_UPDATE_CHECK=1` 可关闭自动提示。JSON 输出、`--help` 与显式 `--check` 都不加这段提示。
   检查同时读取 GitHub 的发布元数据和 CDN 上的标签列表，GitHub 慢或被限制时不会因此看不到新版本。
-  所有来源都不可达时 `--check` 以非零退出并说明原因，终端路径保持安静。检查结果缓存在
+  所有来源都不作答时 `--check` 以非零退出并说明原因，且任何终端路径都不把未知当成“最新版”：首屏说明更新检查不可用
+  并给出 `oberth version --check`，页脚保持沉默。检查结果缓存在
   `BERTH_HOME/update-check.json`（默认 `~/.option-berth/update-check.json`），只为这些提示复用，不是运行事实。
 
 `oberth version --json` 的 stdout 是一个 JSON 值：
@@ -776,7 +786,7 @@ Runtime Service 的存储及控制文件目录必须位于已验证的本地文�
 
 | 命令 | 做什么 |
 |---|---|
-| `oberth feedback status [--json]` | 已记录的决定、`gh` 登录的账号、本安装的报告总数，以及最近一天提交了几份 |
+| `oberth feedback status [--json]` | 已记录的决定、`gh` 持有的 github.com 凭据、一份报告会走的通道、本安装的报告总数，以及最近一天提交了几份 |
 | `oberth feedback on` / `oberth feedback off` | 不用等首屏，直接记录决定；`on` 会写明将由哪个账号提交 |
 | `oberth feedback report [--json] [--dry-run]` | 组装并提交一份报告 |
 | `oberth feedback log [--json]` | 每份报告对应 issue 的状态、关闭时间、标签和链接，经 `gh` 读取 |
@@ -792,25 +802,33 @@ Runtime Service 的存储及控制文件目录必须位于已验证的本地文�
 终端上没有 `--kind` 或 `--command` 时，`report` 用方向键从同一份固定词汇里问，再问可选的
 描述；提交前展示完整报告并要求确认。`--json`、`--yes` 和管道仍走纯参数路径，脚本不会卡在提问上。
 
-`gh` 已安装且已登录时，报告通过 `gh issue create` 用报告人自己的 GitHub 账号提交，因此那个账号在
-issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。
-`feedback status` 与 `feedback on` 在组装报告之前就写明这个账号，`feedback log` 用同一个登录读取
+`gh` 已安装并持有凭据时，报告通过 `gh issue create` 用报告人自己的 GitHub 凭据提交，因此那个账号在
+issue 上可见；只有没有凭据时，命令才打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。
+是否真的提交由 `gh issue create` 自己决定：本地探测只说明这次尝试值不值得做，所以探测不到
+github.com 也照样提交，提交失败才退回链接并给出真正发生的错误。
+`feedback status` 与 `feedback on` 在组装报告之前就写明这份凭据，`feedback log` 用同一个登录读取
 已提交的 issue。三者都只读本地 gh 凭据（`gh auth status --json hosts`），不发送任何东西。同一构建的
 同一个问题 24 小时内最多提交一次，一个安装滚动一天最多提交二十份。判据包含类别、命令、错误码、
 观察状态、版本和脱敏后的描述：任一项不同就是不同的问题。本地账本在
 `BERTH_HOME/feedback/reports.ndjson`，它只是记录；删掉它只会让重复提交再次成为可能。
 
-`status` 把两类历史分开：`gh` 条目是真正提交的 issue，`url` 条目是人还需要自己按提交的预填页面。
+`status` 给出的是预测，不是承诺：`channel` 是此刻一份报告会走的通道，和投递路径共用同一个判据。
+它把两类历史分开：`gh` 条目是真正提交的 issue，`url` 条目是人还需要自己按提交的预填页面。
 人读的一行是 `N recorded · N filed · N prefilled`，预填页面不会虚增提交数。`--json` 增加
-`github`（`available`、`account`、`reason`）和 `reports`（`total`、`filed`、`prefilled`、
-`last_at`）。
+`github`（`available`、`state`、`account`、`reason`）和 `reports`（`total`、`filed`、
+`prefilled`、`last_at`）。`state` 取 `signed_in`、`credential_unconfirmed`、`signed_out`、
+`not_installed` 或 `unknown`；`available` 为真表示这份报告会尝试经 gh 提交，所以凭据已存在、只是
+探测没能连上 github.com 时是 `credential_unconfirmed` 且仍然 `available`——连不上不等于未登录。
+人读的 `github` 一行是 `signed in as <account>`、`credential stored for <account> but github.com is
+unreachable; a report is still attempted through gh`、`not signed in (...)` 或 `not available
+(gh is not installed)`。
 
 `log` 是这个回路的另一半。对每份已提交报告，它读取 issue 并打印 `open`、`resolved`、
 `closed as not planned`、`unknown` 或 `prefilled page only`；旁边给出 issue 编号、kind、command、
 版本、报告日期、关闭或更新时间、标签和链接。`--json` 同样给出 `github`、`summary`（本地总数加上
 `open`、`resolved`、`not_planned`、`unknown`）和逐条的 `status`、`reason` 与 GitHub `issue`
 对象（`number`、`state`、`state_reason`、`title`、`labels`、`updated_at`、`closed_at`、`url`）。
-人读视图最多列最近 20 条，`summary` 统计整个账本。`gh` 未登录时本地记录照常打印，每份已提交报告
+人读视图最多列最近 20 条，`summary` 统计整个账本。没有 gh 凭据时本地记录照常打印，每份已提交报告
 说明状态未知的原因，不猜。
 
 报告永远不带路径、日志行、清单字段、命令行、worktree 身份或环境变量：它说的是引擎，不是它跑在

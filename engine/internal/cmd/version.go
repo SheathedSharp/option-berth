@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -75,11 +74,7 @@ func versionRun(cmd *cobra.Command, args []string) error {
 	current := buildinfo.VersionValue()
 	state, err := versioncheck.Lookup(ctx, current, true, versioncheck.CheckTimeout)
 	if err != nil {
-		code := "internal"
-		if errors.Is(err, context.DeadlineExceeded) {
-			code = "timeout"
-		}
-		return fail(code, "could not check the latest release: %s", err)
+		return fail(checkFailureCode(state), "could not check the latest release: %s", err)
 	}
 	if versionJSONFlag {
 		return printJSON(versionDocumentFor(&state))
@@ -89,6 +84,16 @@ func versionRun(cmd *cobra.Command, args []string) error {
 		printUpgrade(os.Stdout, state.Latest)
 	}
 	return nil
+}
+
+// checkFailureCode names a failed explicit check for a caller that branches on
+// the status instead of parsing text. The kind is the one the check recorded, so
+// "our own budget ran out" is told apart from a feed that could not be used.
+func checkFailureCode(state versioncheck.State) string {
+	if state.Failure == versioncheck.FailureTimeout {
+		return "timeout"
+	}
+	return "internal"
 }
 
 // versionDocumentFor renders the build identity, with the latest-release answer

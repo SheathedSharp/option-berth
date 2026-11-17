@@ -15,8 +15,8 @@ import (
 
 // noticeProbe is the release check a command starts before it does its work
 // and reads when it has finished. Running it alongside the command means a
-// short command pays at most the leftover of the budget, and a command that
-// takes longer than the budget pays nothing.
+// short command pays at most the leftover of the footer grace, and a command
+// that takes longer than the grace pays nothing.
 type noticeProbe struct {
 	result chan versioncheck.State
 	start  time.Time
@@ -40,6 +40,10 @@ func startUpdateProbe(cmd *cobra.Command) {
 	probe := &noticeProbe{result: make(chan versioncheck.State, 1), start: time.Now()}
 	updateProbe = probe
 	go func() {
+		// The probe runs the same automatic check the welcome screen would, with
+		// the same deadline — the budget belongs to the check, not to this
+		// command. What the footer does not get is the welcome screen's
+		// patience: printUpdateNotice reads this for FooterGrace only.
 		state, _ := versioncheck.Lookup(context.Background(), current, false, versioncheck.WelcomeTimeout)
 		probe.result <- state
 	}()
@@ -61,11 +65,10 @@ func noticeEligible(cmd *cobra.Command) bool {
 	return true
 }
 
-// printUpdateNotice waits for the probe the command started, within what is
-// left of the same budget the welcome screen allows, and prints the footer when
-// a newer release is known. A slow or unreachable feed stays silent: the
-// command's own result has already been written, and a notice is never worth
-// holding the terminal for.
+// printUpdateNotice reads the probe the command started, within the footer
+// grace, and prints the footer when a newer release is known. A slow or
+// unreachable feed stays silent: the command's own result has already been
+// written, and a notice is never worth holding the terminal for.
 func printUpdateNotice() {
 	probe := updateProbe
 	updateProbe = nil
@@ -86,15 +89,15 @@ func printUpdateNotice() {
 }
 
 // awaitUpdateNotice reads the probe's result, waiting only for what is left of
-// the welcome screen's budget. An answer that is not ready by then is dropped,
-// not cancelled: cancelling would record the cancellation as a failed check and
-// silence the feed for the whole failure TTL.
+// the footer grace. An answer that is not ready by then is dropped, not
+// cancelled: the probe has its own deadline, and the answer is still worth
+// having for the next command.
 func awaitUpdateNotice(probe *noticeProbe) (versioncheck.State, bool) {
 	select {
 	case state := <-probe.result:
 		return state, true
 	default:
-		remaining := versioncheck.WelcomeTimeout - time.Since(probe.start)
+		remaining := versioncheck.FooterGrace - time.Since(probe.start)
 		if remaining <= 0 {
 			return versioncheck.State{}, false
 		}
@@ -110,7 +113,9 @@ func awaitUpdateNotice(probe *noticeProbe) (versioncheck.State, bool) {
 // updateNotice is the two lines a terminal command ends with when this build
 // is behind: what is newer, and the exact commands that make the running
 // installation newer. It stays quiet for an unknown answer — "not checked"
-// never becomes "update available" — and for a release already announced.
+// never becomes "update available", and a failed check is not the footer's news
+// to break: the welcome screen is where the version was asked for, and that is
+// where the failure is named — and for a release already announced.
 func updateNotice(state versioncheck.State) string {
 	if !state.UpdateAvailable() || state.Notified == state.Latest {
 		return ""

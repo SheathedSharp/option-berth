@@ -10,7 +10,7 @@ Use the [documentation index](index.md) to select a task. Below are common rules
 
 ## Common rules
 
-- Commands work on the current directory (or an explicit path / project name). With no manifest, run oberth init first.
+- Commands work on the current directory (or an explicit path / project name). With no manifest, run oberth init first: a command that needs the manifest answers `not_found` with that step in the hint.
 - Default output is for humans; with plain `--json`, stdout holds exactly one JSON value. Explicit streaming commands emit one value per line, with errors written to stderr.
 - Following logs and other streaming commands use NDJSON: one JSON value per line.
 - Exit codes: 0 success, 1 run failure, 2 argument or option error, 130 interrupted by Ctrl-C.
@@ -332,10 +332,15 @@ when the probe succeeds — a failed probe leaves the existing configuration unt
 changes credentials, not consent. `oberth attn on` and `oberth attn off [--forget]` flip the single
 `enabled` boolean and never touch the network. `oberth attn test` probes the current effective
 configuration once. `oberth attn status` reports the resolved state, the fixed reason when it cannot
-be used, and a summary of the local quality ledger; `--json` carries the same data plus the full
-`quality` object. `oberth doctor` gains one offline row for the same state, and a human `status`
-read mentions the feature once every two weeks when it is off and an anomaly is present;
-`BERTH_NO_TIPS=1` silences that hint.
+be used, and a summary of the local quality ledger. `--json` carries the decision document: the
+consent and configuration fields plus a `quality` object reduced to the counters that answer "is a
+runner observing, and is anything happening" — `activity`, `records_read`, `assessment_records`,
+`model_calls`, `cache_hits`, `feedback_records`, `unique_cases`, `labeled_cases`,
+`unlabeled_cases` and `sessions`. `--quality` replaces that object with the full quality report
+described below; `--since` and `--quality-project` narrow that report, so they imply `--quality`.
+A zero count stays in the document instead of disappearing. `oberth doctor` gains one offline row
+for the same state, and a human `status` read mentions the feature once every two weeks when it is
+off and an anomaly is present; `BERTH_NO_TIPS=1` silences that hint.
 
 `oberth attn assess` is the one-shot runner. `--dry-run` prints the exact redacted
 request for the current event without sending it, and `--follow` keeps the same
@@ -370,12 +375,14 @@ privacy boundary are in
 `oberth attn assess` / `assess --follow` leave redacted local quality observations in
 `$BERTH_HOME/quality/events.ndjson`. After a real interaction, a development agent can write back
 human labels and action outcomes with `oberth attn feedback --file <json>`, then use
-`oberth attn status --json [--since 168h]` to view label coverage, assessment availability,
-routing reasons and the model/option distribution, human-escalation precision/recall/F1, the model's
+`oberth attn status --json --quality [--since 168h] [--quality-project <name>]` to view label
+coverage, assessment availability, routing reasons and the model/option distribution,
+human-escalation precision/recall/F1, the model's
 `needs_human` / `task_relevant` probability error, recommendation hit rate, action success rate,
 resolution rate and detection latency under `quality`. Quality records are not `status` facts and
 change no execution permission; the `sessions` object explains the number of sessions, polls, events,
-the model calls, cache hits and no-event polls; with no real feedback the metrics stay `null`.
+the model calls, cache hits and no-event polls, and is part of the default summary as well; with no
+real feedback the metrics stay `null`.
 
 `on` means permission to assess, not that a task session is running. A development skill may attach
 one existing runner to a relevant runtime task after binding its canonical worktree, redacted task
@@ -610,6 +617,10 @@ Only services the manifest declares can be restarted. A run started with `oberth
 manifest entry: stop it first if it is still running, then start that command again. When
 `restart --only` names such a run and the run ledger knows it, the `not_found` hint prints the
 recorded start line (cwd, group, name, port and command) instead of pointing back at `status`.
+That hint does not depend on the manifest being there: a worktree with no `oberth.yaml` at all
+still gets the recorded start line, because the run ledger rather than the manifest is what knows
+it. A name the ledger does not know falls back to the missing-manifest `not_found` and its
+`oberth init` hint.
 
 A listener option-berth did not start is reported by the start half the same way `up` reports it:
 skipped, with a reason and hint naming the process and port. `--force` only skips the graceful stop;
@@ -844,10 +855,14 @@ appear in public help.
 - `oberth version --check` reads the latest release tag and reports whether this machine is behind; `--check --json` adds
   `latest` on top of the original fields. It only reads release information: it does not download, does not install, and does not replace the running binary. Terminal commands reuse the same
   check result: the first screen shows the local version with a full upgrade block, and any other command that writes human output ends with a two-line upgrade footer when this build is behind.
-  A release is announced once per build. The result is cached for 5 minutes on success and 30 minutes on failure, a command waits at most 1 second for it,
-  and `BERTH_NO_UPDATE_CHECK=1` turns the automatic notices off. JSON output, `--help` and an explicit `--check` never add the footer.
+  A release is announced once per build. A successful result is cached for 5 minutes. The first screen may wait up to 2 seconds for the answer, because it is
+  where the version was asked for; every other command only reads an answer that is ready or nearly ready, waiting at most 250 milliseconds; an explicit
+  `--check` may wait up to 6 seconds. A failure is remembered with its kind: a check this budget cut off is retried after 2 minutes, while an unreachable
+  release feed or an answer that is not a release is remembered for 30 minutes. `BERTH_NO_UPDATE_CHECK=1` turns the automatic notices off. JSON output,
+  `--help` and an explicit `--check` never add the footer.
   The check reads GitHub's release metadata and a CDN copy of the tag list, so a slow or blocked GitHub does not hide a release.
-  When no source answers, `--check` exits non-zero and explains why, while the terminal paths stay silent. The check result is cached in `BERTH_HOME/update-check.json`
+  When no source answers, `--check` exits non-zero and explains why, and no terminal path turns an unknown answer into "latest": the first screen says the
+  update check is unavailable and names `oberth version --check`, while the footer stays silent. The check result is cached in `BERTH_HOME/update-check.json`
   (default `~/.option-berth/update-check.json`), reused only for these notices and not a runtime fact.
 
 `oberth version --json`'s stdout is one JSON value:
@@ -913,7 +928,7 @@ disables, the way `NO_COLOR` does) turns both the question and sending off.
 
 | Command | What it does |
 |---|---|
-| `oberth feedback status [--json]` | The recorded decision, the GitHub account `gh` is signed in as, the local report totals, and how many reports this installation filed in the last day |
+| `oberth feedback status [--json]` | The recorded decision, the credential `gh` holds for github.com, the channel a report would take, the local report totals, and how many reports this installation filed in the last day |
 | `oberth feedback on` / `oberth feedback off` | Record the decision without waiting for the first screen; `on` names the account that will file |
 | `oberth feedback report [--json] [--dry-run]` | Compose one report and file it |
 | `oberth feedback log [--json]` | Each report with its issue's state, close date, labels and URL, read through `gh` |
@@ -933,11 +948,14 @@ same fixed vocabulary, then asks for the optional note; the exact report is show
 before it is filed. `--json`, `--yes` and a pipe keep the flag-only path, so a script never waits
 for a prompt.
 
-The report goes out through `gh issue create` with the person's own GitHub account when `gh` is
-installed and signed in, so that account is visible on the issue; otherwise the command prints a
-prefilled `issues/new` URL for the person to submit, and `--open` opens it. `feedback status` and
-`feedback on` name that account before any report is composed, and `feedback log` reads the filed
-issues through the same login. All three read the local gh credential (`gh auth status --json hosts`)
+The report goes out through `gh issue create` with the person's own GitHub credential whenever `gh`
+is installed and holds one, so that account is visible on the issue; only when there is no credential
+does the command print a prefilled `issues/new` URL for the person to submit, and `--open` opens it.
+Delivery is decided by `gh issue create` itself: the local probe only says whether the attempt is
+worth making, so a github.com the probe cannot reach still files the issue, and a create that fails
+falls back to the URL with the error that really happened. `feedback status` and `feedback on` name
+that credential before any report is composed, and `feedback log` reads the filed issues through the
+same login. All three read the local gh credential (`gh auth status --json hosts`)
 and send nothing. The same complaint from the same build is filed at most once in 24 hours, and one
 installation files at most twenty reports in a rolling day. The identity covers kind, command, error
 code, observation, version and the redacted note: reports that differ in any of those are different
@@ -945,11 +963,18 @@ complaints. The local ledger at
 `BERTH_HOME/feedback/reports.ndjson` records what was filed; it is advisory, and deleting it only
 makes a duplicate possible again.
 
-`status` keeps the two kinds of history apart: a `gh` entry is an issue that was filed, while a
-`url` entry is a prefilled page the person still had to submit. The human line reads
-`N recorded · N filed · N prefilled`, so a prefilled page never inflates the filed count. `--json`
-adds `github` (`available`, `account`, `reason`) and `reports` (`total`, `filed`, `prefilled`,
-`last_at`).
+`status` publishes a prediction, not a promise: `channel` is the channel a report takes right now,
+and it comes from the same predicate the delivery path branches on. It keeps the two kinds of history
+apart: a `gh` entry is an issue that was filed, while a `url` entry is a prefilled page the person
+still had to submit. The human line reads `N recorded · N filed · N prefilled`, so a prefilled page
+never inflates the filed count. `--json` adds `github` (`available`, `state`, `account`, `reason`)
+and `reports` (`total`, `filed`, `prefilled`, `last_at`). `state` is `signed_in`,
+`credential_unconfirmed`, `signed_out`, `not_installed` or `unknown`; `available` is true when a
+report is attempted through gh, so a stored credential the probe could not confirm against
+github.com is `credential_unconfirmed` and still `available` — unreachable is not signed out. The
+human `github` line reads `signed in as <account>`, `credential stored for <account> but github.com
+is unreachable; a report is still attempted through gh`, `not signed in (...)`, or `not available
+(gh is not installed)`.
 
 `log` is the response half of the loop. For every filed report it reads the issue and prints
 `open`, `resolved`, `closed as not planned`, `unknown`, or `prefilled page only`; next to the state
@@ -957,8 +982,8 @@ it prints the issue number, kind, command, version, report date, close or update
 URL. `--json` carries the same data as `github`, `summary` (the local totals plus `open`, `resolved`,
 `not_planned` and `unknown`) and one entry per report with `status`, `reason` and the GitHub `issue`
 object (`number`, `state`, `state_reason`, `title`, `labels`, `updated_at`, `closed_at`, `url`). The
-human view shows the most recent 20 entries while `summary` counts the whole ledger. Without a
-signed-in gh the local record still prints and every filed report says why its state is unknown;
+human view shows the most recent 20 entries while `summary` counts the whole ledger. Without a gh
+credential the local record still prints and every filed report says why its state is unknown;
 nothing is guessed.
 
 A report never carries a path, a log line, a manifest field, a command line, a worktree identity or an

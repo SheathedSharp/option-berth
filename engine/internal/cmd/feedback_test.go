@@ -398,51 +398,76 @@ func TestFeedbackPromptStaysOffUnderTheEnvironmentSwitch(t *testing.T) {
 	}
 }
 
-// fakeGHSucceeds puts an executable `gh` on PATH that answers auth and issue
-// creation without the network, and records the issue body for assertions.
-func fakeGHSucceeds(t *testing.T) {
+// fakeGHScript puts an executable `gh` on PATH that runs script. It never
+// touches the network, so every answer is the test's own.
+func fakeGHScript(t *testing.T, script string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake gh is a shell script")
 	}
 	dir := t.TempDir()
-	script := "#!/bin/sh\n" +
-		"case \"$1\" in\n" +
-		"  auth) exit 0 ;;\n" +
-		"esac\n" +
-		"/bin/cat >/dev/null\n" +
-		"echo https://github.com/SheathedSharp/option-berth/issues/42\n"
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
 }
 
+// fakeGHSucceeds puts an executable `gh` on PATH that answers auth and issue
+// creation without the network, and records the issue body for assertions.
+func fakeGHSucceeds(t *testing.T) {
+	t.Helper()
+	fakeGHScript(t, "case \"$1\" in\n"+
+		"  auth) exit 0 ;;\n"+
+		"esac\n"+
+		"/bin/cat >/dev/null\n"+
+		"echo https://github.com/SheathedSharp/option-berth/issues/42\n")
+}
+
 // fakeGHForHistory puts a gh on PATH that answers the two reads the status and
 // log surfaces make: who is signed in, and what happened to the report issues.
-// It never touches the network.
 func fakeGHForHistory(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake gh is a shell script")
-	}
-	dir := t.TempDir()
-	script := "#!/bin/sh\n" +
-		"case \"$1 $2\" in\n" +
-		"  \"auth status\")\n" +
-		"    printf '%s\\n' '{\"hosts\":{\"github.com\":[{\"state\":\"success\",\"active\":true,\"login\":\"zayJu\"}]}}'\n" +
-		"    ;;\n" +
-		"  \"issue list\")\n" +
-		"    printf '%s\\n' '[{\"number\":42,\"state\":\"CLOSED\",\"stateReason\":\"COMPLETED\",\"title\":\"[feedback] slow · up · v2.2.0 · darwin/arm64\",\"url\":\"https://github.com/SheathedSharp/option-berth/issues/42\",\"updatedAt\":\"2026-11-13T01:00:00Z\",\"closedAt\":\"2026-11-13T01:00:00Z\",\"labels\":[]}]'\n" +
-		"    ;;\n" +
-		"  *)\n" +
-		"    exit 1\n" +
-		"    ;;\n" +
-		"esac\n"
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
+	fakeGHScript(t, "case \"$1 $2\" in\n"+
+		"  \"auth status\")\n"+
+		"    printf '%s\\n' '{\"hosts\":{\"github.com\":[{\"state\":\"success\",\"active\":true,\"login\":\"zayJu\"}]}}'\n"+
+		"    ;;\n"+
+		"  \"issue list\")\n"+
+		"    printf '%s\\n' '[{\"number\":42,\"state\":\"CLOSED\",\"stateReason\":\"COMPLETED\",\"title\":\"[feedback] slow · up · v2.2.0 · darwin/arm64\",\"url\":\"https://github.com/SheathedSharp/option-berth/issues/42\",\"updatedAt\":\"2026-11-13T01:00:00Z\",\"closedAt\":\"2026-11-13T01:00:00Z\",\"labels\":[]}]'\n"+
+		"    ;;\n"+
+		"  *)\n"+
+		"    exit 1\n"+
+		"    ;;\n"+
+		"esac\n")
+}
+
+// fakeGHUnreachable is the machine issue #356 reported: a credential is stored
+// and gh names the account, but the probe cannot reach github.com, so the
+// status document carries state "error". Creating an issue still works.
+func fakeGHUnreachable(t *testing.T) {
+	t.Helper()
+	fakeGHScript(t, "case \"$1 $2\" in\n"+
+		"  \"auth status\")\n"+
+		"    printf '%s\\n' '{\"hosts\":{\"github.com\":[{\"state\":\"error\",\"active\":true,\"host\":\"github.com\",\"login\":\"zayJu\",\"tokenSource\":\"keyring\",\"error\":\"Post \\\"https://api.github.com/graphql\\\": dial tcp: i/o timeout\"}]}}'\n"+
+		"    exit 0\n"+
+		"    ;;\n"+
+		"  \"issue list\")\n"+
+		"    exit 1\n"+
+		"    ;;\n"+
+		"esac\n"+
+		"/bin/cat >/dev/null\n"+
+		"echo https://github.com/SheathedSharp/option-berth/issues/42\n")
+}
+
+// fakeGHSignedOut is a gh with no credential for github.com.
+func fakeGHSignedOut(t *testing.T) {
+	t.Helper()
+	fakeGHScript(t, "case \"$1 $2\" in\n"+
+		"  \"auth status\")\n"+
+		"    printf '%s\\n' '{\"hosts\":{}}'\n"+
+		"    exit 0\n"+
+		"    ;;\n"+
+		"esac\n"+
+		"exit 1\n")
 }
 
 func appendFeedbackLedger(t *testing.T, entries ...feedback.Entry) {
@@ -517,6 +542,119 @@ func TestFeedbackStatusSaysWhenGHIsNotAvailable(t *testing.T) {
 	}
 	if !strings.Contains(out, "github     not available (gh is not installed)") {
 		t.Fatalf("status does not name the missing gh:\n%s", out)
+	}
+}
+
+// Issue #356: a machine whose github.com was unreachable read "gh is not signed
+// in" from `feedback status`, and then the very next `feedback report` filed the
+// issue through gh. The published channel is the one delivery takes.
+func TestFeedbackStatusPublishesTheChannelDeliveryTakes(t *testing.T) {
+	feedbackTestEnv(t)
+	fakeGHUnreachable(t)
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackStatus(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackStatus: %v", err)
+	}
+	if !strings.Contains(out, "github     credential stored for zayJu but github.com is unreachable") {
+		t.Fatalf("status does not explain the stored credential:\n%s", out)
+	}
+	if strings.Contains(out, "not signed in") {
+		t.Fatalf("status claims gh is not signed in while a credential is stored:\n%s", out)
+	}
+
+	feedbackStatusJSON = true
+	jsonOut := captureStdout(t, func() { err = runFeedbackStatus(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackStatus --json: %v", err)
+	}
+	var doc struct {
+		Channel string `json:"channel"`
+		GitHub  struct {
+			Available bool   `json:"available"`
+			State     string `json:"state"`
+			Account   string `json:"account"`
+			Reason    string `json:"reason"`
+		} `json:"github"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatalf("status JSON: %v\n%s", err, jsonOut)
+	}
+	if doc.Channel != "gh" || !doc.GitHub.Available || doc.GitHub.Account != "zayJu" || doc.GitHub.State != "credential_unconfirmed" {
+		t.Fatalf("github = %+v channel = %q", doc.GitHub, doc.Channel)
+	}
+	if !strings.Contains(doc.GitHub.Reason, "unreachable") {
+		t.Fatalf("reason = %q, want it to say github.com is unreachable", doc.GitHub.Reason)
+	}
+}
+
+func TestFeedbackStatusSaysSignedOutWhenNoCredentialIsStored(t *testing.T) {
+	feedbackTestEnv(t)
+	fakeGHSignedOut(t)
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackStatus(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackStatus: %v", err)
+	}
+	if !strings.Contains(out, "github     not signed in (gh is not signed in to github.com)") {
+		t.Fatalf("status does not name the signed-out gh:\n%s", out)
+	}
+
+	feedbackStatusJSON = true
+	jsonOut := captureStdout(t, func() { err = runFeedbackStatus(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackStatus --json: %v", err)
+	}
+	var doc struct {
+		Channel string `json:"channel"`
+		GitHub  struct {
+			Available bool   `json:"available"`
+			State     string `json:"state"`
+		} `json:"github"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatalf("status JSON: %v\n%s", err, jsonOut)
+	}
+	if doc.Channel != "url" || doc.GitHub.Available || doc.GitHub.State != "signed_out" {
+		t.Fatalf("github = %+v channel = %q", doc.GitHub, doc.Channel)
+	}
+}
+
+// The whole bug, end to end: the report goes through gh on the same machine the
+// status line describes.
+func TestFeedbackReportFilesThroughGHWhenTheProbeCannotReachGitHub(t *testing.T) {
+	feedbackTestEnv(t)
+	enableFeedback(t)
+	fakeGHUnreachable(t)
+	feedbackKindFlag, feedbackCommandFlag = "stalled", "logs"
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackReport(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackReport: %v", err)
+	}
+	if !strings.Contains(out, "filed https://github.com/") {
+		t.Fatalf("output = %q, want the issue gh created", out)
+	}
+	entries, _ := feedback.ReadLedger(paths.FeedbackLedgerPath())
+	if len(entries) != 1 || entries[0].Channel != "gh" {
+		t.Fatalf("ledger = %+v, want one gh entry", entries)
+	}
+}
+
+func TestFeedbackOnNamesTheUnconfirmedCredential(t *testing.T) {
+	feedbackTestEnv(t)
+	fakeGHUnreachable(t)
+
+	var err error
+	out := captureStdout(t, func() { err = runFeedbackOn(testCommand(), nil) })
+	if err != nil {
+		t.Fatalf("runFeedbackOn: %v", err)
+	}
+	if !strings.Contains(out, "github     credential stored for zayJu but github.com is unreachable; a report is still attempted through gh") {
+		t.Fatalf("on does not explain the stored credential:\n%s", out)
 	}
 }
 
