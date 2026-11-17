@@ -24,7 +24,8 @@ func ScanContext(ctx context.Context) ([]ListeningPort, error) {
 // ScanContextSource is ScanContext plus the collector that answered: empty for
 // the platform's primary collector, otherwise the name of the alternative that
 // did (see chain). A non-empty source means absence from the table is unknown,
-// not evidence that a port is free.
+// not evidence that a port is free. ScanContextSources is the same read when a
+// caller wants several collectors merged instead of one that answered.
 func ScanContextSource(ctx context.Context) ([]ListeningPort, string, error) {
 	return scanContextSource(ctx)
 }
@@ -138,7 +139,7 @@ func collectListenersSource(platform string, run listenerCommand) ([]ListeningPo
 			continue
 		}
 		others = append(others, err)
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if withdrawn(err) {
 			// The caller withdrew, or the machine wedged a command. No further
 			// collector runs: an answer that arrives now belongs to nobody.
 			break
@@ -162,7 +163,7 @@ func collectListenersSource(platform string, run listenerCommand) ([]ListeningPo
 // hide a decoder problem instead of reporting it. A withdrawn observation
 // belongs to the caller, so no second command runs after one.
 func retryable(rows []ListeningPort, err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if err == nil || withdrawn(err) {
 		return false
 	}
 	if len(rows) > 0 {
