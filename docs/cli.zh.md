@@ -104,6 +104,12 @@ option-berth 没启动的进程），就带 `port_holder`：与失败记录相�
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
 “端口冲突”和“启动前失败”不会混成同一种状态。
 
+已记录运行的进程在没有任何 runtime service 观察时消失——宿主已停止，或该运行比一次崩溃活得更久——
+会有自己的终结原因 `ended_unobserved`。结束这件事是已知的，退出状态不是，因此 `code` 为 `-1`，
+不能当成进程状态读取。`at` 是宿主记录该结束的时间；完全没有宿主参与的读取会让它为空，因为不存在
+观察时间。这个结束是该名字下最新的一代，因此同名更早的崩溃不会再被当成当前结果。runtime service
+下次启动时会把同一个结束持久化，并删除承载该证据的 mirror 条目。
+
 `port_occupied` 时，`last_exit.port_hint` 是这次运行被告知要绑定的端口，
 `last_exit.port_holder` 描述读取时仍占着该端口的进程：`port`、`pid`、`command`、`kind`，
 托管运行时另有 `group`、`name`、`run_id`，可读时另有 `cwd` 和 `bind_address`。
@@ -116,8 +122,11 @@ option-berth 没启动的进程），就带 `port_holder`：与失败记录相�
 depends on · listeners · code · failed · next · drafts · last look），按终端显示宽度对齐。
 每个服务单独一行，同时给出声明端口与当前运行实况；服务状态词带颜色（running 绿、
 失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
-`port: auto` 尚未分配时会显示 auto port unassigned。
-只有清单没有声明的监听才单独列出。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是
+`port: auto` 尚未分配时会显示 auto port unassigned。`listeners` 行给每个未被运行中服务行
+命名的监听一个归属：属于另一个运行的端口写成该运行的名字（`8082 (run finance-web)`），
+没有运行拥有的监听标为 `unowned`，并在进程表可读时带上进程名和 pid
+（`9090 (unowned: node, pid 1234)`）。`resources` 行写 `N declared running`；清单之外的运行
+由 listener 行点名，所以没有任何声明服务在跑的工作树不会被读成空闲。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是
 服务的当前 `last_exit` 时显示：服务已经重新运行、或最新一条是正常退出/被 `down` 停止时，该服务
 从失败区消失，旧记录仍留在 `exits[]` 历史里。不同服务各显示一条。端口冲突的失败行直接写出占用者
 （端口、pid、命令和归属种类），不需要再跑 `lsof`/`ps`。只有失败记录确实留下了日志文件
@@ -143,10 +152,11 @@ run 注册后消失。`--brief --json` 也带同一个 `starting`（字段相同
 运行中的服务带 `stats`（`cpu_percent`、`memory_rss_bytes`、`thread_count`、`uptime`、`state`、
 `connections`）。有监听的服务取监听行的样本；无端口的 worker 取它运行根进程的样本，所以
 worker 不再因为不占端口而看不到资源。没有样本时字段缺省，表示**未知**，不是 0。
-`worktree.running_services` 是正在运行的声明服务数；`worktree.resources` 是这些服务样本的
-worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样本的服务数）。汇总只
-在至少一个服务有样本时出现，并明确 `services` 与 `running_services` 的差异；没有样本时缺省，
-不会用 0 冒充测量结果。
+`worktree.running_services` 是正在运行的声明服务数，不统计清单没有声明的运行；那些运行和
+进程持有的监听读 `worktree.ad_hoc_runs` 与 `worktree.unowned_ports`。`worktree.resources` 是
+声明服务样本的 worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样本的
+服务数）。汇总只在至少一个服务有样本时出现，并明确 `services` 与 `running_services` 的差异；
+没有样本时缺省，不会用 0 冒充测量结果。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
@@ -218,7 +228,12 @@ JSON 顶层固定包含：
                     "waiting_on": ["db"], "last_prepare_ms": null}}
     ],
     "ad_hoc_runs": [
-      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530, "ports": [8082]}
+      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530,
+       "cmd": "yarn dev", "cwd": "/work/demo/web",
+       "started_at": "2026-10-31T09:00:00Z", "ports": [8082]}
+    ],
+    "unowned_ports": [
+      {"port": 9090, "pid": 55120, "command": "python3 -m http.server 9090"}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
@@ -227,10 +242,14 @@ JSON 顶层固定包含：
 }
 ~~~
 
-`worktree.ad_hoc_runs` 列出用 `oberth start` 启动、监听属于本 worktree、但名字不在声明服务里的
-运行：`name`、`run_id`、`group`、`pid`，以及它持有的 `ports`。`ports` 仍是扁平的监听列表；
-这是它无法承载的归属信息，读者因此能区分 oberth 管理的进程和外来进程。声明服务的监听者若属于
-别的进程，由该服务的 `port_holder` 指明；`ad_hoc_runs` 只列清单没有声明的运行。
+`worktree.ad_hoc_runs` 给每个未被运行中服务行命名的监听一个归属。运行按 run id 识别，不按名字：
+清单没有声明的 `oberth start` 运行、仍用着声明服务名字的旧代际、以及声明服务的运行额外持有的
+端口都会出现在这里。每行带 `name`、`run_id`、`group`、`pid`，运行 mirror 还保留时带记录的
+`cmd`、`cwd` 和 `started_at`（缺省表示未知），以及排好序的 `ports`。`worktree.unowned_ports`
+是剩下的一类：没有 option-berth 运行拥有的监听，每项带 `port`，进程表可读时还带 `pid` 和
+`command`。`ports` 仍是扁平的监听列表；运行中服务的 `port_actual`、`ad_hoc_runs` 和
+`unowned_ports` 合起来覆盖其中的每一项。声明服务的监听者若属于别的进程，由该服务的
+`port_holder` 指明；已经有运行的监听不会在那里重复。
 
 `worktree.identity` 就是清单里 `${worktree}` 展开成的值。它由 checkout 的规范化根路径
 派生，所以同一个 checkout 每次读取都相同；人或 agent 要用 `psql` 连这个 worktree 的库时，
@@ -289,9 +308,13 @@ Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填�
 **只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。`config` 改的是凭据，不是同意。
 `oberth attn on` 与 `oberth attn off [--forget]` 只翻转一个 `enabled` 布尔值，不联网。
 `oberth attn test` 用当前有效配置探测一次。`oberth attn status` 报告解析结果、不可用时的
-固定原因，以及本地质量账本摘要；`--json` 同时输出完整 `quality` 对象。`oberth doctor`
-增加一行离线状态；人读 `status` 在未启用且当前有异常时，每两周提示一次，`BERTH_NO_TIPS=1`
-可关闭。
+固定原因，以及本地质量账本摘要。`--json` 输出的是决策文档：同意与配置字段，加上一个只回答
+「是否有任务在观测、是否有事情发生」的 `quality`——`activity`、`records_read`、
+`assessment_records`、`model_calls`、`cache_hits`、`feedback_records`、`unique_cases`、
+`labeled_cases`、`unlabeled_cases` 和 `sessions`。`--quality` 把该对象换成下文描述的完整
+质量报告；`--since` 与 `--quality-project` 收窄的正是这份报告，因此它们隐含 `--quality`。
+计数为零也留在文档里，不省略。`oberth doctor` 增加一行离线状态；人读 `status` 在未启用且当前
+有异常时，每两周提示一次，`BERTH_NO_TIPS=1` 可关闭。
 
 `oberth attn assess` 是一次性 runner。`--dry-run` 打印当前事件将要发送的脱敏请求体但不发送；
 `--follow` 让同一循环在任务生命周期内持续运行，以 NDJSON 输出 `subscribed`、仅变化的手递
@@ -319,11 +342,11 @@ Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填�
 `oberth attn assess` / `assess --follow` 会在 `$BERTH_HOME/quality/events.ndjson`
 留下脱敏的本地质量观测。开发 agent 在真实交互后可用
 `oberth attn feedback --file <json>` 回写人工标签和动作结果，再用
-`oberth attn status --json [--since 168h]` 查看 `quality` 中的标注覆盖率、assessment
-可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、模型的
-`needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
+`oberth attn status --json --quality [--since 168h] [--quality-project <name>]` 查看 `quality`
+中的标注覆盖率、assessment 可用率、路由原因与模型/选项分布、人工升级 precision/recall/F1、
+模型的 `needs_human` / `task_relevant` 概率误差、推荐命中率、动作成功率、解决率和发现延迟。
 质量记录不属于 `status` 事实，也不改变任何执行权限；报告的 `sessions` 对象会说明会话、轮询、事件、
-模型调用、缓存命中和无事件轮询数量；没有真实反馈时指标保持 `null`。
+模型调用、缓存命中和无事件轮询数量，它同样在默认摘要里；没有真实反馈时指标保持 `null`。
 
 `on` 表示允许评估，不表示已有任务会话运行。开发 skill 可以在相关运行任务中，明确当前
 worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入一个现有 runner。它必须复用自己
@@ -589,8 +612,11 @@ runtime service 是账本的唯一写者：它在扫描到清单时记录身份�
 ### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
 
 按清单里的服务名查看日志；端口形式继续可用。服务有监听端口时，命令读取该进程的日志；
-没有端口的 worker 读取该次运行的服务日志文件。默认先输出最近几行并持续跟随；--once 只读
-一次后退出。--ip 用来消除同一端口绑定多个地址时的歧义。--json --once 输出一个文档：
+没有端口的 worker 读取该次运行的服务日志文件。默认先输出当前这次运行的最近几行，并在它仍在
+写入时持续跟随；--once 只读一次后退出。只要记录了当前运行的起点，读取就限定在这一代——有
+runtime service 或完全没有都一样——所以跨运行追加的文件不会把前一天的日志混进这次运行。
+当前这一代没有记录起点时，读取整个文件，并在文档里标 `run_start_unknown: true`，人读输出也会
+说明范围未知。--ip 用来消除同一端口绑定多个地址时的歧义。--json --once 输出一个文档：
 
 ~~~json
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
@@ -615,7 +641,9 @@ runtime service 是账本的唯一写者：它在扫描到清单时记录身份�
 打印后返回，而不是等待一次尚未开始的运行。`--run current` 选该服务当前这次运行，其他值则是
 `status --json` 里的精确 `run_id`。`current` 优先选仍在运行的进程，没有时才选最近结束的一次。
 跟随一次已经结束的运行会打印它的行然后停止：之后不会再有属于它的输出。`--run` 只接受服务名，
-不能和 `--ip` 同时使用；它需要 runtime service，runtime service 不可用时返回 `runtime_service_unavailable`。旧运行记录
+不能和 `--ip` 同时使用。服务日志文件里的运行分段记录在本地磁盘上——运行中的记录在 mirror，
+结束的记录在退出行——所以服务日志文件这一形式不需要 runtime service；只有监听输出需要宿主，
+没有可达宿主时这种情况返回 `runtime_service_unavailable`。旧运行记录
 没有 offset 时返回 not_found 并提示重启一次服务。文件被轮转、记录的那一段已不在文件里时，
 读取回退到文件开头，并在 JSON 里用 `run_start_unknown: true` 说明这次的行可能混入其他运行。
 
@@ -681,6 +709,9 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
   的技能目录），比较各份 `SKILL.md` 的 `metadata.version`：没装是 `skip`，只有一份永远 `ok`，
   多份版本不一致或软链指向已不存在的 checkout 才 `warn`。它不联网，不知道哪个版本是最新的，
   因此不会把单独一份说成「落后」，也不安装、不更新、不修复 skill。
+  `--only agent_integration` 读取最近清单所在目录的 `AGENTS.md` 与 `CLAUDE.md`，任一提到 oberth
+  即 `ok`；没有清单是 `skip`，有清单但两个文件都没提到 oberth 是 `warn`，fix 指向
+  [接入编排工具](integrations.zh.md) 的粘贴段落。它只读不改，也不知道某个工具是否真的会加载这些文件。
 - oberth events：供 agent 订阅本机 runtime service 的状态变化。并行联调时 agent 应根据任务中明确给出的
   关系主动建立并消费订阅；人手执行此命令主要用于排障。`--worktree PATH_OR_ID` 会沿已有 Repo 关系包含同仓库
   的其他 worktree；`--repository REPO_ID` 是可重复的加法过滤器，`--workspace NAME` 加入显式的临时联调关系；
@@ -724,10 +755,13 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 - `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加
   `latest`。它只读发布信息，不下载、不安装，也不替换正在运行的二进制。终端命令复用同一份检查结果：
   首屏显示本机版本并给出完整升级块，其他输出给人看的命令在本机落后时以两行升级提示收尾。
-  同一构建对同一发布只提示一次。成功时缓存 5 分钟、失败时缓存 30 分钟，单次最多等待 1 秒，
+  同一构建对同一发布只提示一次。成功结果缓存 5 分钟。首屏最多等待 2 秒，因为版本正是在这里被问到的；
+  其他命令只读取已经就绪或接近就绪的答案，最多等 250 毫秒；显式 `--check` 最多等 6 秒。
+  失败会连同种类一起记下：被这份预算掐断的检查 2 分钟后重试，发布源不可达或应答不是发布标签的则记 30 分钟。
   `BERTH_NO_UPDATE_CHECK=1` 可关闭自动提示。JSON 输出、`--help` 与显式 `--check` 都不加这段提示。
   检查同时读取 GitHub 的发布元数据和 CDN 上的标签列表，GitHub 慢或被限制时不会因此看不到新版本。
-  所有来源都不可达时 `--check` 以非零退出并说明原因，终端路径保持安静。检查结果缓存在
+  所有来源都不作答时 `--check` 以非零退出并说明原因，且任何终端路径都不把未知当成“最新版”：首屏说明更新检查不可用
+  并给出 `oberth version --check`，页脚保持沉默。检查结果缓存在
   `BERTH_HOME/update-check.json`（默认 `~/.option-berth/update-check.json`），只为这些提示复用，不是运行事实。
 
 `oberth version --json` 的 stdout 是一个 JSON 值：
@@ -791,7 +825,7 @@ Runtime Service 的存储及控制文件目录必须位于已验证的本地文�
 
 | 命令 | 做什么 |
 |---|---|
-| `oberth feedback status [--json]` | 已记录的决定、`gh` 登录的账号、本安装的报告总数，以及最近一天提交了几份 |
+| `oberth feedback status [--json]` | 已记录的决定、`gh` 持有的 github.com 凭据、一份报告会走的通道、本安装的报告总数，以及最近一天提交了几份 |
 | `oberth feedback on` / `oberth feedback off` | 不用等首屏，直接记录决定；`on` 会写明将由哪个账号提交 |
 | `oberth feedback report [--json] [--dry-run]` | 组装并提交一份报告 |
 | `oberth feedback log [--json]` | 每份报告对应 issue 的状态、关闭时间、标签和链接，经 `gh` 读取 |
@@ -807,25 +841,33 @@ Runtime Service 的存储及控制文件目录必须位于已验证的本地文�
 终端上没有 `--kind` 或 `--command` 时，`report` 用方向键从同一份固定词汇里问，再问可选的
 描述；提交前展示完整报告并要求确认。`--json`、`--yes` 和管道仍走纯参数路径，脚本不会卡在提问上。
 
-`gh` 已安装且已登录时，报告通过 `gh issue create` 用报告人自己的 GitHub 账号提交，因此那个账号在
-issue 上可见；否则命令打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。
-`feedback status` 与 `feedback on` 在组装报告之前就写明这个账号，`feedback log` 用同一个登录读取
+`gh` 已安装并持有凭据时，报告通过 `gh issue create` 用报告人自己的 GitHub 凭据提交，因此那个账号在
+issue 上可见；只有没有凭据时，命令才打印一条预填好的 `issues/new` 链接由人提交，`--open` 会打开它。
+是否真的提交由 `gh issue create` 自己决定：本地探测只说明这次尝试值不值得做，所以探测不到
+github.com 也照样提交，提交失败才退回链接并给出真正发生的错误。
+`feedback status` 与 `feedback on` 在组装报告之前就写明这份凭据，`feedback log` 用同一个登录读取
 已提交的 issue。三者都只读本地 gh 凭据（`gh auth status --json hosts`），不发送任何东西。同一构建的
 同一个问题 24 小时内最多提交一次，一个安装滚动一天最多提交二十份。判据包含类别、命令、错误码、
 观察状态、版本和脱敏后的描述：任一项不同就是不同的问题。本地账本在
 `BERTH_HOME/feedback/reports.ndjson`，它只是记录；删掉它只会让重复提交再次成为可能。
 
-`status` 把两类历史分开：`gh` 条目是真正提交的 issue，`url` 条目是人还需要自己按提交的预填页面。
+`status` 给出的是预测，不是承诺：`channel` 是此刻一份报告会走的通道，和投递路径共用同一个判据。
+它把两类历史分开：`gh` 条目是真正提交的 issue，`url` 条目是人还需要自己按提交的预填页面。
 人读的一行是 `N recorded · N filed · N prefilled`，预填页面不会虚增提交数。`--json` 增加
-`github`（`available`、`account`、`reason`）和 `reports`（`total`、`filed`、`prefilled`、
-`last_at`）。
+`github`（`available`、`state`、`account`、`reason`）和 `reports`（`total`、`filed`、
+`prefilled`、`last_at`）。`state` 取 `signed_in`、`credential_unconfirmed`、`signed_out`、
+`not_installed` 或 `unknown`；`available` 为真表示这份报告会尝试经 gh 提交，所以凭据已存在、只是
+探测没能连上 github.com 时是 `credential_unconfirmed` 且仍然 `available`——连不上不等于未登录。
+人读的 `github` 一行是 `signed in as <account>`、`credential stored for <account> but github.com is
+unreachable; a report is still attempted through gh`、`not signed in (...)` 或 `not available
+(gh is not installed)`。
 
 `log` 是这个回路的另一半。对每份已提交报告，它读取 issue 并打印 `open`、`resolved`、
 `closed as not planned`、`unknown` 或 `prefilled page only`；旁边给出 issue 编号、kind、command、
 版本、报告日期、关闭或更新时间、标签和链接。`--json` 同样给出 `github`、`summary`（本地总数加上
 `open`、`resolved`、`not_planned`、`unknown`）和逐条的 `status`、`reason` 与 GitHub `issue`
 对象（`number`、`state`、`state_reason`、`title`、`labels`、`updated_at`、`closed_at`、`url`）。
-人读视图最多列最近 20 条，`summary` 统计整个账本。`gh` 未登录时本地记录照常打印，每份已提交报告
+人读视图最多列最近 20 条，`summary` 统计整个账本。没有 gh 凭据时本地记录照常打印，每份已提交报告
 说明状态未知的原因，不猜。
 
 报告永远不带路径、日志行、清单字段、命令行、worktree 身份或环境变量：它说的是引擎，不是它跑在

@@ -288,20 +288,23 @@ func TestLogsRunCannotBeCombinedWithIP(t *testing.T) {
 	}
 }
 
-// TestLogsRunNeedsTheRuntimeService: a run exists only inside the runtime service, so the run
-// form cannot fall back to the local scan.
-func TestLogsRunNeedsTheRuntimeService(t *testing.T) {
+// TestLogsRunOfflineReportsNoRecordedRun: a service's run identity and log
+// offset are local facts, so the run form works without the runtime service.
+// With no recorded generation it says so instead of claiming the host is the
+// only place a run can exist.
+func TestLogsRunOfflineReportsNoRecordedRun(t *testing.T) {
+	demoProject(t)
 	resetRouting(t)
 	noRuntimeServiceReachable(t)
 	withLogsFlags(t, func() { logsRunFlag = "current" })
 
-	err := logsRun(logsTestCommand(), []string{"api"})
+	err := logsRun(logsTestCommand(), []string{"worker"})
 	code, msg, hint := describe(err)
-	if code != "runtime_service_unavailable" || !strings.Contains(msg, "logs --run needs the runtime service") {
-		t.Fatalf("code = %q msg = %q, want the runtime service requirement", code, msg)
+	if code != "not_found" || !strings.Contains(msg, "no recorded run") {
+		t.Fatalf("code = %q msg = %q, want the missing recorded run", code, msg)
 	}
-	if !strings.Contains(hint, "oberth runtime service run") {
-		t.Errorf("hint = %q, want the way to start one", hint)
+	if !strings.Contains(hint, "oberth up") {
+		t.Errorf("hint = %q, want the way to create one", hint)
 	}
 }
 

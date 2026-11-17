@@ -32,6 +32,13 @@ func logsFromRun(ctx context.Context, c *client.Client, target, selector string)
 	if err != nil {
 		return err
 	}
+	return logsFromRunRecords(ctx, rec, records)
+}
+
+// logsFromRunRecords renders one resolved generation. It is the shared half of
+// the online and offline resolves: both end with one run and the other
+// generations that bound its bytes.
+func logsFromRunRecords(ctx context.Context, rec rpc.RunRecord, records []rpc.RunRecord) error {
 	if rec.LogPath == "" {
 		return failHint("not_found",
 			fmt.Sprintf("run %s has no log file", rec.ID),

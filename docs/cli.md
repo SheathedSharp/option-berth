@@ -107,6 +107,14 @@ another process (`port_occupied`), and also marks services that failed before th
 (`start_failed`), so "exited after starting", "port conflict" and "failed before starting" do not
 collapse into one state.
 
+A recorded run whose process disappears while no runtime service is watching — the host was stopped,
+or the run outlived a crash — has its own terminal reason, `ended_unobserved`. The end is known; the
+exit status is not, so `code` is `-1` and must not be read as a process status. `at` is when a host
+recorded the ending; a read with no host at all leaves it empty because no observation time exists.
+The ending is the newest generation under its name, so an older crash from the same name is not
+presented as the current outcome. When the runtime service next starts, it records the same ending
+durably and removes the mirror entry that carried the evidence.
+
 Under `port_occupied`, `last_exit.port_hint` is the port this run was told to bind, and
 `last_exit.port_holder` describes the process still holding that port at read time: `port`, `pid`,
 `command`, `kind`, with `group`, `name`, `run_id` additionally for a managed run and `cwd` and
@@ -122,8 +130,13 @@ labels as fixed-width English columns (services · depends on · listeners · co
 drafts · last look) aligned by terminal display width. Each service gets its own line showing both the
 declared port and the current runtime facts; the service state word is colored (running green, failed
 red, ordinary stop dim), degrading to plain text under NO_COLOR. A portless worker is explicitly
-marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. Only
-listeners the manifest did not declare are listed separately. In the failure section each service
+marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. The
+`listeners` line gives every listener that no running service row already names its own home: a port
+owned by another run is written with that run's name (`8082 (run finance-web)`), and a listener no
+run owns is marked `unowned` with the process and pid when the process table could read them
+(`9090 (unowned: node, pid 1234)`). The `resources` line says `N declared running`; runs outside the
+manifest are named on the listener line instead, so a worktree with no declared service running does
+not read as idle. In the failure section each service
 shows only its most recent exit record, and only while that record is still the service's current
 `last_exit`: once the service has re-run, or the newest record is a normal exit or a `down` stop, the
 service leaves the failure section and the old record stays in the `exits[]` history. Different
@@ -158,11 +171,13 @@ Running services carry `stats` (`cpu_percent`, `memory_rss_bytes`, `thread_count
 `connections`). A service with a listener samples from the listener row; a portless worker samples
 from its running root process, so a worker no longer lacks resource data just because it holds no
 port. When there is no sample the fields are absent, meaning **unknown**, not 0.
-`worktree.running_services` is the number of declared services that are running; `worktree.resources`
-is the worktree aggregate of those service samples (`cpu_percent`, `memory_rss_bytes`, `services`
-being the number of contributing samples). The aggregate appears only when at least one service has a
-sample and makes the difference between `services` and `running_services` explicit; with no samples it
-is absent and never uses 0 to impersonate a measurement.
+`worktree.running_services` is the number of declared services that are running; it does not count
+runs the manifest does not declare. Read `worktree.ad_hoc_runs` and `worktree.unowned_ports` for the
+listeners those runs and processes hold. `worktree.resources` is the worktree aggregate of the
+declared services' samples (`cpu_percent`, `memory_rss_bytes`, `services` being the number of
+contributing samples). The aggregate appears only when at least one service has a sample and makes
+the difference between `services` and `running_services` explicit; with no samples it is absent and
+never uses 0 to impersonate a measurement.
 
 Running services also carry `manifest_hash` and `runtime_spec_hash`; when the two differ,
 `manifest_runtime_mismatch` is `true`, meaning the current process comes from an old manifest and
@@ -248,7 +263,12 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
                     "waiting_on": ["db"], "last_prepare_ms": null}}
     ],
     "ad_hoc_runs": [
-      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530, "ports": [8082]}
+      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530,
+       "cmd": "yarn dev", "cwd": "/work/demo/web",
+       "started_at": "2026-10-31T09:00:00Z", "ports": [8082]}
+    ],
+    "unowned_ports": [
+      {"port": 9090, "pid": 55120, "command": "python3 -m http.server 9090"}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
@@ -257,12 +277,16 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
 }
 ~~~
 
-`worktree.ad_hoc_runs` lists the runs started with `oberth start` whose listeners belong to this
-worktree but whose names are not declared services: `name`, `run_id`, `group`, `pid` and the `ports`
-each holds. `ports` stays the flat listener list; this is the attribution that list cannot carry, so
-a reader can tell a process oberth owns from a foreign one. A declared service's listener that another
-process owns is named by that service's `port_holder`; `ad_hoc_runs` is only for runs the manifest
-does not declare.
+`worktree.ad_hoc_runs` attributes every listener that no running service row already names. The run is
+identified by its run id, not by its name: an `oberth start` run the manifest does not declare, a stale
+generation that still uses a declared service's name, and a declared service's run holding an extra
+port all appear here. Each row carries `name`, `run_id`, `group`, `pid`, the recorded `cmd`, `cwd` and
+`started_at` when the run mirror still has them (absent means unknown), and the sorted `ports` it
+holds. `worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
+and `pid` and `command` when the process table supplied them. `ports` stays the flat listener list;
+together, a running service's `port_actual`, `ad_hoc_runs` and `unowned_ports` cover every entry in it.
+A declared service's listener that another process owns is named by that service's `port_holder`; an
+owned run is not repeated there.
 
 `worktree.identity` is exactly the value `${worktree}` expands to in the manifest. It is derived from
 the checkout's canonicalized root path, so the same checkout reads the same value every time; when a
@@ -332,10 +356,15 @@ when the probe succeeds — a failed probe leaves the existing configuration unt
 changes credentials, not consent. `oberth attn on` and `oberth attn off [--forget]` flip the single
 `enabled` boolean and never touch the network. `oberth attn test` probes the current effective
 configuration once. `oberth attn status` reports the resolved state, the fixed reason when it cannot
-be used, and a summary of the local quality ledger; `--json` carries the same data plus the full
-`quality` object. `oberth doctor` gains one offline row for the same state, and a human `status`
-read mentions the feature once every two weeks when it is off and an anomaly is present;
-`BERTH_NO_TIPS=1` silences that hint.
+be used, and a summary of the local quality ledger. `--json` carries the decision document: the
+consent and configuration fields plus a `quality` object reduced to the counters that answer "is a
+runner observing, and is anything happening" — `activity`, `records_read`, `assessment_records`,
+`model_calls`, `cache_hits`, `feedback_records`, `unique_cases`, `labeled_cases`,
+`unlabeled_cases` and `sessions`. `--quality` replaces that object with the full quality report
+described below; `--since` and `--quality-project` narrow that report, so they imply `--quality`.
+A zero count stays in the document instead of disappearing. `oberth doctor` gains one offline row
+for the same state, and a human `status` read mentions the feature once every two weeks when it is
+off and an anomaly is present; `BERTH_NO_TIPS=1` silences that hint.
 
 `oberth attn assess` is the one-shot runner. `--dry-run` prints the exact redacted
 request for the current event without sending it, and `--follow` keeps the same
@@ -370,12 +399,14 @@ privacy boundary are in
 `oberth attn assess` / `assess --follow` leave redacted local quality observations in
 `$BERTH_HOME/quality/events.ndjson`. After a real interaction, a development agent can write back
 human labels and action outcomes with `oberth attn feedback --file <json>`, then use
-`oberth attn status --json [--since 168h]` to view label coverage, assessment availability,
-routing reasons and the model/option distribution, human-escalation precision/recall/F1, the model's
+`oberth attn status --json --quality [--since 168h] [--quality-project <name>]` to view label
+coverage, assessment availability, routing reasons and the model/option distribution,
+human-escalation precision/recall/F1, the model's
 `needs_human` / `task_relevant` probability error, recommendation hit rate, action success rate,
 resolution rate and detection latency under `quality`. Quality records are not `status` facts and
 change no execution permission; the `sessions` object explains the number of sessions, polls, events,
-the model calls, cache hits and no-event polls; with no real feedback the metrics stay `null`.
+the model calls, cache hits and no-event polls, and is part of the default summary as well; with no
+real feedback the metrics stay `null`.
 
 `on` means permission to assess, not that a task session is running. A development skill may attach
 one existing runner to a relevant runtime task after binding its canonical worktree, redacted task
@@ -716,9 +747,13 @@ and `down` do not write the ledger.
 
 Views logs by the service name in the manifest; the port form continues to work. When the service has
 a listening port, the command reads that process's logs; a portless worker reads that run's service
-log file. By default it prints the most recent lines first and keeps following; --once reads once and
-exits. --ip disambiguates when the same port is bound on several addresses. --json --once outputs one
-document:
+log file. By default it prints the current run's most recent lines first and keeps following while
+that run is still writing; --once reads once and exits. The read is scoped to the current generation
+whenever its start offset was recorded — online or with no runtime service at all — so a file
+appended to across runs does not mix the previous day's lines into this run. When no current
+generation has a recorded start, it reads the whole file and marks the document
+`run_start_unknown: true`, and the human output says the scope is unknown. --ip disambiguates when
+the same port is bound on several addresses. --json --once outputs one document:
 
 ~~~json
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
@@ -747,8 +782,10 @@ the file as it is when read, so following it prints and returns instead of waiti
 that has not started yet. `--run current` selects the service's current run, and any other value is an
 exact historical `run_id` from `status --json`. `current` prefers a process that is still running and
 only falls back to the most recently finished one when there is none. Following a run that has ended
-prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names,
-cannot be combined with `--ip`, and needs the runtime service; when the runtime service is unavailable it returns
+prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names and
+cannot be combined with `--ip`. A service's part of its log file is recorded on disk — the mirror for
+a live run and the exit row for a finished one — so the form works without the runtime service for a
+service log file; only listener output needs a host, and with none reachable that case returns
 `runtime_service_unavailable`. Old run records without an offset return not_found with a suggestion to restart
 the service once. When the file has been rotated and the recorded part is no longer in it, reading
 falls back to the beginning of the file, and the JSON uses `run_start_unknown: true` to say that the
@@ -821,6 +858,7 @@ Commands outside the core loop are listed here by layer, and this document is th
   `--only runtime_service_build_matches` compares the CLI's and the runtime service's build commits; the same version number does not mean the same build.
   A missing commit identity or a failed status RPC reports warn, does not mark a match, and does not restart the runtime service automatically.
   `--only agent_skill` reads the skill already installed under `HOME` (`~/.claude`, `~/.codex`, and `~/.config/opencode` skill directories) and compares each copy's `SKILL.md` `metadata.version`: nothing installed is `skip`, a single copy is always `ok`, and only disagreeing versions or a symlink pointing at a checkout that no longer exists report `warn`. It does not go online, so it does not know which version is current and never calls one copy outdated; it does not install, update, or repair the skill.
+  `--only agent_integration` reads `AGENTS.md` and `CLAUDE.md` in the directory that holds the nearest manifest and reports `ok` when either mentions oberth; no manifest is `skip`, and a manifest whose instruction files do not name oberth is `warn`, with the paste section in [Integrating orchestration tools](integrations.md) as the fix. It reads the files and never edits them; it does not know whether a tool actually loads them.
 - oberth events: for agents to subscribe to this machine's runtime service state changes. During parallel integration work an agent should actively establish and consume subscriptions according to the relationships explicitly given in the task; a human running this command is mainly troubleshooting. `--worktree PATH_OR_ID` includes the same repository's
   other worktrees along existing Repo relationships; `--repository REPO_ID` is a repeatable additive filter, and `--workspace NAME` joins an explicit temporary integration relationship;
   the first NDJSON line is directly `{"type":"state.snapshot",...}` and each following line is directly `{"type":"state.changed",...}`.
@@ -867,10 +905,14 @@ appear in public help.
 - `oberth version --check` reads the latest release tag and reports whether this machine is behind; `--check --json` adds
   `latest` on top of the original fields. It only reads release information: it does not download, does not install, and does not replace the running binary. Terminal commands reuse the same
   check result: the first screen shows the local version with a full upgrade block, and any other command that writes human output ends with a two-line upgrade footer when this build is behind.
-  A release is announced once per build. The result is cached for 5 minutes on success and 30 minutes on failure, a command waits at most 1 second for it,
-  and `BERTH_NO_UPDATE_CHECK=1` turns the automatic notices off. JSON output, `--help` and an explicit `--check` never add the footer.
+  A release is announced once per build. A successful result is cached for 5 minutes. The first screen may wait up to 2 seconds for the answer, because it is
+  where the version was asked for; every other command only reads an answer that is ready or nearly ready, waiting at most 250 milliseconds; an explicit
+  `--check` may wait up to 6 seconds. A failure is remembered with its kind: a check this budget cut off is retried after 2 minutes, while an unreachable
+  release feed or an answer that is not a release is remembered for 30 minutes. `BERTH_NO_UPDATE_CHECK=1` turns the automatic notices off. JSON output,
+  `--help` and an explicit `--check` never add the footer.
   The check reads GitHub's release metadata and a CDN copy of the tag list, so a slow or blocked GitHub does not hide a release.
-  When no source answers, `--check` exits non-zero and explains why, while the terminal paths stay silent. The check result is cached in `BERTH_HOME/update-check.json`
+  When no source answers, `--check` exits non-zero and explains why, and no terminal path turns an unknown answer into "latest": the first screen says the
+  update check is unavailable and names `oberth version --check`, while the footer stays silent. The check result is cached in `BERTH_HOME/update-check.json`
   (default `~/.option-berth/update-check.json`), reused only for these notices and not a runtime fact.
 
 `oberth version --json`'s stdout is one JSON value:
@@ -936,7 +978,7 @@ disables, the way `NO_COLOR` does) turns both the question and sending off.
 
 | Command | What it does |
 |---|---|
-| `oberth feedback status [--json]` | The recorded decision, the GitHub account `gh` is signed in as, the local report totals, and how many reports this installation filed in the last day |
+| `oberth feedback status [--json]` | The recorded decision, the credential `gh` holds for github.com, the channel a report would take, the local report totals, and how many reports this installation filed in the last day |
 | `oberth feedback on` / `oberth feedback off` | Record the decision without waiting for the first screen; `on` names the account that will file |
 | `oberth feedback report [--json] [--dry-run]` | Compose one report and file it |
 | `oberth feedback log [--json]` | Each report with its issue's state, close date, labels and URL, read through `gh` |
@@ -956,11 +998,14 @@ same fixed vocabulary, then asks for the optional note; the exact report is show
 before it is filed. `--json`, `--yes` and a pipe keep the flag-only path, so a script never waits
 for a prompt.
 
-The report goes out through `gh issue create` with the person's own GitHub account when `gh` is
-installed and signed in, so that account is visible on the issue; otherwise the command prints a
-prefilled `issues/new` URL for the person to submit, and `--open` opens it. `feedback status` and
-`feedback on` name that account before any report is composed, and `feedback log` reads the filed
-issues through the same login. All three read the local gh credential (`gh auth status --json hosts`)
+The report goes out through `gh issue create` with the person's own GitHub credential whenever `gh`
+is installed and holds one, so that account is visible on the issue; only when there is no credential
+does the command print a prefilled `issues/new` URL for the person to submit, and `--open` opens it.
+Delivery is decided by `gh issue create` itself: the local probe only says whether the attempt is
+worth making, so a github.com the probe cannot reach still files the issue, and a create that fails
+falls back to the URL with the error that really happened. `feedback status` and `feedback on` name
+that credential before any report is composed, and `feedback log` reads the filed issues through the
+same login. All three read the local gh credential (`gh auth status --json hosts`)
 and send nothing. The same complaint from the same build is filed at most once in 24 hours, and one
 installation files at most twenty reports in a rolling day. The identity covers kind, command, error
 code, observation, version and the redacted note: reports that differ in any of those are different
@@ -968,11 +1013,18 @@ complaints. The local ledger at
 `BERTH_HOME/feedback/reports.ndjson` records what was filed; it is advisory, and deleting it only
 makes a duplicate possible again.
 
-`status` keeps the two kinds of history apart: a `gh` entry is an issue that was filed, while a
-`url` entry is a prefilled page the person still had to submit. The human line reads
-`N recorded · N filed · N prefilled`, so a prefilled page never inflates the filed count. `--json`
-adds `github` (`available`, `account`, `reason`) and `reports` (`total`, `filed`, `prefilled`,
-`last_at`).
+`status` publishes a prediction, not a promise: `channel` is the channel a report takes right now,
+and it comes from the same predicate the delivery path branches on. It keeps the two kinds of history
+apart: a `gh` entry is an issue that was filed, while a `url` entry is a prefilled page the person
+still had to submit. The human line reads `N recorded · N filed · N prefilled`, so a prefilled page
+never inflates the filed count. `--json` adds `github` (`available`, `state`, `account`, `reason`)
+and `reports` (`total`, `filed`, `prefilled`, `last_at`). `state` is `signed_in`,
+`credential_unconfirmed`, `signed_out`, `not_installed` or `unknown`; `available` is true when a
+report is attempted through gh, so a stored credential the probe could not confirm against
+github.com is `credential_unconfirmed` and still `available` — unreachable is not signed out. The
+human `github` line reads `signed in as <account>`, `credential stored for <account> but github.com
+is unreachable; a report is still attempted through gh`, `not signed in (...)`, or `not available
+(gh is not installed)`.
 
 `log` is the response half of the loop. For every filed report it reads the issue and prints
 `open`, `resolved`, `closed as not planned`, `unknown`, or `prefilled page only`; next to the state
@@ -980,8 +1032,8 @@ it prints the issue number, kind, command, version, report date, close or update
 URL. `--json` carries the same data as `github`, `summary` (the local totals plus `open`, `resolved`,
 `not_planned` and `unknown`) and one entry per report with `status`, `reason` and the GitHub `issue`
 object (`number`, `state`, `state_reason`, `title`, `labels`, `updated_at`, `closed_at`, `url`). The
-human view shows the most recent 20 entries while `summary` counts the whole ledger. Without a
-signed-in gh the local record still prints and every filed report says why its state is unknown;
+human view shows the most recent 20 entries while `summary` counts the whole ledger. Without a gh
+credential the local record still prints and every filed report says why its state is unknown;
 nothing is guessed.
 
 A report never carries a path, a log line, a manifest field, a command line, a worktree identity or an

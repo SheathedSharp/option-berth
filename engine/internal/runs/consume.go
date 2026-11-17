@@ -4,12 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 )
 
 // ConsumeLegacy executes one read-transform-replace transaction on runs.json.
 // The callback runs while the sidecar lock is held and must not call functions
 // in this package that acquire the same lock. This keeps legacy import and
 // concurrent CLI writers in one ordered file transaction.
+//
+// Every recorded entry reaches the callback, including ones whose process is
+// gone. Those dead entries are the runs the recovery transaction must turn into
+// terminal facts; filtering them here would destroy the evidence before the one
+// writer that can record it sees it. The callback decides what the live file
+// keeps, and its replacement is written in the same transaction.
 func ConsumeLegacy(transform func([]Entry) ([]Entry, error)) error {
 	if transform == nil {
 		return nil
@@ -19,12 +26,10 @@ func ConsumeLegacy(transform func([]Entry) ([]Entry, error)) error {
 		if err != nil {
 			return err
 		}
-		for pid := range reg.Runs {
-			if !pidAlive(pid) {
-				delete(reg.Runs, pid)
-			}
-		}
 		entries := reg.Active()
+		// The map has no order. A stable input order makes a recovery
+		// transaction reproducible and keeps its tests meaningful.
+		sort.Slice(entries, func(i, j int) bool { return entries[i].PID < entries[j].PID })
 		replacement, err := transform(entries)
 		if err != nil {
 			return err

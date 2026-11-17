@@ -11,6 +11,7 @@ package runsreg
 
 import (
 	"log/slog"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -407,6 +408,13 @@ func (r *Registry) Prune() {
 	// The compacted prefix below contains only generations actually removed.
 	var dead []Record
 	for _, rec := range live {
+		// A run this process spawned has a child reaper that records its real
+		// status. Prune is the fallback for runs nobody reaps; judging one of
+		// our own children here would race the reaper and replace a known
+		// crash or stop with "ended_unobserved".
+		if rec.PPID == os.Getpid() {
+			continue
+		}
 		if !alive(rec.PID) || r.pidReused(rec.PID, rec) {
 			dead = append(dead, rec)
 		}
@@ -428,7 +436,14 @@ func (r *Registry) Prune() {
 	r.mu.Unlock()
 
 	for _, rec := range removed {
+		// The ending must be durable before the mirror entry disappears. When
+		// it is not, keep the entry so the next startup can retry; a dead run
+		// that is already invisible to readers still has its evidence on disk.
+		if !r.recordUnobservedLocked(rec) {
+			continue
+		}
 		r.mirrorRemoveLocked(rec)
+		_ = codeid.Remove(rec.ID)
 	}
 }
 

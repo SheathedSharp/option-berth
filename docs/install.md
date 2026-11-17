@@ -189,10 +189,14 @@ Rerun the install command for your platform to replace the binaries; after upgra
 `oberth`'s first screen shows the local version; when an update exists, its footer gives the install
 command for this platform and `oberth runtime service stop`. Every other terminal command that writes human
 output ends with the same upgrade information as a two-line footer, once per release. You can also run
-`oberth version --check` at any time. The automatic check reads release metadata only, caches success
-for 5 minutes and failure for 30 minutes, waits at most one second per command, and downloads or
-installs nothing; `BERTH_NO_UPDATE_CHECK=1` disables the automatic notices. When no release source
-answers, the terminal paths show only the local version and never present it as the latest.
+`oberth version --check` at any time. The automatic check reads release metadata only and downloads or
+installs nothing: a success is cached for 5 minutes, a check that ran out of its own budget is retried
+after 2 minutes, and an unreachable feed or an answer that is not a release is remembered for 30 minutes.
+The first screen may wait up to 2 seconds for the answer, because that is where you asked for the
+version; any other command waits at most 250 milliseconds for an answer that is already there, and
+`oberth version --check` waits up to 6 seconds. `BERTH_NO_UPDATE_CHECK=1` disables the automatic notices.
+When no release source answers, the first screen says the update check is unavailable and names
+`oberth version --check`; no terminal path ever presents the local version as the latest.
 
 ## Channels not yet available
 

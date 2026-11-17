@@ -2,13 +2,16 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/draft"
 	"github.com/sheathedsharp/option-berth/engine/internal/git"
+	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -308,28 +311,41 @@ func TestBriefStatusCarriesPendingHealth(t *testing.T) {
 	}
 }
 
-// An `oberth start` run is not a declared service, so `services` cannot show
-// it. The brief must name the run and its ports: a bare port number leaves the
-// reader to pkill something oberth owns.
-func TestBriefStatusListsAdHocRuns(t *testing.T) {
+// Every listener must have one home: a running service's row, an owning run,
+// or unowned. Attribution follows run identity, not the service name: a stale
+// generation that still calls itself `api` is not the running `api`'s run.
+func TestBriefStatusAttributesEveryListener(t *testing.T) {
 	doc := statusScopeFixture()
-	// A declared service's listener stays in services, not ad_hoc_runs.
-	doc.Ports[0].Run = &state.Run{ID: "api-run", Group: "shop", Name: "api", RootPID: 42}
+	// Port 3000 is the declared api port, but this is an older api generation,
+	// not api's current run on 3001.
+	doc.Ports[0].Run = &state.Run{ID: "api-old", Group: "shop", Name: "api", RootPID: 42}
 	// One ad-hoc run with two listeners.
 	doc.Ports[4].Run = &state.Run{ID: "adhoc-run", Group: "shop", Name: "finance-web", RootPID: 64530}
 	doc.Ports = append(doc.Ports, state.Port{Port: 9998,
 		Run: &state.Run{ID: "adhoc-run", Group: "shop", Name: "finance-web", RootPID: 64530}})
 
 	brief := briefStatusFrom(doc)
-	if len(brief.Worktree.AdHocRuns) != 1 {
-		t.Fatalf("ad hoc runs = %+v, want exactly the undeclared run", brief.Worktree.AdHocRuns)
+	if len(brief.Worktree.AdHocRuns) != 2 {
+		t.Fatalf("run attribution = %+v, want the stale api generation and the ad-hoc run", brief.Worktree.AdHocRuns)
 	}
-	run := brief.Worktree.AdHocRuns[0]
-	if run.Name != "finance-web" || run.RunID != "adhoc-run" || run.Group != "shop" || run.PID != 64530 {
-		t.Fatalf("ad hoc run = %+v", run)
+	byRun := make(map[string]briefAdHocRun, len(brief.Worktree.AdHocRuns))
+	for _, run := range brief.Worktree.AdHocRuns {
+		byRun[run.RunID] = run
 	}
-	if got, want := intsText(run.Ports), "9998,9999"; got != want {
+	stale, ok := byRun["api-old"]
+	if !ok || stale.Name != "api" || intsText(stale.Ports) != "3000" {
+		t.Fatalf("stale generation = %+v, want api on 3000", stale)
+	}
+	adHoc, ok := byRun["adhoc-run"]
+	if !ok || adHoc.Name != "finance-web" || adHoc.Group != "shop" || adHoc.PID != 64530 {
+		t.Fatalf("ad-hoc run = %+v", adHoc)
+	}
+	if got, want := intsText(adHoc.Ports), "9998,9999"; got != want {
 		t.Fatalf("ad hoc ports = %s, want %s", got, want)
+	}
+	if len(brief.Worktree.UnownedPorts) != 2 ||
+		brief.Worktree.UnownedPorts[0].Port != 5432 || brief.Worktree.UnownedPorts[1].Port != 8080 {
+		t.Fatalf("unowned ports = %+v, want 5432 and 8080", brief.Worktree.UnownedPorts)
 	}
 	// The flat list stays for compatibility.
 	if got, want := intsText(brief.Ports), "3000,3001,5432,8080,9999,9998"; got != want {
@@ -339,8 +355,34 @@ func TestBriefStatusListsAdHocRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"ad_hoc_runs":[{"name":"finance-web","run_id":"adhoc-run","group":"shop","pid":64530,"ports":[9998,9999]}]`) {
-		t.Fatalf("brief = %s, want the ad-hoc run attribution", raw)
+	if !strings.Contains(string(raw), `"unowned_ports":[{"port":5432},{"port":8080}]`) {
+		t.Fatalf("brief = %s, want every unowned listener marked", raw)
+	}
+}
+
+// The run's recorded start line is in the mirror, not in the listener row.
+// The brief joins by pid and generation and publishes it, so an agent can
+// rebuild the run without first triggering a refusal to make a hint print.
+func TestBriefStatusCarriesTheRecordedRunCommand(t *testing.T) {
+	t.Setenv("BERTH_HOME", t.TempDir())
+	started := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	pid := os.Getpid() // Load hides a dead mirror entry, as a live listener would be
+	if err := runs.Add(runs.Entry{
+		PID: pid, ID: "adhoc-run", Group: "shop", Name: "finance-web",
+		Cmd: "yarn dev", Cwd: "/work/shop/web", StartedAt: started.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("writing the mirror: %v", err)
+	}
+	doc := statusScopeFixture()
+	doc.Ports[4].Run = &state.Run{ID: "adhoc-run", Group: "shop", Name: "finance-web", RootPID: pid}
+
+	brief := briefStatusFrom(doc)
+	if len(brief.Worktree.AdHocRuns) != 1 {
+		t.Fatalf("run attribution = %+v", brief.Worktree.AdHocRuns)
+	}
+	run := brief.Worktree.AdHocRuns[0]
+	if run.Cmd != "yarn dev" || run.Cwd != "/work/shop/web" || run.StartedAt != "2026-11-16T09:00:00Z" {
+		t.Fatalf("recorded run facts = %+v", run)
 	}
 }
 
@@ -478,7 +520,7 @@ func TestStatusShowsServiceAndWorktreeResources(t *testing.T) {
 	doc.Worktree.Resources = &state.Resources{CPUPercent: 19.5, MemoryRSS: 5 << 20, Services: 2}
 
 	out := captureStdout(t, func() { printStatusBrief(doc) })
-	for _, want := range []string{"cpu 12.5%", "mem 2.0M", "2 running", "cpu 19.5%", "mem 5.0M"} {
+	for _, want := range []string{"cpu 12.5%", "mem 2.0M", "2 declared running", "cpu 19.5%", "mem 5.0M"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("resource output is missing %q:\n%s", want, out)
 		}
@@ -497,7 +539,7 @@ func TestStatusResourcesKeepUnmeasuredApartFromZero(t *testing.T) {
 	doc.Worktree.Resources = nil
 
 	out := captureStdout(t, func() { printStatusBrief(doc) })
-	if !strings.Contains(out, "1 running") {
+	if !strings.Contains(out, "1 declared running") {
 		t.Fatalf("output = %q, want the running count", out)
 	}
 	if strings.Contains(out, "cpu 0.0%") || strings.Contains(out, "mem 0B") {
@@ -537,4 +579,48 @@ func intsText(values []int) string {
 		parts = append(parts, strconv.Itoa(value))
 	}
 	return strings.Join(parts, ",")
+}
+
+// The listener line is the human half of the brief attribution: a port is
+// named by the run that owns it, or marked unowned with the process behind it.
+func TestStatusListenersNameTheRunOrMarkUnowned(t *testing.T) {
+	noColor(t)
+	doc := statusScopeFixture()
+	doc.Ports[4].Run = &state.Run{ID: "adhoc-run", Group: "shop", Name: "finance-web", RootPID: 64530}
+	doc.Ports[4].PID = 64530
+	doc.Ports[1].PID = 4242 // api's PortActual is covered by the service row
+	doc.Ports[2].PID = 999
+	doc.Ports[2].Command = "postgres"
+
+	out := captureStdout(t, func() { printStatusListeners(doc) })
+	for _, want := range []string{"9999 (run finance-web)", "5432 (unowned: postgres, pid 999)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("listener output is missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "3001") {
+		t.Errorf("listener line repeated a running service's own port:\n%s", out)
+	}
+}
+
+// The summary says what it counts. With no declared service running but an
+// ad-hoc run alive, it must not read as "nothing is running".
+func TestStatusSummarySaysDeclaredAndStillShowsAdHocRuns(t *testing.T) {
+	noColor(t)
+	doc := statusScopeFixture()
+	doc.Worktree.Services = nil
+	doc.Worktree.RunningServices = 0
+	doc.Worktree.Resources = nil
+	doc.Ports = []state.Port{{Port: 8082,
+		Run: &state.Run{ID: "adhoc", Group: "shop", Name: "finance-web", RootPID: 7}}}
+
+	out := captureStdout(t, func() {
+		printStatusResources(doc)
+		printStatusListeners(doc)
+	})
+	for _, want := range []string{"0 declared running", "8082 (run finance-web)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary output is missing %q:\n%s", want, out)
+		}
+	}
 }

@@ -18,7 +18,9 @@ import (
 
 // How a run ended. A run option-berth or the user asked to stop is stopped whatever
 // its exit code; otherwise code 0 is exited, a bind error is port_occupied, and
-// anything else is crashed.
+// anything else is crashed. ReasonEndedUnobserved is the terminal fact for a
+// run that was recorded but whose process disappeared while nobody was
+// watching: the end is known, how it ended is not.
 const (
 	ReasonExited             = "exited"
 	ReasonCrashed            = "crashed"
@@ -28,6 +30,10 @@ const (
 	ReasonReadyTimeout       = "ready_timeout"
 	ReasonDependencyTimeout  = "dependency_timeout"
 	ReasonDependencyNotReady = "dependency_not_ready"
+	// The published vocabulary is owned by state; these aliases keep the
+	// registry and the wire from drifting apart.
+	ReasonEndedUnobserved = state.ExitEndedUnobserved
+	UnknownExitCode       = state.ExitCodeUnknown
 )
 
 const (
@@ -188,6 +194,39 @@ func (r *Registry) startFailed(rec Record, reason, message string) Exit {
 		r.persistenceResult("exit.append", history.AppendRunExit(storeRow(e)))
 	}
 	return e
+}
+
+// recordUnobservedLocked records one terminal fact for a run the registry has
+// judged gone. The caller holds mirrorMu, which orders this append before the
+// mirror removal that follows it.
+//
+// It returns whether the durable projection succeeded. A false answer means the
+// caller must keep the mirror entry: that entry is the only evidence a later
+// startup can retry from, and deleting it would lose the run's ending for good.
+func (r *Registry) recordUnobservedLocked(rec Record) bool {
+	r.mu.Lock()
+	for _, e := range r.exits {
+		if sameRun(e.Record, rec) {
+			r.mu.Unlock()
+			return true
+		}
+	}
+	e := Exit{
+		Record: rec, Code: UnknownExitCode, Reason: ReasonEndedUnobserved,
+		ExitedAt: r.clock(), LastLines: []string{},
+	}
+	r.exits = append(r.exits, e)
+	if len(r.exits) > maxExits {
+		r.exits = append([]Exit(nil), r.exits[len(r.exits)-maxExits:]...)
+	}
+	history := r.history
+	r.mu.Unlock()
+	if history == nil {
+		return true
+	}
+	err := history.AppendRunExit(storeRow(e))
+	r.persistenceResult("exit.append", err)
+	return err == nil
 }
 
 // Stopping marks runs option-berth is about to stop, so their exit is recorded as

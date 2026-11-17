@@ -104,26 +104,21 @@ func emptyRegistry() *Registry {
 	return &Registry{Runs: map[int]Entry{}}
 }
 
-// Load reads the registry and drops entries whose process is gone, persisting
-// the cleaned file so a crash or hard kill self-heals. A failure to persist is
-// ignored: the caller still gets the pruned view.
+// Load reads the registry and hides entries whose process is gone. It does not
+// rewrite the file: a dead entry is the only evidence that the run existed at
+// all, and the runtime service is the one writer that can still turn it into a
+// terminal run fact. A read path that deletes it first destroys that outcome.
 func Load() *Registry {
-	reg := load()
-	if !pruneDead(reg) {
-		return reg
-	}
-	_ = withLock(func() error {
-		// Re-read under the lock and prune again, so an entry added by a
-		// concurrent writer between the first read and the lock survives.
-		fresh, err := loadForImport()
-		if err != nil {
-			return err
-		}
-		pruneDead(fresh)
-		reg = fresh
-		return save(fresh)
-	})
+	reg := Snapshot()
+	pruneDead(reg)
 	return reg
+}
+
+// Snapshot reads the registry exactly as written, without pruning or writing.
+// The runtime service's recovery transaction needs the dead entries: they are
+// the runs whose ending only it can still record.
+func Snapshot() *Registry {
+	return load()
 }
 
 // pruneDead removes entries whose PID no longer exists and reports whether it
