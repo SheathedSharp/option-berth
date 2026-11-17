@@ -551,23 +551,7 @@ func statusExits(ctx context.Context, group string) ([]rpc.RunRecord, error) {
 		if row.Group != group {
 			continue
 		}
-		code := row.Code
-		record := rpc.RunRecord{
-			ID: row.ID, PID: row.PID, Group: row.Group, Name: row.Name,
-			Cmd: row.Cmd, Cwd: row.Cwd, StartedAt: row.StartedAt.UTC().Format(time.RFC3339),
-			Ports: []int{}, Status: "exited", ConfigPath: row.ConfigPath,
-			StartID: row.StartID, Origin: row.Origin, LogPath: row.LogPath,
-			LogOffset: &row.LogOffset,
-			ExitCode:  &code, Reason: row.Reason,
-			ExitedAt:  row.ExitedAt.UTC().Format(time.RFC3339),
-			LastLines: append([]string{}, row.LastLines...),
-		}
-		if row.PortHint > 0 {
-			hint := row.PortHint
-			record.PortHint = &hint
-			record.URL = "http://localhost:" + strconv.Itoa(hint)
-		}
-		records = append(records, record)
+		records = append(records, exitRunRecord(row))
 	}
 	// A host that was stopped while a recorded run died never got to record
 	// the ending. The mirror still has that run; publishing the older durable

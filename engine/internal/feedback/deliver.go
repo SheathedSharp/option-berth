@@ -21,10 +21,18 @@ const (
 	ghSendTimeout = 30 * time.Second
 )
 
+// The two channels a report can take.
+const (
+	// ChannelGH is an issue created through the person's own gh credential.
+	ChannelGH = "gh"
+	// ChannelURL is a prefilled page the person still has to submit.
+	ChannelURL = "url"
+)
+
 // Delivery is where a report went, or where a person can send it by hand.
 type Delivery struct {
-	// Channel is "gh" when the issue was created through the user's own gh
-	// login, and "url" when the report is a prefilled issue page.
+	// Channel is ChannelGH when the issue was created through the user's own gh
+	// login, and ChannelURL when the report is a prefilled issue page.
 	Channel string
 	URL     string
 	// Reason says why the gh path was not used, for the line printed under
@@ -32,11 +40,14 @@ type Delivery struct {
 	Reason string
 }
 
-// GHAvailable reports whether `gh` can create an issue for the user. It is
-// local: `gh auth status` reads the stored credential and calls nothing.
-func GHAvailable(ctx context.Context) (bool, string) {
-	account := GHLogin(ctx)
-	return account.Available, account.Reason
+// ChannelFor is the channel a report takes right now, predicted from the local
+// credential. It is the same predicate Deliver branches on, so `feedback
+// status` cannot publish a channel the delivery path does not take.
+func ChannelFor(account GHAccount) string {
+	if account.AttemptsGH() {
+		return ChannelGH
+	}
+	return ChannelURL
 }
 
 // SubmitWithGH creates the issue through the user's own GitHub account. The
@@ -76,21 +87,31 @@ func IssueURL(repo, title, body string) string {
 	return "https://github.com/" + repo + "/issues/new?" + query.Encode()
 }
 
-// Deliver files the report through gh when it can, and otherwise returns the
-// prefilled URL. It never retries: one report is one attempt.
+// Deliver files the report through gh when a credential is stored, and
+// otherwise returns the prefilled URL. It never retries: one report is one
+// attempt.
+//
+// The local probe only decides whether the attempt is worth making. Whether the
+// report was actually filed is decided by `gh issue create` itself, so a
+// github.com the probe could not reach still files the issue, and a failure the
+// probe could not predict still falls back with the error that really happened.
 func Deliver(ctx context.Context, repo string, report Report) Delivery {
-	available, reason := GHAvailable(ctx)
-	if available {
-		link, err := SubmitWithGH(ctx, repo, report)
-		if err == nil {
-			return Delivery{Channel: "gh", URL: link}
+	account := GHLogin(ctx)
+	if !account.AttemptsGH() {
+		return Delivery{
+			Channel: ChannelURL,
+			URL:     IssueURL(repo, report.Title(), report.Body()),
+			Reason:  account.Reason,
 		}
-		reason = err.Error()
+	}
+	link, err := SubmitWithGH(ctx, repo, report)
+	if err == nil {
+		return Delivery{Channel: ChannelGH, URL: link}
 	}
 	return Delivery{
-		Channel: "url",
+		Channel: ChannelURL,
 		URL:     IssueURL(repo, report.Title(), report.Body()),
-		Reason:  reason,
+		Reason:  err.Error(),
 	}
 }
 

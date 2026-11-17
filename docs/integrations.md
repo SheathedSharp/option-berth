@@ -378,7 +378,8 @@ before deletion; do not rely on deleting the directory itself to stop the servic
 Put the following section into `AGENTS.md` at the repo root (Claude Code also reads `CLAUDE.md`, and
 you can append it per tool). It solves the most common problem: when a port is taken, the agent first
 runs `ss`, directly executes `python3 app.py`, digs through `/proc`, and only much later thinks of
-`oberth`.
+`oberth`. A worktree that has `oberth.yaml` but whose instruction files never name oberth is exactly
+that failure; `oberth doctor --only agent_integration` reports it without editing anything.
 
 ````md
 ## Local services

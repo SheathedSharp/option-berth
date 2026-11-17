@@ -10,6 +10,7 @@ package versioncheck
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,14 +35,34 @@ const (
 	// check made just before a release must not claim "latest" hours later.
 	SuccessTTL = 5 * time.Minute
 
-	// FailureTTL is how long a failed check is remembered. It is longer than a
-	// success so an unreachable feed does not add a timeout to every run.
+	// FailureTTL is how long a failed check is remembered when the feed itself
+	// is the problem. It is longer than a success so an unreachable feed does
+	// not add a timeout to every run.
 	FailureTTL = 30 * time.Minute
 
-	// WelcomeTimeout bounds the check the welcome screen may run. It is short
-	// because the screen is a signpost: an unreachable network must not make
-	// `oberth` feel hung, and an unknown answer is better than a slow one.
-	WelcomeTimeout = time.Second
+	// TimeoutTTL is how long a check that this program cut off at its own
+	// deadline is remembered. It is much shorter than FailureTTL because the
+	// two are not the same fact: our budget running out says nothing about the
+	// feed, so the next welcome screen should try again instead of repeating
+	// "unavailable" for half an hour.
+	TimeoutTTL = 2 * time.Minute
+
+	// WelcomeTimeout bounds the check the welcome screen may run. It is sized
+	// from the sources it races, not guessed: the GitHub release page answers
+	// in roughly 1.0–1.4s on a slow link and the jsDelivr index in 0.5–1.0s, so
+	// a one-second budget could cut every source off before any of them
+	// answered and leave the screen unsure for as long as the failure was
+	// cached. The first screen is the one place the user asked for the version,
+	// so it may wait; no other command may.
+	WelcomeTimeout = 2 * time.Second
+
+	// FooterGrace is what a command that has already done its work may spend
+	// reading the answer to the check it started at launch. It covers an answer
+	// that is ready or nearly ready, never a network deadline of its own: the
+	// probe runs under WelcomeTimeout, so a command that outlives the grace is
+	// dropped rather than cancelled and the check can still finish for the next
+	// one.
+	FooterGrace = 250 * time.Millisecond
 
 	// CheckTimeout is the explicit `oberth version --check` budget. The
 	// caller asked for this answer, so it may wait longer than the welcome.
@@ -139,15 +160,67 @@ func Relate(current, latest string) Relation {
 	}
 }
 
+// FailureKind classifies why a check produced no release. The kinds are kept
+// apart because they are different facts: a deadline this program set is not
+// evidence about the feed, an unreachable source is, and a source that answered
+// with something unusable is evidence of a third kind.
+type FailureKind string
+
+const (
+	// FailureNone is a check that produced a release.
+	FailureNone FailureKind = ""
+
+	// FailureTimeout is a check that ran out of the budget this program gave
+	// it, or that the caller interrupted. It says nothing about the feed.
+	FailureTimeout FailureKind = "timeout"
+
+	// FailureUnreachable is a source that could not be reached at all: name
+	// resolution, dial, TLS, a connection reset.
+	FailureUnreachable FailureKind = "unreachable"
+
+	// FailureProtocol is a source that did answer, but not with a release tag:
+	// an error status, a body that does not parse, a tag that is not a release.
+	FailureProtocol FailureKind = "protocol"
+)
+
+// classify names why latest returned err. A deadline — ours or a source's — is
+// checked first: when one source timed out while another answered badly, what
+// the caller saw is its own budget ending the check, and that is not yet
+// evidence about the feed.
+func classify(err error) FailureKind {
+	switch {
+	case err == nil:
+		return FailureNone
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return FailureTimeout
+	}
+	var reply answered
+	if errors.As(err, &reply) {
+		return FailureProtocol
+	}
+	return FailureUnreachable
+}
+
+// answered marks a source that replied, but with something that is not a
+// release: an error status, a document that does not parse, or a tag that is not
+// a release. The message travels unchanged; the wrapper exists so that a reply
+// which cannot be used is not mistaken for a feed that could not be reached.
+type answered struct{ err error }
+
+func (a answered) Error() string { return a.err.Error() }
+func (a answered) Unwrap() error { return a.err }
+
 // State is one observation: the build that asked, the latest release it saw,
-// and when it looked. Latest is empty when the check failed; Error says why.
-// A failed check is recorded so the next welcome does not retry immediately,
-// but it is never rendered as if this build were current.
+// and when it looked. Latest is empty when the check failed; Error says why and
+// Failure says what kind of failure it was. A failed check is recorded so the
+// next welcome does not retry immediately, but it is never rendered as if this
+// build were current.
 type State struct {
-	Current   string    `json:"current"`
-	Latest    string    `json:"latest,omitempty"`
-	CheckedAt time.Time `json:"checked_at"`
-	Error     string    `json:"error,omitempty"`
+	Current   string      `json:"current"`
+	Latest    string      `json:"latest,omitempty"`
+	CheckedAt time.Time   `json:"checked_at"`
+	Error     string      `json:"error,omitempty"`
+	Failure   FailureKind `json:"failure,omitempty"`
 	// Notified is the latest release a terminal notice already named for this
 	// build. The welcome screen and `version --check` ignore it; the automatic
 	// footer reads it so one release is announced once, not on every command.
@@ -175,11 +248,15 @@ func (s State) fresh(now time.Time, ttl time.Duration) bool {
 // Lookup returns what is known about the latest release for current.
 //
 // Unless force is set, a cached answer for the same build is reused while it is
-// younger than SuccessTTL (FailureTTL when the last check failed). A check
-// records its result — including a failure — so
-// the welcome screen can show an honest "unknown" instead of retrying on every
-// invocation. A check failure is returned to the caller; the returned State is
-// still written to the cache.
+// younger than SuccessTTL, FailureTTL when the last check failed, and TimeoutTTL
+// when it failed because this budget ran out. timeout is the caller's own
+// patience, not a property of the check: the welcome screen passes
+// WelcomeTimeout, a command that has already done its work passes the same
+// budget but reads it for FooterGrace only, and `version --check` passes
+// CheckTimeout. A check records its result — failure included, with the kind of
+// failure — so the welcome screen can show an honest "unknown" instead of
+// retrying on every invocation. A check failure is returned to the caller; the
+// returned State is still written to the cache.
 func Lookup(ctx context.Context, current string, force bool, timeout time.Duration) (State, error) {
 	return defaultChecker().lookup(ctx, current, force, timeout)
 }
@@ -225,6 +302,7 @@ func defaultChecker() *checker {
 		now:        time.Now,
 		successTTL: SuccessTTL,
 		failureTTL: FailureTTL,
+		timeoutTTL: TimeoutTTL,
 	}
 }
 
@@ -237,20 +315,30 @@ type checker struct {
 	now        func() time.Time
 	successTTL time.Duration
 	failureTTL time.Duration
+	timeoutTTL time.Duration
 
 	// fetch replaces the network sources in tests. Production leaves it nil.
 	fetch func(context.Context) (string, error)
 }
 
-// fresh reports whether a cached state may be reused. A failure is remembered
-// longer than a success: retrying an unreachable feed every few minutes would
-// add its timeout to most runs.
+// fresh reports whether a cached state may be reused.
 func (c *checker) fresh(state State, now time.Time) bool {
-	ttl := c.successTTL
-	if state.Error != "" {
-		ttl = c.failureTTL
+	return state.fresh(now, c.ttl(state))
+}
+
+// ttl is how long this observation may be reused. A failure is remembered
+// longer than a success — retrying an unreachable feed every few minutes would
+// add its timeout to most runs — except when the failure was this program
+// running out of its own budget, which is retried on the short window instead.
+func (c *checker) ttl(state State) time.Duration {
+	switch {
+	case state.Error == "":
+		return c.successTTL
+	case state.Failure == FailureTimeout:
+		return c.timeoutTTL
+	default:
+		return c.failureTTL
 	}
-	return state.fresh(now, ttl)
 }
 
 func (c *checker) lookup(ctx context.Context, current string, force bool, timeout time.Duration) (State, error) {
@@ -268,6 +356,7 @@ func (c *checker) lookup(ctx context.Context, current string, force bool, timeou
 	state := State{Current: current, CheckedAt: c.now()}
 	if err != nil {
 		state.Error = err.Error()
+		state.Failure = classify(err)
 	} else {
 		state.Latest = latest
 	}
@@ -385,18 +474,18 @@ func (c *checker) fromReleasePage(ctx context.Context) (string, error) {
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		location, err = resp.Location()
 		if err != nil {
-			return "", fmt.Errorf("release page redirect: %w", err)
+			return "", answered{fmt.Errorf("release page redirect: %w", err)}
 		}
 	case resp.StatusCode == http.StatusOK:
 		// A client that followed redirects lands on the tag page itself.
 		location = resp.Request.URL
 	default:
-		return "", fmt.Errorf("release page returned %s", resp.Status)
+		return "", answered{fmt.Errorf("release page returned %s", resp.Status)}
 	}
 
 	tag := strings.TrimSpace(path.Base(strings.TrimRight(location.Path, "/")))
 	if !IsRelease(tag) {
-		return "", fmt.Errorf("release page pointed at %q, not a release tag", tag)
+		return "", answered{fmt.Errorf("release page pointed at %q, not a release tag", tag)}
 	}
 	return tag, nil
 }
@@ -415,17 +504,17 @@ func (c *checker) fromAPI(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("release API returned %s", resp.Status)
+		return "", answered{fmt.Errorf("release API returned %s", resp.Status)}
 	}
 	var document struct {
 		TagName string `json:"tag_name"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&document); err != nil {
-		return "", fmt.Errorf("release API response: %w", err)
+		return "", answered{fmt.Errorf("release API response: %w", err)}
 	}
 	tag := strings.TrimSpace(document.TagName)
 	if !IsRelease(tag) {
-		return "", fmt.Errorf("release API returned tag %q", document.TagName)
+		return "", answered{fmt.Errorf("release API returned tag %q", document.TagName)}
 	}
 	return tag, nil
 }
@@ -446,13 +535,13 @@ func (c *checker) fromCDN(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("CDN index returned %s", resp.Status)
+		return "", answered{fmt.Errorf("CDN index returned %s", resp.Status)}
 	}
 	var document struct {
 		Versions []string `json:"versions"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 256<<10)).Decode(&document); err != nil {
-		return "", fmt.Errorf("CDN index response: %w", err)
+		return "", answered{fmt.Errorf("CDN index response: %w", err)}
 	}
 	best := ""
 	for _, version := range document.Versions {
@@ -468,7 +557,7 @@ func (c *checker) fromCDN(ctx context.Context) (string, error) {
 		}
 	}
 	if best == "" {
-		return "", fmt.Errorf("CDN index listed no release tag")
+		return "", answered{fmt.Errorf("CDN index listed no release tag")}
 	}
 	if !strings.HasPrefix(best, "v") {
 		best = "v" + best
