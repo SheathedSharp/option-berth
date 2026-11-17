@@ -785,3 +785,35 @@ func TestHumanListenersNameAPortlessRun(t *testing.T) {
 		t.Fatalf("human output = %q, want the portless marker with the pid", out)
 	}
 }
+
+// The run id is the identity. A listener row that names a generation must be
+// answered only by that generation: a recycled pid belongs to some later
+// process, and borrowing its command would dress a stale row in the wrong facts.
+func TestListenerRowIsAnsweredByItsGenerationNotARecycledPid(t *testing.T) {
+	records := []rpc.RunRecord{{ID: "new-run", PID: 4242, Name: "api", Cmd: "NEW", Status: "running"}}
+	if _, ok := recordedRun(records, "old-run", 4242); ok {
+		t.Fatal("a row naming old-run was answered by the recycled pid's new-run")
+	}
+	// A row carrying no id has only its pid, so that is what answers it.
+	if rec, ok := recordedRun(records, "", 4242); !ok || rec.ID != "new-run" {
+		t.Fatalf("id-less row = %+v/%v, want the pid match", rec, ok)
+	}
+}
+
+// A stale generation still holding a port appears in ad_hoc_runs, and it must
+// not carry the current generation's command: the two are different processes.
+func TestBriefStatusDoesNotLendAStaleGenerationTheCurrentCommand(t *testing.T) {
+	doc := statusScopeFixture()
+	doc.Ports = append(doc.Ports, state.Port{
+		Port: 7000, Run: &state.Run{ID: "old-run", Group: "shop", Name: "api", RootPID: 4242},
+	})
+	doc.Runs = []rpc.RunRecord{
+		{ID: "new-run", PID: 4242, Group: "shop", Name: "api", Cmd: "NEW", Status: "running"},
+	}
+
+	for _, run := range briefStatusFrom(doc).Worktree.AdHocRuns {
+		if run.RunID == "old-run" && run.Cmd != "" {
+			t.Fatalf("stale generation borrowed the current command: %+v", run)
+		}
+	}
+}

@@ -433,14 +433,24 @@ func adHocRunKey(runID, group string, rootPID int) string {
 	return fmt.Sprintf("%s/%d", group, rootPID)
 }
 
-// recordedRun is the run record a listener row belongs to: the same generation,
-// matched by id when both name one and by root pid otherwise.
+// recordedRun is the run record a listener row belongs to. The run id is the
+// identity: a row that names one is answered only by that generation, because a
+// recycled pid belongs to some later process. A row that carries no id is
+// answered by its root pid, the only evidence it has.
 func recordedRun(records []rpc.RunRecord, runID string, rootPID int) (rpc.RunRecord, bool) {
-	for _, record := range records {
-		if rootPID > 0 && record.PID == rootPID {
-			return record, true
+	if runID != "" {
+		for _, record := range records {
+			if record.ID == runID {
+				return record, true
+			}
 		}
-		if runID != "" && record.ID == runID {
+		return rpc.RunRecord{}, false
+	}
+	if rootPID <= 0 {
+		return rpc.RunRecord{}, false
+	}
+	for _, record := range records {
+		if record.PID == rootPID {
 			return record, true
 		}
 	}
