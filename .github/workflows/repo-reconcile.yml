@@ -1,0 +1,92 @@
+name: Repo reconcile
+
+# One standing surface for repository drift: the three-way quality gate, pull
+# requests stuck behind main or waiting for checks, and a red nightly/release
+# run. It reads facts and escalates them into a single deduplicated issue; it
+# never edits rulesets, branch protection, labels or pull request branches.
+on:
+  schedule:
+    - cron: '17 3 * * *' # 11:17 Asia/Shanghai
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只打印计划，不创建或评论 issue'
+        type: boolean
+        default: true
+  workflow_run:
+    # A red verification run is the one failure nothing else reports: the PR
+    # gate is already green by then. Only the default branch copy of this file
+    # is registered for workflow_run, so it starts escalating after the merge.
+    workflows: ['Nightly full verification', 'Verified release']
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: repo-reconcile
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Drift and stuck pull requests
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Reconcile the gate, the ruleset and the open pull requests
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$REPO")
+          # The schedule applies its result; a manual run only prints the plan
+          # unless the dispatcher explicitly asked for the real thing.
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" != "false" ]; then
+            args+=(--dry-run)
+          fi
+          python3 scripts/reconcile_repo.py "${args[@]}"
+
+  escalate:
+    name: Escalate the verification run
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Escalate the failure, or record that the next run passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          failed=''
+          if [ "$CONCLUSION" != "success" ]; then
+            # Jobs that neither passed nor were skipped are what a reader has to
+            # look at; skipped areas are the normal shape of the CI gate.
+            failed=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
+              --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .name')
+          fi
+          python3 scripts/reconcile_repo.py --failure \
+            --repo "$REPO" \
+            --workflow-name "$WORKFLOW" \
+            --run-url "$RUN_URL" \
+            --conclusion "$CONCLUSION" \
+            --failed-jobs "$failed"
