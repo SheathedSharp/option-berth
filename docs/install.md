@@ -25,7 +25,7 @@ The script resolves the latest release, picks darwin/linux and amd64/arm64 from 
 | Binaries | `~/.local/bin/oberth` |
 | Licenses and build manifest | `~/.local/share/option-berth` |
 | PATH | One line added to an existing shell startup file (never a new one) |
-| Runtime state | `~/.option-berth` (the installer neither creates nor modifies it) |
+| Runtime state | `~/.option-berth` (on macOS created for the unit's log; otherwise untouched) |
 
 Pin a version, change the directory, or leave PATH alone:
 
@@ -40,8 +40,25 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --no-modify-path
 ```
 
-The installer starts no service, writes no Git state and needs no administrator rights. After
-installing, run `oberth version` and `oberth doctor` to confirm.
+The installer writes no Git state and needs no administrator rights. On macOS and Linux it also
+registers the user-level runtime service described below; `--no-service` skips that. After installing,
+run `oberth version` and `oberth doctor` to confirm.
+
+### The runtime service unit
+
+Once `oberth version` runs, the installer registers the runtime service as a user-level unit and starts
+it: a launchd LaunchAgent (`~/Library/LaunchAgents/com.sheathedsharp.option-berth.runtime.plist`) on
+macOS, a systemd user unit (`~/.config/systemd/user/option-berth-runtime.service`) on Linux. The unit
+runs `oberth runtime service run --persistent`, so one runtime service stays up across logins instead of
+being started ad hoc by whichever command needed one; its lifecycle belongs to
+[the runtime service page](runtime-service.md).
+
+- Registration happens only when `oberth doctor --only listener_observation` exits 0: a machine that
+  cannot see listeners should not get a permanent runtime service that cannot see them either;
+- `--no-service` or `BERTH_INSTALL_NO_SERVICE=1` skips it; an existing unit is then left running, and the
+  installer says so;
+- a missing or refusing supervisor is a warning: the unit file stays and is loaded at the next login;
+- nothing here needs root, and an unavailable supervisor does not fail the install.
 
 ### Slow downloads or network restrictions
 
@@ -124,7 +141,8 @@ sudo dnf remove option-berth
 ```
 
 The package puts `oberth` in `/usr/bin` and the licenses and build manifest in
-`/usr/share/doc/option-berth`. `apt remove` / `dnf remove` do not delete `~/.option-berth` runtime
+`/usr/share/doc/option-berth`. A package install registers no user-level unit; only `install.sh` does.
+`apt remove` / `dnf remove` do not delete `~/.option-berth` runtime
 state; once you are sure it is no longer needed, run `oberth runtime service stop` and delete that directory.
 arm64 uses the `_arm64.deb` and `.aarch64.rpm` file names.
 
@@ -144,7 +162,9 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.
 
 The uninstaller:
 
-- Tries `oberth runtime service stop` first, so no old process keeps running;
+- Unregisters the user-level runtime service and deletes its unit file first, so the supervisor cannot
+  start a binary that is about to be removed;
+- Stops what is still running with `oberth runtime service stop`, so no old process keeps running;
 - Removes `oberth`;
 - Removes the licenses and build manifest the installer placed in `~/.local/share/option-berth`;
 - Removes the exact line the installer wrote into a shell startup file (only that line; other PATH
@@ -182,9 +202,10 @@ Then delete the PATH line the installer added from your shell startup file.
 
 ## Upgrade
 
-Rerun the install command for your platform to replace the binaries; after upgrading, run
-`oberth runtime service stop` once, and the next CLI call starts the new version. On Windows, stop the running
-`oberth` first, then reinstall. Pin a version with `--version` / `-Version`.
+Rerun the install command for your platform to replace the binaries. Unless `--no-service` was passed,
+the installer stops the previous runtime service and unloads the unit before replacing them, then writes
+and starts the unit again, so the new build is what runs. On Windows, stop the running `oberth` first,
+then reinstall. Pin a version with `--version` / `-Version`.
 
 `oberth`'s first screen shows the local version; when an update exists, its footer gives the install
 command for this platform and `oberth runtime service stop`. Every other terminal command that writes human
@@ -210,5 +231,6 @@ Linux `.deb`/`.rpm`. A Windows MSI is not available yet.
 ## Platform boundaries
 
 Full service scenarios are verified on **macOS / Linux**. Windows has an independent native build, smoke
-tests and some fact/persistence tests, but is not full lifecycle support. No platform provides an
-auto-upgrade runtime service or a background updater.
+tests and some fact/persistence tests, but is not full lifecycle support, and it has no user-level service
+unit: there the runtime service is started with `oberth runtime service run --detach`. No platform provides
+an auto-upgrade runtime service or a background updater.

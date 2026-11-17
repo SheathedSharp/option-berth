@@ -17,9 +17,17 @@ oberth runtime service stop
 
 没有后台运行时，`status --json` 会返回非零退出码。`doctor` 检查安装与观察权限；`doctor --fix` 可能修改状态，请先看清准备修什么。[命令参考](cli.zh.md)维护完整参数和返回字段。
 
+## 用户级常驻服务
+
+[安装脚本](install.zh.md)把 runtime service 注册成用户级单元：macOS 是 launchd LaunchAgent（`com.sheathedsharp.option-berth.runtime`），Linux 是 systemd 用户单元（`option-berth-runtime.service`）。该单元运行 `oberth runtime service run --persistent`，因此一个 runtime service 会跨登录、跨 shell 常驻，而不是由当时需要它的命令顺手拉起。它不需要管理员权限。
+
+单元安装之后，它就拥有这个 runtime service，CLI 改为请求它而不是自己起进程：`runtime service restart` 重启该单元，发现没有后台在跑的写命令也会请求单元启动。supervisor 拒绝时原样报错，CLI 不会退回自己起一个游离进程——两个所有者会争同一个 socket 和同一把锁。单元文件存在时 `run --detach` 也会拒绝并指向 `runtime service restart`，原因相同。
+
+`install.sh --no-service`（或 `BERTH_INSTALL_NO_SERVICE=1`）跳过注册，没有单元的机器保持下面描述的行为。Windows 没有这样的单元：那里的 runtime service 仍由 `run --detach` 启动，并遵循空闲超时。
+
 ## 为什么有时没有后台
 
-默认空闲超时为 30 分钟。没有保持连接的客户端、没有活动运行，且一段时间没有操作时，后台可能正常退出。因此，socket 不存在不等于启动崩溃。要根据后台自身日志，区分“没启动过”“主动停止”“空闲退出”和“启动失败”，不能凭一个检查项猜原因。
+手动启动的后台遵循默认 30 分钟空闲超时：没有保持连接的客户端、没有活动运行，且一段时间没有操作时，它可能正常退出，因此 socket 不存在不等于启动崩溃。由用户级单元启动的后台带 `--persistent`，永远不会因空闲退出；这种情况下 socket 不存在说明单元没在运行。两种情况都要看后台自身日志和 supervisor 的日志，区分“没启动过”“主动停止”“空闲退出”和“启动失败”，不能凭一个检查项猜原因。
 
 只有观察能力预检允许时，项目操作才可能自动启动匹配的后台。如果沙箱不能查看监听端口，不应再从里面启动一个同样看不见的替代后台；应在普通终端明确启动。不要放宽沙箱，也不要靠反复启动当作修复。
 
