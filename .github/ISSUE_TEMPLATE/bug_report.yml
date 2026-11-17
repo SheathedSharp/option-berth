@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        这个仓库只处理引擎与 `oberth` CLI。macOS 客户端和 coding agent 的 skill 是独立产品，
+        这个仓库只处理引擎与 `oberth` CLI。coding agent 的 skill 是独立产品，
         请用下方链接到各自仓库提交。
 
         提交前请删去凭证、私人路径、真实用户数据和未经脱敏的日志。

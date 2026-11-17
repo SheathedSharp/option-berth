@@ -33,4 +33,4 @@ Archives are not vendored into builds. Go still resolves the unchanged `engine/g
 
 GSAP uses its own Standard “No Charge” License, not this project's MIT and not an assumed OSI license. The original file header, official license-page snapshot and readable legal text are retained. Previous source-history records remain in Git history; they are not reintroduced as current dependency archives.
 
-The independent macOS client maintains its own fonts and terminal dependencies. They are not this repository's shipped client assets. Root project licenses do not replace upstream or embedded-subtree terms. Preserve applicable notices; mark uncertain provenance as uncertain rather than inventing a license.
+Root project licenses do not replace upstream or embedded-subtree terms. Preserve applicable notices; mark uncertain provenance as uncertain rather than inventing a license.

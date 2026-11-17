@@ -20,4 +20,4 @@ These are acceptance requirements, not an assertion that a particular release om
 
 Open work does not authorize taking over external services, editing orchestrator settings automatically or approving model suggestions for a person. Missing observation permission stays unknown; do not bypass the sandbox. Application data deletion remains a person's choice.
 
-The macOS client and agent skill live in their own repositories. Protocol changes require coordination, not weakening this repository's tests to pretend the other components have adapted.
+The agent skill lives in its own repository. Protocol changes require coordination, not weakening this repository's tests to pretend the other component has adapted.

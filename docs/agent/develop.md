@@ -17,7 +17,7 @@ Use the Go version declared in `engine/go.mod`, Python 3 for repository scripts,
 | User documentation | `docs/` | Both languages and [documentation rules](../AGENTS.md) |
 | Source archives and attribution | `third_party/` | [Source inventory](../../third_party/README.md) and notices |
 
-The [macOS client](https://github.com/SheathedSharp/option-berth-macos) and [coding-agent skill](https://github.com/SheathedSharp/option-berth-skill) have separate repositories. The skill contract check expects a sibling `option-berth-skill` checkout. The brand exporter reads the sibling client's geometry source; do not copy either product into this tree to satisfy a check.
+The [coding-agent skill](https://github.com/SheathedSharp/option-berth-skill) has a separate repository. The skill contract check expects a sibling `option-berth-skill` checkout; do not copy that product into this tree to satisfy a check.
 
 ## Build without installing
 

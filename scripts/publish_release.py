@@ -70,13 +70,13 @@ def publish(directory: Path, tag: str) -> None:
              "agent 需自行安装登录，后续对话与审批留在其原生界面。\n\n"
              "Windows 构建包不等于完整生命周期支持。Linux 同时提供 .deb 与 .rpm。"
              "请先核对 SHA256SUMS，许可随包附带。\n\n"
-             "macOS 客户端与 coding agent 的 skill 是独立产品，见 README 里的链接。\n\n"
+             "coding agent 的 skill 是独立产品，见 README 里的链接。\n\n"
              "Protocol / feature / fix versioning. See the repository release guide.\n\n"
              "Linux .deb/.rpm packages are published beside the CLI archives. "
              "Windows ARM64 and some CLI archives are cross-built; build availability is not a claim "
              "of full native lifecycle coverage. Verify SHA256SUMS before use. Third-party notices are "
-             "included in every archive. The macOS client and the coding-agent skill are separate "
-             "products; see the links in the README.")
+             "included in every archive. The coding-agent skill is a separate product; "
+             "see the link in the README.")
     # The release remains a draft until every asset survives a download/hash check.
     gh("release", "create", tag, "--verify-tag", "--draft", "--generate-notes", "--title", "option-berth " + tag, "--notes", notes)
     gh("release", "upload", tag, *map(str, files))

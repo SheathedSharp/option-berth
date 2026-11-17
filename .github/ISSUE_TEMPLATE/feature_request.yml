@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         先读 [docs/product.md](https://github.com/SheathedSharp/option-berth/blob/main/docs/product.md)
-        的产品边界。这个仓库只做引擎与 CLI；macOS 客户端和 coding agent 的 skill 在各自仓库维护。
+        的产品边界。这个仓库只做引擎与 CLI；coding agent 的 skill 在自己的仓库维护。
   - type: textarea
     id: problem
     attributes:

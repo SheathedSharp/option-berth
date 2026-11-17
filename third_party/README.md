@@ -14,11 +14,9 @@
 
 原生二进制发布保留实际目标运行依赖的完整许可与 NOTICE，以及构建清单；现有 `go-runtime-licenses.txt` 是保留许可输入，不是所有开发依赖和所有平台的完整物料清单。发布包内 `licenses/retained-runtime-notices.txt` 保留该输入，`licenses/target-runtime-notices.txt` 按实际目标收集原文，`build-manifest.json` 记录编译器与运行模块。发布源码、二进制或安装包时，须核对实际分发范围并携带适用原文；归档源码不替代这项责任。
 
-## 开发工具与独立客户端
+## 开发工具
 
 站点的 `@playwright/test`、`playwright`、`playwright-core` 来自同一固定版本 Playwright，原 LICENSE/NOTICE 随源码保留。Mage、nfpm、actionlint 的完整工具源码和 JSONSchema 测试套件单独保存；工具的独立开发依赖、托管 Actions、操作系统 SDK、外部浏览器、agent 与模型服务不是本项目引擎依赖，不冒称整个执行环境都已归档。
-
-macOS 客户端、Monaspace 字体（SIL Open Font License 1.1）及 SwiftTerm（MIT）由独立仓库 https://github.com/SheathedSharp/option-berth-macos 分发并维护许可。本仓源码和原生引擎发布包不包含这些客户端资产，不能替另一个仓库重新许可。
 
 第三方名称只说明来源、兼容或依赖，不表示认可或背书；代码许可不授予商标权。新增或升级材料时，直接维护下方来源、版本和本地修改记录，保留适用版权、LICENSE 和 NOTICE；不另设源码管理框架或开发门禁。
 
@@ -31,7 +29,7 @@ macOS 客户端、Monaspace 字体（SIL Open Font License 1.1）及 SwiftTerm�
 - 引擎按当前 Go 模块图保留 59 个选中模块的完整上游源码，其中 22 个出现在六目标生产导入并集中；另附可取得的 24 份模块发行 ZIP。模块 ZIP 是完整模块快照，不等于整个上游仓库。
 - 另有站点 GSAP、Playwright，modernc 对应的原始 SQLite，以及仓库声明的 Go 和固定构建工具源码。共 67 条顶层来源记录、90 个去重源码包。
 - Go 源码对应 go.mod 声明的 go1.25.0，不代表每个发布产物的编译器版本。Mage/nfpm/actionlint 是工具完整源码，不宣称封闭复制其独立开发依赖或整个 CI 环境。
-- 上游自带 vendor、测试资产及各自声明保留在原源码包中；下表的根许可不覆盖子树的独立许可。客户端字体/SwiftTerm 属于独立 macOS 仓库，不在本仓产品中分发。
+- 上游自带 vendor、测试资产及各自声明保留在原源码包中；下表的根许可不覆盖子树的独立许可。
 
 ## 使用与维护
 
