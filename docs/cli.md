@@ -923,7 +923,7 @@ disables, the way `NO_COLOR` does) turns both the question and sending off.
 
 | Command | What it does |
 |---|---|
-| `oberth feedback status [--json]` | The recorded decision, the GitHub account `gh` is signed in as, the local report totals, and how many reports this installation filed in the last day |
+| `oberth feedback status [--json]` | The recorded decision, the credential `gh` holds for github.com, the channel a report would take, the local report totals, and how many reports this installation filed in the last day |
 | `oberth feedback on` / `oberth feedback off` | Record the decision without waiting for the first screen; `on` names the account that will file |
 | `oberth feedback report [--json] [--dry-run]` | Compose one report and file it |
 | `oberth feedback log [--json]` | Each report with its issue's state, close date, labels and URL, read through `gh` |
@@ -943,11 +943,14 @@ same fixed vocabulary, then asks for the optional note; the exact report is show
 before it is filed. `--json`, `--yes` and a pipe keep the flag-only path, so a script never waits
 for a prompt.
 
-The report goes out through `gh issue create` with the person's own GitHub account when `gh` is
-installed and signed in, so that account is visible on the issue; otherwise the command prints a
-prefilled `issues/new` URL for the person to submit, and `--open` opens it. `feedback status` and
-`feedback on` name that account before any report is composed, and `feedback log` reads the filed
-issues through the same login. All three read the local gh credential (`gh auth status --json hosts`)
+The report goes out through `gh issue create` with the person's own GitHub credential whenever `gh`
+is installed and holds one, so that account is visible on the issue; only when there is no credential
+does the command print a prefilled `issues/new` URL for the person to submit, and `--open` opens it.
+Delivery is decided by `gh issue create` itself: the local probe only says whether the attempt is
+worth making, so a github.com the probe cannot reach still files the issue, and a create that fails
+falls back to the URL with the error that really happened. `feedback status` and `feedback on` name
+that credential before any report is composed, and `feedback log` reads the filed issues through the
+same login. All three read the local gh credential (`gh auth status --json hosts`)
 and send nothing. The same complaint from the same build is filed at most once in 24 hours, and one
 installation files at most twenty reports in a rolling day. The identity covers kind, command, error
 code, observation, version and the redacted note: reports that differ in any of those are different
@@ -955,11 +958,18 @@ complaints. The local ledger at
 `BERTH_HOME/feedback/reports.ndjson` records what was filed; it is advisory, and deleting it only
 makes a duplicate possible again.
 
-`status` keeps the two kinds of history apart: a `gh` entry is an issue that was filed, while a
-`url` entry is a prefilled page the person still had to submit. The human line reads
-`N recorded · N filed · N prefilled`, so a prefilled page never inflates the filed count. `--json`
-adds `github` (`available`, `account`, `reason`) and `reports` (`total`, `filed`, `prefilled`,
-`last_at`).
+`status` publishes a prediction, not a promise: `channel` is the channel a report takes right now,
+and it comes from the same predicate the delivery path branches on. It keeps the two kinds of history
+apart: a `gh` entry is an issue that was filed, while a `url` entry is a prefilled page the person
+still had to submit. The human line reads `N recorded · N filed · N prefilled`, so a prefilled page
+never inflates the filed count. `--json` adds `github` (`available`, `state`, `account`, `reason`)
+and `reports` (`total`, `filed`, `prefilled`, `last_at`). `state` is `signed_in`,
+`credential_unconfirmed`, `signed_out`, `not_installed` or `unknown`; `available` is true when a
+report is attempted through gh, so a stored credential the probe could not confirm against
+github.com is `credential_unconfirmed` and still `available` — unreachable is not signed out. The
+human `github` line reads `signed in as <account>`, `credential stored for <account> but github.com
+is unreachable; a report is still attempted through gh`, `not signed in (...)`, or `not available
+(gh is not installed)`.
 
 `log` is the response half of the loop. For every filed report it reads the issue and prints
 `open`, `resolved`, `closed as not planned`, `unknown`, or `prefilled page only`; next to the state
@@ -967,8 +977,8 @@ it prints the issue number, kind, command, version, report date, close or update
 URL. `--json` carries the same data as `github`, `summary` (the local totals plus `open`, `resolved`,
 `not_planned` and `unknown`) and one entry per report with `status`, `reason` and the GitHub `issue`
 object (`number`, `state`, `state_reason`, `title`, `labels`, `updated_at`, `closed_at`, `url`). The
-human view shows the most recent 20 entries while `summary` counts the whole ledger. Without a
-signed-in gh the local record still prints and every filed report says why its state is unknown;
+human view shows the most recent 20 entries while `summary` counts the whole ledger. Without a gh
+credential the local record still prints and every filed report says why its state is unknown;
 nothing is guessed.
 
 A report never carries a path, a log line, a manifest field, a command line, a worktree identity or an
