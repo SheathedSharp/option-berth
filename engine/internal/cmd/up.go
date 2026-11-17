@@ -206,12 +206,21 @@ func projectStartParams(args []string, only []string, allowOutsideHome bool) (rp
 // missingConfigError explains why no manifest answered for dir. A file that is
 // there but unparseable is a different problem from no file at all, and naming
 // the difference is what separates a two-second fix from a puzzled `ls -a`.
+//
+// Both are not_found: a caller branches on "there is no usable manifest" the
+// same way it branches on any other name the engine cannot resolve, and an
+// internal fault would say the engine is broken when the fix is to write a file.
+// The next step belongs in the hint field, not folded into the message.
 func missingConfigError(index *groups.Index, dir string) error {
 	if invalid := index.Invalid(); len(invalid) > 0 {
-		return fmt.Errorf("%s cannot be used: %w", groups.ConfigName, invalid[0].Err)
+		bad := invalid[0]
+		return failHint("not_found",
+			fmt.Sprintf("%s cannot be used: %v", groups.ConfigName, bad.Err),
+			fmt.Sprintf("fix %s, or name a project: `oberth up <project>`", shortPath(bad.Path)))
 	}
-	return fmt.Errorf("no %s at or above %s\nhint: `oberth init` writes one, or name a project: `oberth up <project>`",
-		groups.ConfigName, shortPath(dir))
+	return failHint("not_found",
+		fmt.Sprintf("no %s at or above %s", groups.ConfigName, shortPath(dir)),
+		"`oberth init` writes one, or name a project: `oberth up <project>`")
 }
 
 // upDocument is the `up --json` answer: one entry per service plus the summary

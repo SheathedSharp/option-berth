@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -48,7 +49,7 @@ func init() {
 func restartRun(cmd *cobra.Command, args []string) error {
 	startParams, cfg, err := projectStartParams(args, restartOnly, restartAllowOutsideHome)
 	if err != nil {
-		return err
+		return restartWithoutManifest(cmd.Context(), startParams, err)
 	}
 
 	c, err := connectForWrite(cmd.Context())
@@ -179,18 +180,49 @@ func restartRefusal(ctx context.Context, c *client.Client, params rpc.GroupsStar
 	if callErr := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); callErr != nil {
 		return converted
 	}
-	group := ""
-	if params.Name != nil {
-		group = *params.Name
-	} else if wd, wdErr := os.Getwd(); wdErr == nil {
-		group, _ = projectAt(wd)
-	}
 	records := append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
-	hint := adHocRestartHint(records, params.Only, group)
+	return adHocRestartRefusal(coded, records, params)
+}
+
+// restartWithoutManifest answers a restart whose project could not be resolved.
+// The worktree has no usable manifest, but the run ledger still knows which run
+// a name refers to, so a name it recorded gets exactly the start line the
+// manifest-present refusal prints. Only when no requested name is in the ledger
+// does the manifest refusal stand: it is the answer that tells the caller how to
+// make the project usable.
+func restartWithoutManifest(ctx context.Context, params rpc.GroupsStartParams, err error) error {
+	var coded *cliErr
+	if !errors.As(err, &coded) || coded.Code != "not_found" {
+		return err
+	}
+	return adHocRestartRefusal(coded, runLedgerRecords(ctx), params)
+}
+
+// adHocRestartRefusal keeps a refusal's code and message and replaces its hint
+// with one recorded start line per name the ledger knows. It is the only place
+// that decides whether a refusal is explained this way, so a restart refusing an
+// undeclared name and a restart with no manifest answer in the same words.
+func adHocRestartRefusal(coded *cliErr, records []rpc.RunRecord, params rpc.GroupsStartParams) error {
+	hint := adHocRestartHint(records, params.Only, restartGroup(params))
 	if hint == "" {
-		return converted
+		return coded
 	}
 	return &cliErr{Code: coded.Code, Msg: coded.Msg, Hint: hint}
+}
+
+// restartGroup is the project the request belongs to: the name the caller gave,
+// or the project the working directory sits in. The ledger keeps runs from every
+// worktree, so without it a name would match another project's run.
+func restartGroup(params rpc.GroupsStartParams) string {
+	if params.Name != nil {
+		return *params.Name
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	group, _ := projectAt(wd)
+	return group
 }
 
 // adHocRestartHint builds one start line per requested name that the ledger

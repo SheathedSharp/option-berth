@@ -10,7 +10,7 @@ Use the [documentation index](index.md) to select a task. Below are common rules
 
 ## Common rules
 
-- Commands work on the current directory (or an explicit path / project name). With no manifest, run oberth init first.
+- Commands work on the current directory (or an explicit path / project name). With no manifest, run oberth init first: a command that needs the manifest answers `not_found` with that step in the hint.
 - Default output is for humans; with plain `--json`, stdout holds exactly one JSON value. Explicit streaming commands emit one value per line, with errors written to stderr.
 - Following logs and other streaming commands use NDJSON: one JSON value per line.
 - Exit codes: 0 success, 1 run failure, 2 argument or option error, 130 interrupted by Ctrl-C.
@@ -332,10 +332,15 @@ when the probe succeeds — a failed probe leaves the existing configuration unt
 changes credentials, not consent. `oberth attn on` and `oberth attn off [--forget]` flip the single
 `enabled` boolean and never touch the network. `oberth attn test` probes the current effective
 configuration once. `oberth attn status` reports the resolved state, the fixed reason when it cannot
-be used, and a summary of the local quality ledger; `--json` carries the same data plus the full
-`quality` object. `oberth doctor` gains one offline row for the same state, and a human `status`
-read mentions the feature once every two weeks when it is off and an anomaly is present;
-`BERTH_NO_TIPS=1` silences that hint.
+be used, and a summary of the local quality ledger. `--json` carries the decision document: the
+consent and configuration fields plus a `quality` object reduced to the counters that answer "is a
+runner observing, and is anything happening" — `activity`, `records_read`, `assessment_records`,
+`model_calls`, `cache_hits`, `feedback_records`, `unique_cases`, `labeled_cases`,
+`unlabeled_cases` and `sessions`. `--quality` replaces that object with the full quality report
+described below; `--since` and `--quality-project` narrow that report, so they imply `--quality`.
+A zero count stays in the document instead of disappearing. `oberth doctor` gains one offline row
+for the same state, and a human `status` read mentions the feature once every two weeks when it is
+off and an anomaly is present; `BERTH_NO_TIPS=1` silences that hint.
 
 `oberth attn assess` is the one-shot runner. `--dry-run` prints the exact redacted
 request for the current event without sending it, and `--follow` keeps the same
@@ -370,12 +375,14 @@ privacy boundary are in
 `oberth attn assess` / `assess --follow` leave redacted local quality observations in
 `$BERTH_HOME/quality/events.ndjson`. After a real interaction, a development agent can write back
 human labels and action outcomes with `oberth attn feedback --file <json>`, then use
-`oberth attn status --json [--since 168h]` to view label coverage, assessment availability,
-routing reasons and the model/option distribution, human-escalation precision/recall/F1, the model's
+`oberth attn status --json --quality [--since 168h] [--quality-project <name>]` to view label
+coverage, assessment availability, routing reasons and the model/option distribution,
+human-escalation precision/recall/F1, the model's
 `needs_human` / `task_relevant` probability error, recommendation hit rate, action success rate,
 resolution rate and detection latency under `quality`. Quality records are not `status` facts and
 change no execution permission; the `sessions` object explains the number of sessions, polls, events,
-the model calls, cache hits and no-event polls; with no real feedback the metrics stay `null`.
+the model calls, cache hits and no-event polls, and is part of the default summary as well; with no
+real feedback the metrics stay `null`.
 
 `on` means permission to assess, not that a task session is running. A development skill may attach
 one existing runner to a relevant runtime task after binding its canonical worktree, redacted task
@@ -610,6 +617,10 @@ Only services the manifest declares can be restarted. A run started with `oberth
 manifest entry: stop it first if it is still running, then start that command again. When
 `restart --only` names such a run and the run ledger knows it, the `not_found` hint prints the
 recorded start line (cwd, group, name, port and command) instead of pointing back at `status`.
+That hint does not depend on the manifest being there: a worktree with no `oberth.yaml` at all
+still gets the recorded start line, because the run ledger rather than the manifest is what knows
+it. A name the ledger does not know falls back to the missing-manifest `not_found` and its
+`oberth init` hint.
 
 A listener option-berth did not start is reported by the start half the same way `up` reports it:
 skipped, with a reason and hint naming the process and port. `--force` only skips the graceful stop;
