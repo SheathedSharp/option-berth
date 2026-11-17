@@ -285,7 +285,7 @@ jobs:
               handle.write("\n".join(lines) + "\n")
           PY
       - name: Share the built binary with the shards
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: agent-eval-binary
           path: source/bin/oberth
@@ -642,7 +642,7 @@ jobs:
           PY
       - name: Keep this shard
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: agent-eval-shard-${{ matrix.name }}
           path: |
@@ -715,7 +715,7 @@ jobs:
           fi
       - name: Keep the merged report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: agent-eval-merged-${{ github.run_id }}
           path: agent-eval-merged/
