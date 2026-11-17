@@ -21,7 +21,7 @@ oberth runtime service stop
 
 [安装脚本](install.zh.md)把 runtime service 注册成用户级单元：macOS 是 launchd LaunchAgent（`com.sheathedsharp.option-berth.runtime`），Linux 是 systemd 用户单元（`option-berth-runtime.service`）。该单元运行 `oberth runtime service run --persistent`，因此一个 runtime service 会跨登录、跨 shell 常驻，而不是由当时需要它的命令顺手拉起。它不需要管理员权限。
 
-单元安装之后，它就拥有这个 runtime service，CLI 改为请求它而不是自己起进程：`runtime service restart` 重启该单元，发现没有后台在跑的写命令也会请求单元启动。supervisor 拒绝时原样报错，CLI 不会退回自己起一个游离进程——两个所有者会争同一个 socket 和同一把锁。
+单元安装之后，它就拥有这个 runtime service，CLI 改为请求它而不是自己起进程：`runtime service restart` 重启该单元，发现没有后台在跑的写命令也会请求单元启动。supervisor 拒绝时原样报错，CLI 不会退回自己起一个游离进程——两个所有者会争同一个 socket 和同一把锁。单元文件存在时 `run --detach` 也会拒绝并指向 `runtime service restart`，原因相同。
 
 `install.sh --no-service`（或 `BERTH_INSTALL_NO_SERVICE=1`）跳过注册，没有单元的机器保持下面描述的行为。Windows 没有这样的单元：那里的 runtime service 仍由 `run --detach` 启动，并遵循空闲超时。
 

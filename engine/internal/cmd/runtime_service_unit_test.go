@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/usersvc"
 	"github.com/spf13/cobra"
@@ -238,7 +240,13 @@ func TestConnectForWriteStartsTheUnitInsteadOfAChild(t *testing.T) {
 func TestConnectForWriteReportsAFailedUnitStart(t *testing.T) {
 	isolateRuntimeServicePaths(t)
 	t.Setenv(client.NoAutostartEnv, "")
-	blindObservation(t)
+	// The probe is healthy on purpose: an installed unit owns the attempt even when it
+	// fails, so the observable fallback must never be reached.
+	previousProbe := scanProbe
+	scanProbe = func(context.Context) ports.ProbeResult {
+		return ports.ProbeResult{State: ports.ObservationObservable}
+	}
+	t.Cleanup(func() { scanProbe = previousProbe })
 	supervisor := &fakeSupervisor{
 		installed: true,
 		startErr:  errors.New("systemctl --user start option-berth-runtime.service: exit status 1"),
@@ -250,22 +258,41 @@ func TestConnectForWriteReportsAFailedUnitStart(t *testing.T) {
 	if err == nil {
 		t.Fatal("connectForWrite = nil with no reachable runtime service")
 	}
-	var ce *cliErr
-	if !errors.As(err, &ce) {
-		t.Fatalf("err = %T (%v), want *cliErr", err, err)
+	if !strings.Contains(err.Error(), "exit status 1") {
+		t.Errorf("error = %v, want the supervisor's own failure", err)
 	}
-	if !strings.Contains(ce.Hint, "did not start the runtime service") ||
-		!strings.Contains(ce.Hint, "exit status 1") {
-		t.Errorf("hint = %q, want the supervisor's own failure", ce.Hint)
-	}
-	if strings.Contains(ce.Hint, "run --detach") {
-		t.Errorf("hint = %q, want the supervisor rather than a second owner", ce.Hint)
+	if strings.Contains(err.Error(), "run --detach") {
+		t.Errorf("error = %v, want the supervisor rather than a second owner", err)
 	}
 	if got := strings.Join(supervisor.calls, ","); got != "start" {
 		t.Fatalf("supervisor calls = %q, want one start", got)
 	}
 	if *spawned {
 		t.Error("connectForWrite forked a detached runtime service after the unit failed to start")
+	}
+}
+
+// `run --detach` is the one remaining way to put a second owner beside an installed
+// unit. The command refuses instead of leaving the supervisor a service it cannot bind.
+func TestRunDetachRefusesWhenAUnitIsInstalled(t *testing.T) {
+	isolateRuntimeServicePaths(t)
+	t.Setenv(runtimesvc.AllowTestRuntimeServiceEnv, "1")
+	supervisor := &fakeSupervisor{installed: true}
+	useFakeSupervisor(t, supervisor)
+	spawned := watchDetachedChildren(t)
+	previous := runtimeServiceDetach
+	runtimeServiceDetach = true
+	t.Cleanup(func() { runtimeServiceDetach = previous })
+
+	err := runtimeServiceRun(runtimeServiceRunCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "user-level service unit is installed") {
+		t.Fatalf("error = %v, want the unit refusal", err)
+	}
+	if *spawned {
+		t.Error("run --detach forked a runtime service beside the installed unit")
+	}
+	if len(supervisor.calls) != 0 {
+		t.Fatalf("supervisor calls = %q, want none from run --detach", supervisor.calls)
 	}
 }
 

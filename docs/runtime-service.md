@@ -29,6 +29,8 @@ Where the unit is installed it owns the runtime service, and the CLI asks it ins
 process of its own: `runtime service restart` restarts the unit, and a write command that finds nothing
 running asks the unit to start. A supervisor that refuses is reported as it is; the CLI does not fall
 back to a detached process, because two owners would compete for the same socket and the same lock.
+While the unit file exists, `run --detach` refuses and points at `runtime service restart` for the
+same reason.
 
 `install.sh --no-service` (or `BERTH_INSTALL_NO_SERVICE=1`) skips the registration, and a machine without
 the unit keeps the behaviour described below. Windows has no such unit: the runtime service there is

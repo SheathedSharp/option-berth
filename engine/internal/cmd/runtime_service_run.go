@@ -59,6 +59,12 @@ func runtimeServiceRun(command *cobra.Command, _ []string) error {
 	}
 
 	if runtimeServiceDetach {
+		// A detached child beside an installed unit would be a second owner of one
+		// socket and one lock, and the supervisor would keep restarting a service that
+		// cannot bind. The unit is the only start path on that machine.
+		if runtimeServiceSupervisor.Installed() {
+			return fmt.Errorf("a user-level service unit is installed; start or restart it with `oberth runtime service restart`, or remove the unit before using `run --detach`")
+		}
 		// The parent only forks; the process that becomes the runtime service is the
 		// child, and it is the one that asks for the PATH below.
 		return detachRuntimeService(command.Context(), runtimesvc.SocketPath())

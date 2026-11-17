@@ -45,8 +45,8 @@ var connectForWrite = func(ctx context.Context) (*client.Client, error) {
 	// Where the user-level unit is installed, the supervisor is the only thing that
 	// may start a runtime service. A detached child beside a unit would be a second
 	// owner of one socket and one lock — exactly what the unit exists to rule out.
-	unitClient, unitStarted, unitErr := startRuntimeServiceUnit(ctx, info)
-	if unitStarted {
+	unitClient, owned, unitErr := startRuntimeServiceUnit(ctx, info)
+	if owned {
 		if unitErr != nil {
 			return nil, withRuntimeServiceLogHint(unitErr)
 		}
@@ -55,71 +55,45 @@ var connectForWrite = func(ctx context.Context) (*client.Client, error) {
 	}
 
 	// Autostart is different: a runtime service created from a blind process outlives
-	// the command and keeps misleading every client that connects to it.
+	// the command and keeps misleading every client that connects to it. Reaching
+	// this point means no unit is installed: an installed one owns the attempt above.
 	if os.Getenv(client.NoAutostartEnv) == "" {
 		if probe := scanProbe(ctx); probe.State != ports.ObservationObservable {
 			code := probe.Code
 			if code == "" {
 				code = string(probe.State)
 			}
+			hint := "run `oberth runtime service run --detach` from a normal terminal"
+			if probe.Hint != "" {
+				hint += "; " + probe.Hint
+			} else {
+				hint += ", or allow option-berth in the sandbox"
+			}
 			return nil, failHint(code,
-				"refusing to autostart a runtime service that cannot see listeners: "+probe.Detail,
-				autostartRefusalHint(probe, unitErr))
+				"refusing to autostart a runtime service that cannot see listeners: "+probe.Detail, hint)
 		}
 	}
 
 	c, err := client.Connect(ctx, info)
 	if err != nil {
-		if unitErr != nil {
-			// Falling back was only safe because the unit never started. Say why it did
-			// not, or the second failure would hide the first.
-			err = fmt.Errorf("%w (the user service did not start either: %v)", err, unitErr)
-		}
 		return nil, withRuntimeServiceLogHint(err)
 	}
 	return c, nil
 }
 
-// autostartRefusalHint names the next step after a refused autostart.
-//
-// The probe names its own next step (leave the sandbox, or run doctor), but the
-// contract for a refused autostart is specific: the runtime service has to be started
-// from a process that can observe listeners. Without a unit that means a normal
-// terminal; with one it means the supervisor, because `run --detach` would put a
-// second owner beside the unit the machine already has.
-func autostartRefusalHint(probe ports.ProbeResult, unitErr error) string {
-	supervisor := runtimeServiceSupervisor
-	if !supervisor.Installed() {
-		hint := "run `oberth runtime service run --detach` from a normal terminal"
-		if probe.Hint != "" {
-			return hint + "; " + probe.Hint
-		}
-		return hint + ", or allow option-berth in the sandbox"
-	}
-	hint := fmt.Sprintf("the user-level service unit (%s) did not start the runtime service", supervisor.Name())
-	if unitErr != nil {
-		hint += ": " + unitErr.Error()
-	}
-	if probe.Hint != "" {
-		hint += "; " + probe.Hint
-	}
-	return hint
-}
-
 // startRuntimeServiceUnit asks the installed user-level unit to start the runtime
 // service and dials what it starts.
 //
-// started reports that the unit owned this attempt. When it did, a failure is final:
-// a detached child next to a unit would leave one machine with two runtime services
-// claiming one socket and one lock. When it did not, err carries the supervisor's own
-// refusal, so the caller can report both failures rather than only its own.
-func startRuntimeServiceUnit(ctx context.Context, info client.ClientInfo) (conn *client.Client, started bool, err error) {
+// owned reports that the unit owned this attempt. It is true whenever the unit is
+// installed, including when Start failed: falling back to a detached child would put
+// a second owner beside the unit the machine already has.
+func startRuntimeServiceUnit(ctx context.Context, info client.ClientInfo) (conn *client.Client, owned bool, err error) {
 	supervisor := runtimeServiceSupervisor
 	if !supervisor.Installed() || runtimesvc.EnvEnabled(os.Getenv(client.NoAutostartEnv)) {
 		return nil, false, nil
 	}
 	if startErr := supervisor.Start(ctx); startErr != nil {
-		return nil, false, startErr
+		return nil, true, startErr
 	}
 	socket := runtimesvc.SocketPath()
 	if waitErr := client.WaitForSocket(ctx, socket, supervisorSocketTimeout); waitErr != nil {
