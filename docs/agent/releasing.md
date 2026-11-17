@@ -190,3 +190,5 @@ and helper-script tests, as described in [validation.md](validation.md). The dai
 passes before tagging so problems that only surface there are not left for after the release. To rerun
 locally, use `python3 scripts/release.py --verify-only`; it reads only the currently checked-out commit.
 On failure, never move or overwrite the tag; fix and ship the next version.
+
+`.github/workflows/repo-reconcile.yml` carries a red run past the Actions tab: a failed `Nightly full verification` or `Verified release` opens one issue for that workflow (`failure_title()` in `scripts/reconcile_repo.py` defines the exact title), a later failure comments on that same issue, and a later success only records that it passed — closing stays a human decision. Its daily run reports the three-way gate comparison `scripts/check_ci_gate.py` makes, pull requests behind `main`, and required checks that never reported within the configured limit. The workflow opens and updates issues only; it never changes a ruleset, branch protection, a label or a pull request branch.
