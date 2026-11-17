@@ -107,6 +107,14 @@ another process (`port_occupied`), and also marks services that failed before th
 (`start_failed`), so "exited after starting", "port conflict" and "failed before starting" do not
 collapse into one state.
 
+A recorded run whose process disappears while no runtime service is watching — the host was stopped,
+or the run outlived a crash — has its own terminal reason, `ended_unobserved`. The end is known; the
+exit status is not, so `code` is `-1` and must not be read as a process status. `at` is when a host
+recorded the ending; a read with no host at all leaves it empty because no observation time exists.
+The ending is the newest generation under its name, so an older crash from the same name is not
+presented as the current outcome. When the runtime service next starts, it records the same ending
+durably and removes the mirror entry that carried the evidence.
+
 Under `port_occupied`, `last_exit.port_hint` is the port this run was told to bind, and
 `last_exit.port_holder` describes the process still holding that port at read time: `port`, `pid`,
 `command`, `kind`, with `group`, `name`, `run_id` additionally for a managed run and `cwd` and
@@ -122,8 +130,13 @@ labels as fixed-width English columns (services · depends on · listeners · co
 drafts · last look) aligned by terminal display width. Each service gets its own line showing both the
 declared port and the current runtime facts; the service state word is colored (running green, failed
 red, ordinary stop dim), degrading to plain text under NO_COLOR. A portless worker is explicitly
-marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. Only
-listeners the manifest did not declare are listed separately. In the failure section each service
+marked no port, and `port: auto` that has not yet been assigned shows auto port unassigned. The
+`listeners` line gives every listener that no running service row already names its own home: a port
+owned by another run is written with that run's name (`8082 (run finance-web)`), and a listener no
+run owns is marked `unowned` with the process and pid when the process table could read them
+(`9090 (unowned: node, pid 1234)`). The `resources` line says `N declared running`; runs outside the
+manifest are named on the listener line instead, so a worktree with no declared service running does
+not read as idle. In the failure section each service
 shows only its most recent exit record, and only while that record is still the service's current
 `last_exit`: once the service has re-run, or the newest record is a normal exit or a `down` stop, the
 service leaves the failure section and the old record stays in the `exits[]` history. Different
@@ -158,11 +171,13 @@ Running services carry `stats` (`cpu_percent`, `memory_rss_bytes`, `thread_count
 `connections`). A service with a listener samples from the listener row; a portless worker samples
 from its running root process, so a worker no longer lacks resource data just because it holds no
 port. When there is no sample the fields are absent, meaning **unknown**, not 0.
-`worktree.running_services` is the number of declared services that are running; `worktree.resources`
-is the worktree aggregate of those service samples (`cpu_percent`, `memory_rss_bytes`, `services`
-being the number of contributing samples). The aggregate appears only when at least one service has a
-sample and makes the difference between `services` and `running_services` explicit; with no samples it
-is absent and never uses 0 to impersonate a measurement.
+`worktree.running_services` is the number of declared services that are running; it does not count
+runs the manifest does not declare. Read `worktree.ad_hoc_runs` and `worktree.unowned_ports` for the
+listeners those runs and processes hold. `worktree.resources` is the worktree aggregate of the
+declared services' samples (`cpu_percent`, `memory_rss_bytes`, `services` being the number of
+contributing samples). The aggregate appears only when at least one service has a sample and makes
+the difference between `services` and `running_services` explicit; with no samples it is absent and
+never uses 0 to impersonate a measurement.
 
 Running services also carry `manifest_hash` and `runtime_spec_hash`; when the two differ,
 `manifest_runtime_mismatch` is `true`, meaning the current process comes from an old manifest and
@@ -248,7 +263,12 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
                     "waiting_on": ["db"], "last_prepare_ms": null}}
     ],
     "ad_hoc_runs": [
-      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530, "ports": [8082]}
+      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530,
+       "cmd": "yarn dev", "cwd": "/work/demo/web",
+       "started_at": "2026-10-31T09:00:00Z", "ports": [8082]}
+    ],
+    "unowned_ports": [
+      {"port": 9090, "pid": 55120, "command": "python3 -m http.server 9090"}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
@@ -257,12 +277,16 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
 }
 ~~~
 
-`worktree.ad_hoc_runs` lists the runs started with `oberth start` whose listeners belong to this
-worktree but whose names are not declared services: `name`, `run_id`, `group`, `pid` and the `ports`
-each holds. `ports` stays the flat listener list; this is the attribution that list cannot carry, so
-a reader can tell a process oberth owns from a foreign one. A declared service's listener that another
-process owns is named by that service's `port_holder`; `ad_hoc_runs` is only for runs the manifest
-does not declare.
+`worktree.ad_hoc_runs` attributes every listener that no running service row already names. The run is
+identified by its run id, not by its name: an `oberth start` run the manifest does not declare, a stale
+generation that still uses a declared service's name, and a declared service's run holding an extra
+port all appear here. Each row carries `name`, `run_id`, `group`, `pid`, the recorded `cmd`, `cwd` and
+`started_at` when the run mirror still has them (absent means unknown), and the sorted `ports` it
+holds. `worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
+and `pid` and `command` when the process table supplied them. `ports` stays the flat listener list;
+together, a running service's `port_actual`, `ad_hoc_runs` and `unowned_ports` cover every entry in it.
+A declared service's listener that another process owns is named by that service's `port_holder`; an
+owned run is not repeated there.
 
 `worktree.identity` is exactly the value `${worktree}` expands to in the manifest. It is derived from
 the checkout's canonicalized root path, so the same checkout reads the same value every time; when a
@@ -703,9 +727,13 @@ and `down` do not write the ledger.
 
 Views logs by the service name in the manifest; the port form continues to work. When the service has
 a listening port, the command reads that process's logs; a portless worker reads that run's service
-log file. By default it prints the most recent lines first and keeps following; --once reads once and
-exits. --ip disambiguates when the same port is bound on several addresses. --json --once outputs one
-document:
+log file. By default it prints the current run's most recent lines first and keeps following while
+that run is still writing; --once reads once and exits. The read is scoped to the current generation
+whenever its start offset was recorded — online or with no runtime service at all — so a file
+appended to across runs does not mix the previous day's lines into this run. When no current
+generation has a recorded start, it reads the whole file and marks the document
+`run_start_unknown: true`, and the human output says the scope is unknown. --ip disambiguates when
+the same port is bound on several addresses. --json --once outputs one document:
 
 ~~~json
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
@@ -734,8 +762,10 @@ the file as it is when read, so following it prints and returns instead of waiti
 that has not started yet. `--run current` selects the service's current run, and any other value is an
 exact historical `run_id` from `status --json`. `current` prefers a process that is still running and
 only falls back to the most recently finished one when there is none. Following a run that has ended
-prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names,
-cannot be combined with `--ip`, and needs the runtime service; when the runtime service is unavailable it returns
+prints its lines and stops: nothing arrives for it afterwards. `--run` accepts only service names and
+cannot be combined with `--ip`. A service's part of its log file is recorded on disk — the mirror for
+a live run and the exit row for a finished one — so the form works without the runtime service for a
+service log file; only listener output needs a host, and with none reachable that case returns
 `runtime_service_unavailable`. Old run records without an offset return not_found with a suggestion to restart
 the service once. When the file has been rotated and the recorded part is no longer in it, reading
 falls back to the beginning of the file, and the JSON uses `run_start_unknown: true` to say that the

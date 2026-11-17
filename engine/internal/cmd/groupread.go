@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/docker"
@@ -256,11 +257,17 @@ func (r directRunRegistry) ServiceFacts() servicefacts.Snapshot {
 		}
 	}
 	for _, exit := range r.exits {
+		// An ending no host observed has no time. Leave `at` empty rather than
+		// publishing the zero time as if it were a measured moment.
+		at := ""
+		if !exit.ExitedAt.IsZero() {
+			at = exit.ExitedAt.UTC().Format(time.RFC3339)
+		}
 		collector.AddExit(servicefacts.ExitRecord{
 			Key: servicefacts.Key{Group: exit.Group, Service: exit.Name},
 			Exit: state.ServiceExit{
 				Code: exit.Code, Reason: exit.Reason,
-				At: exit.ExitedAt.UTC().Format(time.RFC3339), RunID: exit.ID,
+				At: at, RunID: exit.ID,
 				PortHint: exit.PortHint,
 			},
 		})
@@ -273,7 +280,48 @@ func directRunHistory(ctx context.Context) (directRunRegistry, error) {
 	if err != nil {
 		return directRunRegistry{}, err
 	}
+	exits = append(exits, unobservedExitRows()...)
+	// servicefacts consumes exits newest first and keeps the first row per
+	// service. The derived ending has no exit time (no host observed it), so
+	// order it by the run's start; otherwise an older durable crash would be
+	// the first row and would remain the service's last outcome.
+	sort.SliceStable(exits, func(i, j int) bool {
+		return runExitTime(exits[i]).After(runExitTime(exits[j]))
+	})
 	return directRunRegistry{reg: runs.Load(), exits: exits}, nil
+}
+
+func runExitTime(row store.RunExitRow) time.Time {
+	if !row.ExitedAt.IsZero() {
+		return row.ExitedAt
+	}
+	return row.StartedAt
+}
+
+// unobservedExitRows projects the mirror's dead runs into the durable shape the
+// service-fact reducer consumes. The runtime service writes the same fact on
+// its next start; until then this read path must not let a dead generation's
+// older exit stand as the service's last outcome.
+func unobservedExitRows() []store.RunExitRow {
+	snapshot := runs.Snapshot()
+	if snapshot == nil {
+		return nil
+	}
+	out := make([]store.RunExitRow, 0)
+	for _, entry := range snapshot.Active() {
+		if runs.PIDAlive(entry.PID) {
+			continue
+		}
+		started, _ := time.Parse(time.RFC3339Nano, entry.StartedAt)
+		out = append(out, store.RunExitRow{
+			ID: entry.ID, PID: entry.PID, Group: entry.GroupOf(), Name: entry.NameOf(),
+			Cmd: entry.Cmd, Cwd: entry.Cwd, PortHint: entry.PortHint,
+			StartedAt: started, LogPath: entry.LogPath, LogOffset: entry.LogOffset,
+			Code: state.ExitCodeUnknown, Reason: state.ExitEndedUnobserved,
+			LastLines: []string{},
+		})
+	}
+	return out
 }
 
 func reportInvalidConfigs(index *groups.Index) {

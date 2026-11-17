@@ -90,7 +90,11 @@ func TestRemoveDeletesAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestLoadPrunesDeadPIDsAndPersists(t *testing.T) {
+// A read path must not destroy recovery evidence. Load hides a dead entry from
+// its own view, but the file keeps it: the runtime service is the only writer
+// that can turn that entry into a terminal run fact, and it may not be running
+// at the moment another command reads the mirror.
+func TestLoadHidesDeadPIDsWithoutDestroyingEvidence(t *testing.T) {
 	isolateRunsHome(t)
 	self := os.Getpid()
 	dead := spawnReaped(t)
@@ -105,8 +109,12 @@ func TestLoadPrunesDeadPIDsAndPersists(t *testing.T) {
 	if _, found := reg.LookupByPID(dead); found {
 		t.Errorf("the dead pid %d survived", dead)
 	}
-	if _, found := load().Runs[dead]; found {
-		t.Error("the dead pid was not removed from disk")
+	if _, found := load().Runs[dead]; !found {
+		t.Error("a read path erased the dead run's recovery evidence")
+	}
+	snapshot := Snapshot()
+	if _, found := snapshot.LookupByPID(dead); !found {
+		t.Error("Snapshot did not expose the dead entry the runtime service must reconcile")
 	}
 }
 

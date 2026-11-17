@@ -117,16 +117,26 @@ type ServiceStarting struct {
 	LastPrepareMS *int64   `json:"last_prepare_ms" jsonschema:"nullable"`
 }
 
+// ExitEndedUnobserved is the terminal reason for a recorded run whose process
+// disappeared while no host was watching. The end is a fact; how it ended is
+// not. ExitCodeUnknown accompanies it and is not a process status.
+const (
+	ExitEndedUnobserved = "ended_unobserved"
+	ExitCodeUnknown     = -1
+)
+
 // ServiceExit is how a run of a service ended. Reason is exited (code 0),
 // crashed (any other code), port_occupied (a bind failed because another
 // process owns the declared port), start_failed (the command could not be
 // started), stopped (option-berth or the user asked it to stop), ready_timeout
 // (a readiness wait expired), dependency_timeout (a dependency readiness wait
-// expired), or dependency_not_ready (a dependency could not be resolved or
-// exited before becoming ready).
+// expired), dependency_not_ready (a dependency could not be resolved or
+// exited before becoming ready), or ended_unobserved (the run was recorded but
+// its process was gone when a host next looked; code is ExitCodeUnknown and
+// At may be empty when read offline).
 type ServiceExit struct {
 	Code   int    `json:"code"`
-	Reason string `json:"reason" jsonschema:"enum=exited,enum=crashed,enum=port_occupied,enum=start_failed,enum=stopped,enum=ready_timeout,enum=dependency_timeout,enum=dependency_not_ready"`
+	Reason string `json:"reason" jsonschema:"enum=exited,enum=crashed,enum=port_occupied,enum=start_failed,enum=stopped,enum=ready_timeout,enum=dependency_timeout,enum=dependency_not_ready,enum=ended_unobserved"`
 	At     string `json:"at"`
 	RunID  string `json:"run_id"`
 	// PortHint is the port this run was told to bind. It survives a later

@@ -104,6 +104,12 @@ option-berth 没启动的进程），就带 `port_holder`：与失败记录相�
 （`port_occupied`），也会标出命令尚未启动就失败的服务（`start_failed`），因此“启动后退出”、
 “端口冲突”和“启动前失败”不会混成同一种状态。
 
+已记录运行的进程在没有任何 runtime service 观察时消失——宿主已停止，或该运行比一次崩溃活得更久——
+会有自己的终结原因 `ended_unobserved`。结束这件事是已知的，退出状态不是，因此 `code` 为 `-1`，
+不能当成进程状态读取。`at` 是宿主记录该结束的时间；完全没有宿主参与的读取会让它为空，因为不存在
+观察时间。这个结束是该名字下最新的一代，因此同名更早的崩溃不会再被当成当前结果。runtime service
+下次启动时会把同一个结束持久化，并删除承载该证据的 mirror 条目。
+
 `port_occupied` 时，`last_exit.port_hint` 是这次运行被告知要绑定的端口，
 `last_exit.port_holder` 描述读取时仍占着该端口的进程：`port`、`pid`、`command`、`kind`，
 托管运行时另有 `group`、`name`、`run_id`，可读时另有 `cwd` 和 `bind_address`。
@@ -116,8 +122,11 @@ option-berth 没启动的进程），就带 `port_holder`：与失败记录相�
 depends on · listeners · code · failed · next · drafts · last look），按终端显示宽度对齐。
 每个服务单独一行，同时给出声明端口与当前运行实况；服务状态词带颜色（running 绿、
 失败红、常规停止 dim），在 NO_COLOR 下退化为纯文字。无端口 worker 会明确标为 no port，
-`port: auto` 尚未分配时会显示 auto port unassigned。
-只有清单没有声明的监听才单独列出。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是
+`port: auto` 尚未分配时会显示 auto port unassigned。`listeners` 行给每个未被运行中服务行
+命名的监听一个归属：属于另一个运行的端口写成该运行的名字（`8082 (run finance-web)`），
+没有运行拥有的监听标为 `unowned`，并在进程表可读时带上进程名和 pid
+（`9090 (unowned: node, pid 1234)`）。`resources` 行写 `N declared running`；清单之外的运行
+由 listener 行点名，所以没有任何声明服务在跑的工作树不会被读成空闲。失败区每个服务只显示最新一条退出记录，并且只在该记录仍是
 服务的当前 `last_exit` 时显示：服务已经重新运行、或最新一条是正常退出/被 `down` 停止时，该服务
 从失败区消失，旧记录仍留在 `exits[]` 历史里。不同服务各显示一条。端口冲突的失败行直接写出占用者
 （端口、pid、命令和归属种类），不需要再跑 `lsof`/`ps`。只有失败记录确实留下了日志文件
@@ -143,10 +152,11 @@ run 注册后消失。`--brief --json` 也带同一个 `starting`（字段相同
 运行中的服务带 `stats`（`cpu_percent`、`memory_rss_bytes`、`thread_count`、`uptime`、`state`、
 `connections`）。有监听的服务取监听行的样本；无端口的 worker 取它运行根进程的样本，所以
 worker 不再因为不占端口而看不到资源。没有样本时字段缺省，表示**未知**，不是 0。
-`worktree.running_services` 是正在运行的声明服务数；`worktree.resources` 是这些服务样本的
-worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样本的服务数）。汇总只
-在至少一个服务有样本时出现，并明确 `services` 与 `running_services` 的差异；没有样本时缺省，
-不会用 0 冒充测量结果。
+`worktree.running_services` 是正在运行的声明服务数，不统计清单没有声明的运行；那些运行和
+进程持有的监听读 `worktree.ad_hoc_runs` 与 `worktree.unowned_ports`。`worktree.resources` 是
+声明服务样本的 worktree 汇总（`cpu_percent`、`memory_rss_bytes`、`services` 为贡献样本的
+服务数）。汇总只在至少一个服务有样本时出现，并明确 `services` 与 `running_services` 的差异；
+没有样本时缺省，不会用 0 冒充测量结果。
 运行中的服务同时带 `manifest_hash` 与 `runtime_spec_hash`；两者不一致时
 `manifest_runtime_mismatch` 为 `true`，表示当前进程来自旧清单，应该用
 `oberth restart --only <service>` 重新应用。hash 只覆盖命令、cwd、端口、health 和依赖等可执行声明，
@@ -218,7 +228,12 @@ JSON 顶层固定包含：
                     "waiting_on": ["db"], "last_prepare_ms": null}}
     ],
     "ad_hoc_runs": [
-      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530, "ports": [8082]}
+      {"name": "finance-web", "run_id": "run-7", "group": "demo", "pid": 64530,
+       "cmd": "yarn dev", "cwd": "/work/demo/web",
+       "started_at": "2026-10-31T09:00:00Z", "ports": [8082]}
+    ],
+    "unowned_ports": [
+      {"port": 9090, "pid": 55120, "command": "python3 -m http.server 9090"}
     ]},
   "ports": [3000, 3001],
   "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
@@ -227,10 +242,14 @@ JSON 顶层固定包含：
 }
 ~~~
 
-`worktree.ad_hoc_runs` 列出用 `oberth start` 启动、监听属于本 worktree、但名字不在声明服务里的
-运行：`name`、`run_id`、`group`、`pid`，以及它持有的 `ports`。`ports` 仍是扁平的监听列表；
-这是它无法承载的归属信息，读者因此能区分 oberth 管理的进程和外来进程。声明服务的监听者若属于
-别的进程，由该服务的 `port_holder` 指明；`ad_hoc_runs` 只列清单没有声明的运行。
+`worktree.ad_hoc_runs` 给每个未被运行中服务行命名的监听一个归属。运行按 run id 识别，不按名字：
+清单没有声明的 `oberth start` 运行、仍用着声明服务名字的旧代际、以及声明服务的运行额外持有的
+端口都会出现在这里。每行带 `name`、`run_id`、`group`、`pid`，运行 mirror 还保留时带记录的
+`cmd`、`cwd` 和 `started_at`（缺省表示未知），以及排好序的 `ports`。`worktree.unowned_ports`
+是剩下的一类：没有 option-berth 运行拥有的监听，每项带 `port`，进程表可读时还带 `pid` 和
+`command`。`ports` 仍是扁平的监听列表；运行中服务的 `port_actual`、`ad_hoc_runs` 和
+`unowned_ports` 合起来覆盖其中的每一项。声明服务的监听者若属于别的进程，由该服务的
+`port_holder` 指明；已经有运行的监听不会在那里重复。
 
 `worktree.identity` 就是清单里 `${worktree}` 展开成的值。它由 checkout 的规范化根路径
 派生，所以同一个 checkout 每次读取都相同；人或 agent 要用 `psql` 连这个 worktree 的库时，
@@ -578,8 +597,11 @@ runtime service 是账本的唯一写者：它在扫描到清单时记录身份�
 ### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
 
 按清单里的服务名查看日志；端口形式继续可用。服务有监听端口时，命令读取该进程的日志；
-没有端口的 worker 读取该次运行的服务日志文件。默认先输出最近几行并持续跟随；--once 只读
-一次后退出。--ip 用来消除同一端口绑定多个地址时的歧义。--json --once 输出一个文档：
+没有端口的 worker 读取该次运行的服务日志文件。默认先输出当前这次运行的最近几行，并在它仍在
+写入时持续跟随；--once 只读一次后退出。只要记录了当前运行的起点，读取就限定在这一代——有
+runtime service 或完全没有都一样——所以跨运行追加的文件不会把前一天的日志混进这次运行。
+当前这一代没有记录起点时，读取整个文件，并在文档里标 `run_start_unknown: true`，人读输出也会
+说明范围未知。--ip 用来消除同一端口绑定多个地址时的歧义。--json --once 输出一个文档：
 
 ~~~json
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
@@ -604,7 +626,9 @@ runtime service 是账本的唯一写者：它在扫描到清单时记录身份�
 打印后返回，而不是等待一次尚未开始的运行。`--run current` 选该服务当前这次运行，其他值则是
 `status --json` 里的精确 `run_id`。`current` 优先选仍在运行的进程，没有时才选最近结束的一次。
 跟随一次已经结束的运行会打印它的行然后停止：之后不会再有属于它的输出。`--run` 只接受服务名，
-不能和 `--ip` 同时使用；它需要 runtime service，runtime service 不可用时返回 `runtime_service_unavailable`。旧运行记录
+不能和 `--ip` 同时使用。服务日志文件里的运行分段记录在本地磁盘上——运行中的记录在 mirror，
+结束的记录在退出行——所以服务日志文件这一形式不需要 runtime service；只有监听输出需要宿主，
+没有可达宿主时这种情况返回 `runtime_service_unavailable`。旧运行记录
 没有 offset 时返回 not_found 并提示重启一次服务。文件被轮转、记录的那一段已不在文件里时，
 读取回退到文件开头，并在 JSON 里用 `run_start_unknown: true` 说明这次的行可能混入其他运行。
 
