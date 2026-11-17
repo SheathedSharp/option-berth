@@ -25,7 +25,7 @@ jobs:
     env:
       GOMAXPROCS: '4'
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Record the exact verification input
@@ -41,7 +41,7 @@ jobs:
       # stable error code, manifest field, reference, and observation state.
       - name: Check out the agent skill
         if: runner.os == 'Linux'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: SheathedSharp/option-berth-skill
           ref: main
@@ -128,7 +128,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Parse install and uninstall scripts with Windows PowerShell 5.1

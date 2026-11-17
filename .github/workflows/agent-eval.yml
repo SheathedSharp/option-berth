@@ -162,12 +162,12 @@ jobs:
                   print(f"{key}={value}", file=handle)
           PY
       - name: Check out the engine and the pinned skill
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           path: source
       - name: Check out option-berth-skill
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: SheathedSharp/option-berth-skill
           ref: main
@@ -300,7 +300,7 @@ jobs:
     environment: agent-eval
     steps:
       - name: Check out the engine
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           path: source
@@ -358,12 +358,12 @@ jobs:
       RESUME_RUN: ${{ fromJSON(needs.plan.outputs.options).resume_run }}
     steps:
       - name: Check out the engine and the pinned skill
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           path: source
       - name: Check out option-berth-skill
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: SheathedSharp/option-berth-skill
           ref: ${{ needs.plan.outputs.skill_sha }}
@@ -666,7 +666,7 @@ jobs:
       COMPARE: ${{ needs.plan.outputs.options && fromJSON(needs.plan.outputs.options).compare || 'oberth,native' }}
     steps:
       - name: Check out the engine
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           path: source
