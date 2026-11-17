@@ -50,7 +50,8 @@
 - `runtime_service.observe_sources`（默认 1）决定一轮扫描最多读这条链的几级。默认仍是单采集器，
   由 `observation.source` 写明答话的那一级；大于 1 的 N 会被裁到本平台采集链的长度（macOS 和
   Linux 为 2，Windows 为 1），并发布 `observation.sources`——按链顺序列出参与合并的采集器，
-  此时 `observation.source` 为空。读到行的采集器贡献这些行；跑干净却什么都没看到的只贡献名字；
+  此时 `observation.source` 为空。只有一级的链无论 N 多大都仍是单源读，两个字段都不出现。
+  读到行的采集器贡献这些行；跑干净却什么都没看到的只贡献名字；
   硬失败什么都不贡献，所以失败的一级永远不能把没读到的端口变成“没有监听”。合并表一律是窄表：
   表里的行是事实，缺失的端口是未知而不是空闲，`machine[].listening_known` 与有名字的 source
   同一规则，`detail` 写明这轮由哪些采集器合并而来。

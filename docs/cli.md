@@ -50,7 +50,8 @@ Use the [documentation index](index.md) to select a task. Below are common rules
   The default stays a single collector, whose alternative is named in `observation.source`; a larger
   N is clamped to the platform's chain length (two on macOS and Linux, one on Windows) and publishes
   `observation.sources`, the collectors that contributed, in chain order, while `observation.source`
-  stays empty. A collector that read rows contributes them; one that ran clean and saw nothing
+  stays empty. A one-rung chain stays a single read however large N is: neither field is set. A
+  collector that read rows contributes them; one that ran clean and saw nothing
   contributes its name alone; one that failed contributes nothing, so a failing rung can never turn
   an unread port into an absent one. A merged table is always narrow — its rows are facts, a port
   missing from it is unknown rather than free, `machine[].listening_known` follows the same rule as
