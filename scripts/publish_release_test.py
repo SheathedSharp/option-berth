@@ -217,3 +217,86 @@ class PublishTests(unittest.TestCase):
             release.publish(self.root, self.tag)
         self.assertEqual(self.store.promotions, 0)
         self.assertTrue(self.store.is_draft, "a failed publication must leave the draft in place")
+
+    def test_matching_draft_is_promoted_without_reuploading(self):
+        # A re-run of the same tag workflow rebuilds the identical set; the
+        # assets already in the draft are the ones this invocation would upload.
+        expected = self.expected_upload()
+        self.store.seed(expected)
+        release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 1)
+
+    def test_partial_draft_uploads_only_the_missing_assets(self):
+        expected = self.expected_upload()
+        names = sorted(expected)
+        present = {name: expected[name] for name in names[:6]}
+        self.store.seed(present)
+        release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [names[6:]])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 1)
+
+    def test_draft_asset_with_different_content_fails_before_any_upload(self):
+        expected = self.expected_upload()
+        name = next(name for name in sorted(expected) if name.endswith(".deb"))
+        self.store.seed(expected | {name: b"an earlier build of the same name"})
+        with self.assertRaisesRegex(ValueError, "draft asset does not match this build: " + name):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertEqual(self.store.assets[name], b"an earlier build of the same name",
+                         "a draft asset is never overwritten")
+        self.assertTrue(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 0)
+
+    def test_unexpected_draft_asset_is_refused_and_kept(self):
+        expected = self.expected_upload()
+        stray = "OptionBerth-v1.2.3-macos-arm64-adhoc.dmg"
+        self.store.seed(expected | {stray: b"not part of this release"})
+        with self.assertRaisesRegex(ValueError, stray):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertIn(stray, self.store.assets, "an unexpected draft asset is neither deleted nor overwritten")
+        self.assertTrue(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 0)
+
+    def test_public_release_is_refused_and_left_untouched(self):
+        expected = self.expected_upload()
+        self.store.seed(expected, is_draft=False)
+        with self.assertRaisesRegex(RuntimeError, "never modified"):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 0)
+
+    def test_release_created_by_a_racing_run_is_resumed_as_a_draft(self):
+        # The release can appear between the state read and the create; the
+        # winner's draft is resumed instead of failing the whole run.
+        expected = self.expected_upload()
+        names = sorted(expected)
+        self.store.race = (True, {name: expected[name] for name in names[:4]})
+        release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [names[4:]])
+        self.assertEqual(self.store.assets, expected)
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 1)
+
+    def test_racing_run_that_published_a_release_is_refused(self):
+        self.store.race = (False, self.expected_upload())
+        with self.assertRaisesRegex(RuntimeError, "never modified"):
+            release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertFalse(self.store.is_draft)
+        self.assertEqual(self.store.promotions, 0)
+
+    def test_unreadable_release_state_is_refused_not_treated_as_absent(self):
+        unreadable = subprocess.CompletedProcess(["gh"], 0, stdout='{"isDraft": "yes"}', stderr="")
+        with patch.object(release, "gh", return_value=unreadable):
+            with self.assertRaisesRegex(ValueError, "unreadable release state"):
+                release.publish(self.root, self.tag)
+        self.assertEqual(self.store.uploads, [])
+        self.assertFalse(self.store.exists, "an unknown state must not turn into a create")
