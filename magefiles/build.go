@@ -49,15 +49,6 @@ func BuildEngine() error {
 	return buildEngine(p)
 }
 
-// BuildClient compiles the macOS application.
-func BuildClient() error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	return buildClient(p)
-}
-
 // RunCLI builds and runs the CLI. Pass one quoted argument string, for example
 // `mage runCLI "version --json"`. For exact argv (including spaces, empty
 // arguments and backslashes), pass a JSON string array instead.
@@ -86,18 +77,6 @@ func RunRuntimeService() error {
 		return err
 	}
 	return commandWithIO(p.root, filepath.Join(p.root, "bin", "oberth"), "runtime", "service", "run", "--detach")
-}
-
-// RunApp builds, installs, and opens the macOS application.
-func RunApp() error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	if err := installApp(p); err != nil {
-		return err
-	}
-	return openInstalledClient(p.root)
 }
 
 // Test runs the Go test suite.
@@ -146,15 +125,6 @@ func InstallCLI() error {
 	return installCLI(p)
 }
 
-// InstallApp builds and installs the macOS application.
-func InstallApp() error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	return installApp(p)
-}
-
 // Stop stops the Runtime Service belonging to this checkout.
 func Stop() error {
 	p, err := loadProject()
@@ -175,7 +145,7 @@ func Stop() error {
 	return commandWithIO(p.root, bin, "runtime", "service", "stop")
 }
 
-// Clean removes generated binaries, app bundles, and image snapshots.
+// Clean removes generated binaries.
 func Clean() error {
 	p, err := loadProject()
 	if err != nil {
@@ -190,27 +160,6 @@ func Clean() error {
 	}
 	return nil
 }
-
-// Snapshot renders current Runtime Service state with an already-built client.
-func Snapshot() error { return Shot(nil) }
-
-// States renders frozen UI fixtures. Rebuilds the macOS client so snapshot code stays current.
-func States() error {
-	p, err := loadProject()
-	if err != nil {
-		return err
-	}
-	if err := buildClient(p); err != nil {
-		return err
-	}
-	return renderClient("--render-states", "states", "--size", "900x640")
-}
-
-// Window captures the current client window without an implicit build.
-func Window() error { return renderClient("--dump-window", "window.png") }
-
-// Service is the compatible spelling of `mage shot -scope=services:NAME`.
-func Service(name string) error { scope := "services:" + name; return Shot(&scope) }
 
 func loadProject() (project, error) {
 	cwd, err := os.Getwd()
@@ -267,14 +216,6 @@ func buildEngine(p project) error {
 	return nil
 }
 
-// clientMoved names the product that now owns the macOS interface. Mage stays a
-// single product's build tool rather than pretending to build a sibling repo.
-func clientMoved() error {
-	return fmt.Errorf("the macOS client is a separate product: https://github.com/SheathedSharp/option-berth-macos")
-}
-
-func buildClient(p project) error { return clientMoved() }
-
 func installCLI(p project) error {
 	if err := buildEngine(p); err != nil {
 		return err
@@ -291,26 +232,6 @@ func installCLI(p project) error {
 		return err
 	}
 	return command(p.root, "sh", filepath.Join(p.root, "scripts", "install-path.sh"), localBin)
-}
-
-func installApp(p project) error {
-	if err := buildClient(p); err != nil {
-		return err
-	}
-	app := filepath.Join(p.root, "client", "macos", "build", "OptionBerth.app")
-	destination := "/Applications/OptionBerth.app"
-	if err := os.RemoveAll(destination); err != nil {
-		return err
-	}
-	if err := command(p.root, "ditto", app, destination); err != nil {
-		return err
-	}
-	fmt.Printf("installed %s\n", destination)
-	return nil
-}
-
-func clientBinary(p project) string {
-	return filepath.Join(p.root, "client", "macos", "build", "OptionBerth.app", "Contents", "MacOS", "OptionBerth")
 }
 
 func requireCleanTree(root string) error {

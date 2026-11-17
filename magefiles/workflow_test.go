@@ -27,19 +27,6 @@ func mageFixture(t *testing.T) string {
 	return root
 }
 
-func TestClientTargetsNameTheSeparateProduct(t *testing.T) {
-	root := mageFixture(t)
-	scope := "services:demo"
-	for _, call := range []func() error{Snapshot, States, Window, func() error { return Shot(&scope) }, func() error { return Service("demo") }} {
-		if err := call(); err == nil || !strings.Contains(err.Error(), "separate product") {
-			t.Fatalf("expected a pointer to the client repository, got %v", err)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(root, "bin")); !os.IsNotExist(err) {
-		t.Fatal("render implicitly built binaries")
-	}
-}
-
 func TestStopNeverBuildsMissingCLI(t *testing.T) {
 	root := mageFixture(t)
 	if err := Stop(); err == nil {
@@ -47,15 +34,6 @@ func TestStopNeverBuildsMissingCLI(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "bin")); !os.IsNotExist(err) {
 		t.Fatal("stop implicitly built a CLI")
-	}
-}
-
-func TestSnapshotScopeCannotEscapeCache(t *testing.T) {
-	for _, scope := range []string{"services:demo", "services:../../outside", `services:..\outside`, "代码:商店"} {
-		name := snapshotFile(scope)
-		if filepath.Base(name) != name || strings.ContainsAny(name, "/\\") {
-			t.Fatalf("unsafe filename: %q", name)
-		}
 	}
 }
 
