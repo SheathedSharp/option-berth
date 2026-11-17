@@ -110,11 +110,14 @@ fi
 if [ "$1" = runtime ] && [ "$3" = stop ]; then
 	echo '{"running": false}'
 fi
+if [ "$1" = runtime ] && [ "$3" = run ] && [ "$4" = --help ]; then
+	echo '{persistent_help}'
+fi
 exit 0
 """
 
 
-def build_release(root: Path, helper=True, tag=TAG):
+def build_release(root: Path, helper=True, tag=TAG, supports_persistent=True):
     system, arch = target()
     if not system or not arch:
         raise unittest.SkipTest(f"no release fixture for {platform.system()}/{platform.machine()}")
@@ -122,7 +125,8 @@ def build_release(root: Path, helper=True, tag=TAG):
     stage = root / "stage" / stem
     stage.mkdir(parents=True)
     oberth = stage / "oberth"
-    oberth.write_text(FIXTURE_BINARY.replace("{tag}", tag))
+    persistent_help = "      --persistent   never exit for being idle" if supports_persistent else ""
+    oberth.write_text(FIXTURE_BINARY.replace("{tag}", tag).replace("{persistent_help}", persistent_help))
     oberth.chmod(0o755)
     if helper:
         shutil.copyfile(HELPER, stage / "install-path.sh")
@@ -211,8 +215,8 @@ class InstallTests(unittest.TestCase):
         return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
     def start(self, latest_available=True, helper=True, raw_helper=False, fail_download=False,
-              checksum_overrides=None):
-        self.archive = build_release(self.download, helper=helper)
+              checksum_overrides=None, supports_persistent=True):
+        self.archive = build_release(self.download, helper=helper, supports_persistent=supports_persistent)
         if raw_helper:
             raw = self.download / "raw" / TAG / "scripts"
             raw.mkdir(parents=True)
@@ -448,6 +452,38 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(self.unit_path().exists())
         self.assertIn("not registered", result.stderr)
         self.assertTrue(self.installed("oberth").is_file())
+
+    def test_a_release_without_persistent_skips_registration(self):
+        # --version can pin a build that predates `run --persistent`. A unit that
+        # passes the flag would crashloop under KeepAlive / Restart=on-failure.
+        self.start(supports_persistent=False)
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.unit_path().exists(), "an old release must not get a persistent unit")
+        self.assertEqual(
+            [line for line in self.calls() if line.split(" ")[0] in ("launchctl", "systemctl")],
+            [],
+            "the installer asked a supervisor to serve a release it cannot run",
+        )
+        self.assertIn("predates the persistent runtime service", result.stderr)
+
+    def test_a_downgrade_removes_a_stale_unit(self):
+        self.start()
+        first = self.install()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(self.unit_path().is_file())
+
+        build_release(self.download, tag=OLD_TAG, supports_persistent=False)
+        before = len(self.calls())
+        second = self.install(version=OLD_TAG)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertFalse(self.unit_path().exists(), "the incompatible unit was left behind")
+        removal = self.calls(before)
+        if platform.system() == "Darwin":
+            self.assertTrue(any(line.startswith("launchctl bootout ") for line in removal), removal)
+        else:
+            self.assertIn("systemctl --user disable --now option-berth-runtime.service", removal)
+        self.assertIn("removed the old unit", second.stderr)
 
     def test_upgrade_stops_the_unit_before_replacing_the_binary(self):
         self.start()

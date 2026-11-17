@@ -557,6 +557,33 @@ stop_service_for_upgrade() {
 	echo "service    stopped the previous runtime service"
 }
 
+# remove_service_unit takes away a unit the installed binary cannot run. It is
+# the downgrade path: a newer unit passes --persistent, and a release that
+# predates that flag would crashloop under KeepAlive or Restart=on-failure.
+remove_service_unit() {
+	case "$os" in
+	darwin)
+		uid=$(id -u)
+		launchctl bootout "gui/$uid/$SERVICE_LABEL" >/dev/null 2>&1 ||
+			launchctl bootout "user/$uid/$SERVICE_LABEL" >/dev/null 2>&1 || true
+		;;
+	linux)
+		systemctl --user disable --now "$SERVICE_UNIT" >/dev/null 2>&1 || true
+		;;
+	esac
+	rm -f "$SERVICE_FILE"
+	if [ "$os" = linux ]; then
+		systemctl --user daemon-reload >/dev/null 2>&1 || true
+	fi
+}
+
+# supports_persistent reports whether the installed release understands the flag
+# the unit passes. `--version vX.Y.Z` can install an older build, and a unit that
+# names a flag it does not know is a crashloop, not a service.
+supports_persistent() {
+	"$DIR/oberth" runtime service run --help 2>/dev/null | grep -q -- '--persistent'
+}
+
 build_sources
 resolve_version
 
@@ -619,10 +646,21 @@ echo
 # observation decides whether it is registered at all: a blind machine would get a
 # blind runtime service that outlives the mistake. `oberth runtime service restart`
 # and every write command then find it through the supervisor instead of forking one.
+# A downgrade can leave a unit that passes a flag the installed release does not
+# know. Take it away before deciding anything else: KeepAlive and Restart=on-failure
+# would turn that mismatch into a crashloop, and --no-service must not preserve one.
+if [ "$SERVICE_PRESENT" = 1 ] && ! supports_persistent; then
+	remove_service_unit
+	echo "service    removed the old unit: this release predates the persistent runtime service" >&2
+	SERVICE_PRESENT=0
+fi
+
 if [ "$NO_SERVICE" = 1 ]; then
 	if [ "$SERVICE_PRESENT" = 1 ]; then
 		echo "service    left as it was (--no-service): $SERVICE_FILE"
 	fi
+elif ! supports_persistent; then
+	echo "service    not registered: this release predates the persistent runtime service; upgrade and rerun" >&2
 elif "$DIR/oberth" doctor --only listener_observation >/dev/null 2>&1; then
 	write_service_unit
 	start_service
