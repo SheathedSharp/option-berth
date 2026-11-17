@@ -1,0 +1,60 @@
+name: Listener observation self-check
+
+# A scheduled self-check, not a gate: every day each supported runner binds a
+# local port and asks the same collector a status read uses whether it can see
+# that socket as this process. Issue #156 is the failure this exists to catch —
+# a sandbox or OS change lets the collector exit 0 with a table it never read,
+# and an empty port list silently becomes "nothing is listening". Nothing here
+# is a required check; a red run is a fact to read, not a merge block.
+on:
+  # 07:41 UTC: nightly.yml already owns 18:23 UTC, and the two must not queue
+  # behind each other on the same runners.
+  schedule:
+    - cron: '41 7 * * *' # 15:41 Asia/Shanghai
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: observation-selfcheck-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Observation selfcheck / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: Build the engine
+        working-directory: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -o bin/oberth ./cmd/oberth
+      - name: Prove this runner can see its own listener
+        working-directory: engine
+        shell: bash
+        env:
+          # A throwaway home keeps this run off any real installation and gives
+          # the config, socket and database paths somewhere harmless to point at.
+          BERTH_HOME: ${{ runner.temp }}/berth-home
+        run: |
+          set -euo pipefail
+          # Exit 0 means the probe bound 127.0.0.1 and the collector showed it as
+          # this process. Exit 1 means the process could bind but the collector
+          # could not see the socket, and the failing row names the collector
+          # with both collectors' reasons; that is the red this schedule exists
+          # to produce, so the command's own exit code is the assertion.
+          ./bin/oberth doctor --only listener_observation
