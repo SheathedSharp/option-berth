@@ -19,6 +19,10 @@ type RunExitRow struct {
 	Group      string    `json:"group"`
 	Name       string    `json:"name"`
 	Cmd        string    `json:"cmd"`
+	// Argv is the exact vector the run was started with. Old rows read as nil:
+	// their command survives only in Cmd, and they cannot be restarted
+	// faithfully.
+	Argv       []string  `json:"argv,omitempty"`
 	Cwd        string    `json:"cwd"`
 	PortHint   int       `json:"port_hint"`
 	StartedAt  time.Time `json:"started_at"`
@@ -58,6 +62,14 @@ func (s *Store) AppendRunExit(row RunExitRow) error {
 	if err != nil {
 		return fmt.Errorf("store: encoding run exit log: %w", err)
 	}
+	argv := row.Argv
+	if argv == nil {
+		argv = []string{}
+	}
+	rawArgv, err := json.Marshal(argv)
+	if err != nil {
+		return fmt.Errorf("store: encoding run exit argv: %w", err)
+	}
 
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
@@ -68,11 +80,11 @@ func (s *Store) AppendRunExit(row RunExitRow) error {
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`
 		INSERT INTO run_exits(
-			run_id, pid, group_name, service_name, cmd, cwd, port_hint,
+			run_id, pid, group_name, service_name, cmd, argv, cwd, port_hint,
 			started_at, config_path, start_id, origin, log_path, log_offset,
 			code, reason, exited_at, last_lines
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.ID, row.PID, row.Group, row.Name, row.Cmd, row.Cwd, row.PortHint,
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.ID, row.PID, row.Group, row.Name, row.Cmd, string(rawArgv), row.Cwd, row.PortHint,
 		timeToString(row.StartedAt), row.ConfigPath, row.StartID, row.Origin,
 		row.LogPath, row.LogOffset, row.Code, row.Reason, timeToString(row.ExitedAt),
 		string(raw),
@@ -106,7 +118,7 @@ func (s *Store) RunExitsContext(ctx context.Context, limit int) ([]RunExitRow, e
 		limit = RunExitLimit
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT run_id, pid, group_name, service_name, cmd, cwd, port_hint,
+		SELECT run_id, pid, group_name, service_name, cmd, argv, cwd, port_hint,
 		       started_at, config_path, start_id, origin, log_path, log_offset,
 		       code, reason, exited_at, last_lines
 		  FROM run_exits
@@ -120,16 +132,28 @@ func (s *Store) RunExitsContext(ctx context.Context, limit int) ([]RunExitRow, e
 	for rows.Next() {
 		var (
 			row    RunExitRow
+			argv   sql.NullString
 			start  string
 			exited string
 			lines  string
 		)
 		if err := rows.Scan(
-			&row.ID, &row.PID, &row.Group, &row.Name, &row.Cmd, &row.Cwd, &row.PortHint,
+			&row.ID, &row.PID, &row.Group, &row.Name, &row.Cmd, &argv, &row.Cwd, &row.PortHint,
 			&start, &row.ConfigPath, &row.StartID, &row.Origin, &row.LogPath, &row.LogOffset,
 			&row.Code, &row.Reason, &exited, &lines,
 		); err != nil {
 			return nil, fmt.Errorf("store: reading run exit: %w", err)
+		}
+		if argv.Valid && strings.TrimSpace(argv.String) != "" {
+			if err := json.Unmarshal([]byte(argv.String), &row.Argv); err != nil {
+				return nil, fmt.Errorf("store: reading run exit argv: %w", err)
+			}
+		}
+		if len(row.Argv) == 0 {
+			// No recorded vector and an empty vector are the same fact: this
+			// run cannot be restarted faithfully. Do not make a reader
+			// distinguish nil from [].
+			row.Argv = nil
 		}
 		row.StartedAt = timeOrZero(start)
 		row.ExitedAt = timeOrZero(exited)

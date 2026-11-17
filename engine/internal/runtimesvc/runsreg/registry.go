@@ -46,7 +46,10 @@ type Record struct {
 	Group string
 	Name  string
 	Cmd   string
-	Cwd   string
+	// Argv is the exact vector Cmd was joined from. It is what makes a run
+	// restartable without re-parsing a display string.
+	Argv []string
+	Cwd  string
 	// PortHint is the port the caller expected this run to bind, 0 for a run
 	// that declares none.
 	PortHint int

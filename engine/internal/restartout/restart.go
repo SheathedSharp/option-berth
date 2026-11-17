@@ -16,12 +16,29 @@ type Start struct {
 	End     rpc.GroupsStartEnd
 }
 
+// Warning is one reason the code a restart will run differs from what is on
+// disk. It never blocks the restart: the facts are the caller's, and the build
+// that would close the gap is not this command's to run.
+type Warning struct {
+	Service string `json:"service"`
+	// CodeChanged and CodeChangedFiles are the source comparison against the
+	// run that is about to be stopped; false/absent means the check did not run.
+	CodeChanged      bool `json:"code_changed,omitempty"`
+	CodeChangedFiles *int `json:"code_changed_files,omitempty" jsonschema:"nullable"`
+	// ExecutableChanged means the binary this run started has been rebuilt; a
+	// restart will use the new one.
+	ExecutableChanged bool `json:"executable_changed,omitempty"`
+}
+
 // Document is the existing restart JSON shape. An absent terminal start summary
 // stays unknown (null), rather than fabricating success from partial receipts.
+// Warnings describe what the stop is about to replace; they are computed before
+// the stop, so they are present even when it fails.
 type Document struct {
 	Stopped  rpc.KillEnvelope       `json:"stopped"`
 	Services []rpc.GroupsStartChunk `json:"services"`
 	StartID  string                 `json:"start_id,omitempty"`
+	Warnings []Warning              `json:"warnings,omitempty"`
 	rpc.GroupsStartEnd
 }
 

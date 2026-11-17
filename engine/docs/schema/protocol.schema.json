@@ -676,6 +676,12 @@
           },
           "type": "array"
         },
+        "runs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "expect_runs": {
           "items": {
             "$ref": "#/definitions/RunExpectation"
@@ -1555,6 +1561,12 @@
         "cmd": {
           "type": "string"
         },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "cwd": {
           "type": "string"
         },
@@ -1666,6 +1678,12 @@
         },
         "cmd": {
           "type": "string"
+        },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "cwd": {
           "type": "string"
@@ -2021,6 +2039,12 @@
         },
         "cmd": {
           "type": "string"
+        },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "cwd": {
           "type": "string"
@@ -2619,6 +2643,36 @@
           "oneOf": [
             {
               "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable_path": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable_modified_at": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable_changed_since_start": {
+          "oneOf": [
+            {
+              "type": "boolean"
             },
             {
               "type": "null"

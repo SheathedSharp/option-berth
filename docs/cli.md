@@ -625,7 +625,7 @@ For example, a partial success is still one JSON value:
 ],"started":["api"],"skipped":[],"errors":["worker"]}
 ~~~
 
-### oberth restart [project] [--only name,...] [--force] [--allow-outside-home] [--json]
+### oberth restart [project] [--only name,...] [--run id|name] [--force] [--allow-outside-home] [--json]
 
 Stops the project's services first and then starts them again from the manifest. Human-readable output
 reports the stop result first, then an empty line, then the start result. `--only` restarts only the
@@ -637,18 +637,38 @@ carry `ready:false`, and the human-readable output likewise marks readiness as u
 
 If cancellation or a transport failure interrupts the sequence after a stop receipt is known, that receipt and any received service outcomes are still reported. JSON keeps the same `stopped`/`services`/`start_id` shape; without a terminal start reply, `started`, `skipped` and `errors` are null (unknown), not a successful empty summary. The operation error retains the standard stderr error shape and nonzero exit status (130 for interruption). Human output likewise keeps known outcomes without printing a terminal start summary. A failed stop never starts services; failure before any stop receipt does not invent one.
 
-Only services the manifest declares can be restarted. A run started with `oberth start` has no
-manifest entry: stop it first if it is still running, then start that command again. When
-`restart --only` names such a run and the run ledger knows it, the `not_found` hint prints the
-recorded start line (cwd, group, name, port and command) instead of pointing back at `status`.
-That hint does not depend on the manifest being there: a worktree with no `oberth.yaml` at all
-still gets the recorded start line, because the run ledger rather than the manifest is what knows
-it. A name the ledger does not know falls back to the missing-manifest `not_found` and its
-`oberth init` hint.
+A run started with `oberth start` has no manifest entry: `--run <id|name>` restarts it from its
+recorded argv. It stops that exact run through `groups.kill`'s run-id selector (a portless run is
+included, and the ending is recorded as `stopped`), then starts the recorded argv, cwd, group, name
+and port hint again through the host. The argv is the exact vector the run was started with, recorded
+from this version on; a run started before that cannot be replayed faithfully and returns `not_found`
+with its recorded start line instead of guessing at quotes. A name is accepted only when exactly one
+live run in the group has it; an id is always unambiguous. `--run` and `--only` select different
+subjects and cannot be combined. `--json` returns `restarted_of` (the original run's id), `stopped`
+(absent when the run had already ended), and the new `run_id`, `pid` and `log_path`. The exact-run
+stop requires a host that advertises `groups.kill.runs`; an older host is refused rather than
+widening the stop to the whole service or group.
+
+Without `--run`, a run the manifest does not declare cannot be restarted. When `restart --only`
+names such a run and the run ledger knows it, the `not_found` hint prints the recorded start line
+(cwd, group, name, port and command) instead of pointing back at `status`. That hint does not depend
+on the manifest being there: a worktree with no `oberth.yaml` at all still gets the recorded start
+line, because the run ledger rather than the manifest is what knows it. A name the ledger does not
+know falls back to the missing-manifest `not_found` and its `oberth init` hint.
 
 A listener option-berth did not start is reported by the start half the same way `up` reports it:
 skipped, with a reason and hint naming the process and port. `--force` only skips the graceful stop;
 it does not take over a process option-berth did not start.
+
+Before the stop, `restart` reads the same code comparison `status` publishes (through the narrow
+`groups.code` call) for the services it is about to stop, and prints a warning before stopping when a
+running service's `sources:` changed since it started, or the executable that run started was rebuilt
+after it. The warning never blocks the restart and never invents a build command: it says the restart
+will keep running the old build, or that it will start the new binary. `--json` carries the same facts
+as `warnings` (`service`, `code_changed`, `code_changed_files`, `executable_changed`); the field is
+absent when there is nothing to warn about. A comparison that did not run (a run predating the fact,
+a deleted snapshot, an older runtime service without `groups.code`) produces no warning — unknown is
+not "unchanged".
 
 ### oberth down [project] [--worktree path | --identity wt_…] [--force] [--json]
 

@@ -25,12 +25,13 @@ import (
 // both group and name, which is the migration `run --tag X` -> `start --group
 // X` promises.
 type Entry struct {
-	PID       int    `json:"pid"`
-	Tag       string `json:"tag"`
-	ID        string `json:"id,omitempty"`
-	StartedAt string `json:"startedAt,omitempty"` // RFC3339
-	Cmd       string `json:"cmd,omitempty"`
-	SpecHash  string `json:"specHash,omitempty"`
+	PID       int      `json:"pid"`
+	Tag       string   `json:"tag"`
+	ID        string   `json:"id,omitempty"`
+	StartedAt string   `json:"startedAt,omitempty"` // RFC3339
+	Cmd       string   `json:"cmd,omitempty"`
+	Argv      []string `json:"argv,omitempty"`
+	SpecHash  string   `json:"specHash,omitempty"`
 
 	// Placement in the manifest.
 	Group string `json:"group,omitempty"`

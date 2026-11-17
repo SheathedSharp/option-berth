@@ -2,9 +2,11 @@ package runtimesvc
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/killer"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -25,12 +27,18 @@ type groupStopCapturer interface {
 }
 
 // captureSilentGroupStop selects the runs that hold no port. only selects by
-// service name and expect by run identity; the caller never passes both, and
-// whichever is set narrows the list before any identity is captured.
-func captureSilentGroupStop(rt *HostContext, snap state.Snapshot, group string, only map[string]bool, expect map[string]string, reason string, dryRun bool) ([]killer.Target, func(int), error) {
+// service name, expect by service/run identity and runs by exact run id; the
+// caller never passes more than one, and whichever is set narrows the list
+// before any identity is captured.
+func captureSilentGroupStop(rt *HostContext, snap state.Snapshot, group string, only map[string]bool, expect map[string]string, runs map[string]bool, reason string, dryRun bool) ([]killer.Target, func(int), error) {
 	reg := rt.Runs()
 	capturer, ok := reg.(groupStopCapturer)
 	if !ok {
+		if len(runs) > 0 {
+			return nil, nil, rpc.NewError(rpc.CodeInternal,
+				"registry cannot resolve exact run ids safely",
+				"stop by port or pid with `oberth kill`")
+		}
 		// Preserve read-only compatibility. A legacy registry may list PIDs, but
 		// separate GroupRuns/RunStart calls cannot pin their generation atomically.
 		pids := reg.GroupPIDs(group)
@@ -50,12 +58,19 @@ func captureSilentGroupStop(rt *HostContext, snap state.Snapshot, group string, 
 	captured := capturer.CaptureGroupStop(group, reason)
 	identities := make(map[int]GroupStopRun, len(captured.Runs))
 	pids := make([]int, 0, len(captured.Runs))
+	matched := make(map[string]bool, len(runs))
 	for _, run := range captured.Runs {
 		if len(only) > 0 && !only[run.Owner.Name] {
 			continue
 		}
 		if len(expect) > 0 && expect[run.Owner.Name] != run.Owner.ID {
 			continue
+		}
+		if len(runs) > 0 {
+			if !runs[run.Owner.ID] {
+				continue
+			}
+			matched[run.Owner.ID] = true
 		}
 		if run.Owner.RootPID <= 0 {
 			return nil, nil, errors.New("invalid captured run PID")
@@ -65,6 +80,15 @@ func captureSilentGroupStop(rt *HostContext, snap state.Snapshot, group string, 
 		}
 		identities[run.Owner.RootPID] = run
 		pids = append(pids, run.Owner.RootPID)
+	}
+	if len(runs) > 0 {
+		for id := range runs {
+			if !matched[id] {
+				return nil, nil, rpc.NewError(rpc.CodeNotFound,
+					fmt.Sprintf("run %q is not live in group %s", id, group),
+					"run `oberth status --json` to list the live run ids")
+			}
+		}
 	}
 	targets := make([]killer.Target, 0, len(pids))
 	for _, pid := range runsWithoutPorts(snap, group, pids) {
@@ -77,5 +101,20 @@ func captureSilentGroupStop(rt *HostContext, snap state.Snapshot, group string, 
 	if dryRun {
 		return targets, nil, nil
 	}
-	return targets, captured.OnSignal, nil
+	onSignal := captured.OnSignal
+	if len(runs) > 0 {
+		// The capture marks every run it captured; an exact-run stop must mark
+		// only the ones it selected.
+		selected := make(map[int]bool, len(identities))
+		for pid := range identities {
+			selected[pid] = true
+		}
+		base := captured.OnSignal
+		onSignal = func(pid int) {
+			if selected[pid] {
+				base(pid)
+			}
+		}
+	}
+	return targets, onSignal, nil
 }

@@ -46,7 +46,8 @@ func (r *Registry) Restore(consume func(func([]runs.Entry) ([]runs.Entry, error)
 			rec := Record{
 				ID: e.ID, PID: e.PID, PPID: e.PPID,
 				Group: e.GroupOf(), Name: e.NameOf(), Cmd: e.Cmd,
-				Cwd: e.Cwd, PortHint: e.PortHint, SpecHash: e.SpecHash,
+				Argv: append([]string(nil), e.Argv...),
+				Cwd:  e.Cwd, PortHint: e.PortHint, SpecHash: e.SpecHash,
 				LogPath: e.LogPath, LogOffset: e.LogOffset, Executable: e.Executable,
 			}
 			if t, err := time.Parse(time.RFC3339Nano, e.StartedAt); err == nil {
