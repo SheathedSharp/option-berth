@@ -1,0 +1,46 @@
+# Dependency updates for the three trees that pin versions.
+# The pins themselves stay in engine/go.mod, engine/go.sum and
+# site/package-lock.json; this file only decides how updates arrive.
+# Minor and patch bumps of one ecosystem arrive together so a weekly sweep costs
+# one gate run; major bumps stay separate because each needs a real review.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /engine
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      go-modules:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      site-tooling:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
