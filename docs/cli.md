@@ -754,10 +754,14 @@ and `down` do not write the ledger.
 
 ### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
 
-Views logs by the service name in the manifest; the port form continues to work. When the service has
-a listening port, the command reads that process's logs; a portless worker reads that run's service
-log file. By default it prints the current run's most recent lines first and keeps following while
-that run is still writing; --once reads once and exits. The read is scoped to the current generation
+Views logs by the service name in the manifest; the port form continues to work. A name the manifest
+does not declare also resolves when a recorded run carries it — an `oberth start -d --name X` run, the
+same name `status` publishes in `ad_hoc_runs` and in the exit hint `oberth logs X --once` — and the
+read then uses that run's log file. A declared service name wins over a recorded run of the same name.
+When the service has a listening port, the command reads that process's logs; a portless worker reads
+that run's service log file. By default it prints the current run's most recent lines first and keeps
+following while that run is still writing; --once reads once and exits. The read is scoped to the
+current generation
 whenever its start offset was recorded — online or with no runtime service at all — so a file
 appended to across runs does not mix the previous day's lines into this run. When no current
 generation has a recorded start, it reads the whole file and marks the document
