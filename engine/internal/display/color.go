@@ -74,11 +74,10 @@ func init() {
 	NoColor = !ColorEnabled(hasNoColor, stdoutIsTerminal, os.Getenv("TERM"))
 }
 
-// The brand palette, from the client's BerthGeometry.swift. The mark is two
-// shapes in two colours: the rails in ink, and the capsule — the run that has a
-// berth of its own — in terracotta. Each has a light and a dark form, so a dark
-// terminal gets paper rails and the lightened terracotta, exactly as the
-// client's dark lockup does.
+// The brand palette. The mark is two shapes in two colours: the rails in ink,
+// and the capsule — the run that has a berth of its own — in terracotta. Each
+// has a light and a dark form, so a dark terminal gets paper rails and the
+// lightened terracotta, matching the dark lockup.
 const (
 	inkRGB        = "#23262B"
 	paperRGB      = "#F8F6F2"
