@@ -827,7 +827,7 @@ Runtime 运行领域仍是 worktree → manifest → service → run → runtime
 
 新 CLI 对旧命令、参数、配置键及非空的旧环境变量明确报迁移错误，不输出环境变量值。 无法解析的 YAML 以及无效/相对的 `previous_service_lock_dirs` 在操作前直接拒绝，不会改用默认安全门闩；配置读写共用同一校验。旧 `daemon.*` 请求得到带协议 3 提示的 `not_found`。没有旧 socket 探测、命令别名、RPC 双路、自动关闭旧宿主或删除数据。
 
-真正切换之前，必须使用匹配的 v2 CLI 显式停止旧宿主（`oberth daemon stop`；若是自定义端点，则使用旧端点设置），并确认状态已经停止。之后再改 shell/配置键，保留数据库及 run ledger，用配套新 CLI 执行 `oberth runtime service run --detach`。不要用新 `restart` 或 `doctor --fix` 停止 v2 宿主。本次源码改造不执行该切换，也不安装任何东西。
+真正切换之前，必须使用匹配的 v2 CLI 显式停止旧宿主（`oberth daemon stop`；若是自定义端点，则使用旧端点设置），并确认状态已经停止。之后再改 shell/配置键，保留数据库及 run ledger，用配套新 CLI 执行 `oberth runtime service restart`（未安装用户级常驻单元时用 `oberth runtime service run --detach`）。不要用新 `restart` 或 `doctor --fix` 停止 v2 宿主。本次源码改造不执行该切换，也不安装任何东西。
 
 `daemon.lock` 只能作为额外的跨代门闩，绝不是传输回退。可选的 `runtime_service.previous_service_lock_dirs` 为已知旧端点增加持续持有的门闩；数据库安全不依赖枚举这些目录。新宿主在监听、恢复或发布之前，以单个不超时连接取得 SQLite EXCLUSIVE/WAL 所有权。未修改的 v2 Store 已持有数据库时，新宿主拒绝进入；新拥有者运行期间，旧/新写者即使换端点、`BERTH_HOME` 或文件别名也不能重开。没有打开 SQL 连接的静默旧进程不被宣称已识别或停止：新拥有者持有 SQLite 时，它不能恢复数据库写入，显式关闭旧宿主的切换步骤仍然适用。每次写入正常提交，不会把事务一直留到退出。拥有者连接丢失后直接失败，不偷偷重连。所有生产者停止后才关闭存储，端点锁最后释放。
 <!-- retired-runtime-v2-end -->
