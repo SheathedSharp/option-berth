@@ -74,16 +74,52 @@ func applyLogsFlags(bindIP string) error {
 	return nil
 }
 
-// logsFromRunTarget reads one run's output. Runs exist only inside the runtime service,
-// so this form has no direct fallback.
+// logsFromRunTarget reads one run's output. A service's part of its log file is
+// recorded on disk (the mirror for a live run, the exit row for a finished
+// one), so the runtime service is not required for that form. A listener's
+// output still is: only the host owns its reader.
 func logsFromRunTarget(ctx context.Context, target, runID string) error {
-	c := runtimeServiceClient(ctx)
-	if c == nil {
-		return failHint("runtime_service_unavailable", "logs --run needs the runtime service",
+	if _, err := strconv.Atoi(target); err == nil {
+		return usageError{fmt.Errorf("--run selects a service run, not a port; name the service instead")}
+	}
+	if c := runtimeServiceClient(ctx); c != nil {
+		defer c.Close()
+		return logsFromRun(ctx, c, target, runID)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolving the working directory: %w", err)
+	}
+	group, _ := projectAt(wd)
+	if group == "" {
+		return failHint("not_found",
+			fmt.Sprintf("no project contains service %q", target),
+			"run this command inside a worktree with an oberth.yaml")
+	}
+	records, historyErr := offlineRunRecords(ctx, group)
+	rec, err := selectRunForLogs(records, group, target, runID)
+	if err == nil {
+		// The run record is the authority for its own log path. A listener-only
+		// run still gets the precise "no log file" hint, not a host excuse.
+		return logsFromRunRecords(ctx, rec, records)
+	}
+	// No recorded generation. Resolve the target to tell "this is a listener
+	// whose output needs the host" apart from "no such service".
+	_, logPath, resolveErr := resolveLogTarget(ctx, nil, target, "")
+	if resolveErr != nil {
+		return resolveErr
+	}
+	if logPath == "" {
+		return failHint("runtime_service_unavailable",
+			"logs --run needs the runtime service for a listener",
 			"start one with `oberth runtime service run --detach`")
 	}
-	defer c.Close()
-	return logsFromRun(ctx, c, target, runID)
+	if historyErr != nil {
+		return failHint("runtime_service_unavailable",
+			"the run history could not be read: "+historyErr.Error(),
+			"start the runtime service with `oberth runtime service run --detach`")
+	}
+	return err
 }
 
 // logsFromResolvedTarget reads a listener's output or a service's log file: from
@@ -110,7 +146,21 @@ func logsFromResolvedTarget(ctx context.Context, target, bindIP string) error {
 	meta := logMetadataForTarget(ctx, c, target, row)
 
 	if logPath != "" {
-		return logsFromFile(ctx, logPath, meta)
+		// A service log file is append-only across generations. Scope the
+		// default read to the generation that is current now; when no run
+		// records its start, read the file but say the scope is unknown.
+		if rec, records, ok := currentRunForLogPath(ctx, c, target, logPath); ok {
+			meta = logMetadataFromRunRecord(rec)
+			meta.Service = target
+			rng := runLogRange(rec, records)
+			return logsFromFile(ctx, logPath, meta, &rng)
+		}
+		// Only claim an unknown scope when a run is actually known. A service
+		// with no run record at all is a whole-file read, not a failed scope.
+		if meta.RunID != "" {
+			meta.RunStartUnknown = true
+		}
+		return logsFromFile(ctx, logPath, meta, nil)
 	}
 	if c != nil {
 		return logsThroughRuntimeService(ctx, c, row.Port, bindIP, meta)
@@ -237,7 +287,21 @@ func resolveLogTarget(ctx context.Context, c *client.Client, target, bindIP stri
 		"run `oberth status` to inspect the current worktree")
 }
 
-func logsFromFile(ctx context.Context, path string, meta logMetadata) error {
+// logsFromFile reads a service log file. A non-nil range is the current run's
+// part of it; nil is the whole file, used only when no generation's start was
+// recorded, and the metadata then says the run scope is unknown.
+func logsFromFile(ctx context.Context, path string, meta logMetadata, rng *logRange) error {
+	if rng != nil {
+		if logsFollow {
+			return streamFileLogsFrom(ctx, path, *rng, logsJSONFlag, logsLinesFlag, meta)
+		}
+		doc, err := readFileLogsFrom(path, *rng, logsLinesFlag)
+		if err != nil {
+			return err
+		}
+		applyLogMetadata(&doc, meta)
+		return printLogDocument(doc)
+	}
 	if logsFollow {
 		return streamFileLogs(ctx, path, logsJSONFlag, logsLinesFlag, meta)
 	}
@@ -246,6 +310,9 @@ func logsFromFile(ctx context.Context, path string, meta logMetadata) error {
 		return err
 	}
 	applyLogMetadata(&doc, meta)
+	if meta.RunStartUnknown {
+		doc.RunStartUnknown = true
+	}
 	return printLogDocument(doc)
 }
 
@@ -256,6 +323,9 @@ func printLogDocument(doc logsDocument) error {
 		return printJSON(doc)
 	}
 	printLogHeader(doc.Source)
+	if doc.RunStartUnknown {
+		fmt.Println(display.Dim("run start unknown; these lines may include earlier runs"))
+	}
 	for _, line := range doc.Lines {
 		fmt.Println(line)
 	}
@@ -553,6 +623,9 @@ type logMetadata struct {
 	ExitCode  *int
 	Reason    string
 	LogOffset *int64
+	// RunStartUnknown says this read could not be scoped to one generation:
+	// the whole file is being shown because no current run recorded its start.
+	RunStartUnknown bool
 }
 
 func applyLogMetadata(doc *logsDocument, meta logMetadata) {
@@ -563,6 +636,9 @@ func applyLogMetadata(doc *logsDocument, meta logMetadata) {
 	doc.ExitCode = meta.ExitCode
 	doc.Reason = meta.Reason
 	doc.LogOffset = meta.LogOffset
+	if meta.RunStartUnknown {
+		doc.RunStartUnknown = true
+	}
 }
 
 func logLineJSON(source, line string, meta logMetadata) map[string]any {
@@ -584,6 +660,9 @@ func logLineJSON(source, line string, meta logMetadata) map[string]any {
 	}
 	if meta.Reason != "" {
 		out["reason"] = meta.Reason
+	}
+	if meta.RunStartUnknown {
+		out["run_start_unknown"] = true
 	}
 	return out
 }

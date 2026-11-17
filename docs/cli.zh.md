@@ -590,8 +590,11 @@ runtime service 是账本的唯一写者：它在扫描到清单时记录身份�
 ### oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
 
 按清单里的服务名查看日志；端口形式继续可用。服务有监听端口时，命令读取该进程的日志；
-没有端口的 worker 读取该次运行的服务日志文件。默认先输出最近几行并持续跟随；--once 只读
-一次后退出。--ip 用来消除同一端口绑定多个地址时的歧义。--json --once 输出一个文档：
+没有端口的 worker 读取该次运行的服务日志文件。默认先输出当前这次运行的最近几行，并在它仍在
+写入时持续跟随；--once 只读一次后退出。只要记录了当前运行的起点，读取就限定在这一代——有
+runtime service 或完全没有都一样——所以跨运行追加的文件不会把前一天的日志混进这次运行。
+当前这一代没有记录起点时，读取整个文件，并在文档里标 `run_start_unknown: true`，人读输出也会
+说明范围未知。--ip 用来消除同一端口绑定多个地址时的歧义。--json --once 输出一个文档：
 
 ~~~json
 {"source":"/path/to/service.log","lines":["..."],"truncated":false,"service":"api","run_id":"...","pid":1234,"status":"running"}
@@ -616,7 +619,9 @@ runtime service 是账本的唯一写者：它在扫描到清单时记录身份�
 打印后返回，而不是等待一次尚未开始的运行。`--run current` 选该服务当前这次运行，其他值则是
 `status --json` 里的精确 `run_id`。`current` 优先选仍在运行的进程，没有时才选最近结束的一次。
 跟随一次已经结束的运行会打印它的行然后停止：之后不会再有属于它的输出。`--run` 只接受服务名，
-不能和 `--ip` 同时使用；它需要 runtime service，runtime service 不可用时返回 `runtime_service_unavailable`。旧运行记录
+不能和 `--ip` 同时使用。服务日志文件里的运行分段记录在本地磁盘上——运行中的记录在 mirror，
+结束的记录在退出行——所以服务日志文件这一形式不需要 runtime service；只有监听输出需要宿主，
+没有可达宿主时这种情况返回 `runtime_service_unavailable`。旧运行记录
 没有 offset 时返回 not_found 并提示重启一次服务。文件被轮转、记录的那一段已不在文件里时，
 读取回退到文件开头，并在 JSON 里用 `run_start_unknown: true` 说明这次的行可能混入其他运行。
 
