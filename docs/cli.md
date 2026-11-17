@@ -938,8 +938,11 @@ Commands outside the core loop are listed here by layer, and this document is th
   publishes in `worktree.ad_hoc_runs`. A name is resolved against the run ledger with the same rule `restart --run`
   uses (an exact run id always wins; a name must identify one live run), and it is scoped to the worktree the command
   runs in. A named run is stopped as a whole tree — the processes under its root are the run — including one that holds
-  no listener, and it is pinned by its recorded start time so a recycled pid is refused rather than signalled. The two
-  vocabularies are not mixed in one request: give either run names or ports/pids.
+  no listener, and a name whose generation already ended is nothing to stop rather than a target. Where a runtime service
+  answers, the stop is the same exact-run stop `restart --run` uses, so the host pins the generation from the ledger that
+  owns it; without one, the CLI pins the recorded root pid and start time itself and refuses a run whose start was never
+  recorded. `--no-escalate` cannot be combined with a run name: a run is always stopped whole. The two vocabularies are
+  not mixed in one request: give either run names or ports/pids.
   Human-readable result lines use the reader's vocabulary: `stopped (SIGTERM)` / `stopped (SIGKILL)` / `stopped container`,
   never printing the signal name directly; when `down` stops a portless run it shows the service name (the name in the manifest), not the interpreter name from the process table.
   A released address line reads `released <url>`. `--json`'s `method` field is still the wire enum
