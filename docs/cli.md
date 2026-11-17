@@ -286,6 +286,12 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
 }
 ~~~
 
+`worktree.manifest_missing` is present and `true` only when no `oberth.yaml` declares this worktree, so
+an empty `services` means "nothing to read" rather than "nothing declared". The full document says the
+same thing as a null `config_path`; the brief drops the path, and without the flag a brief reader
+cannot tell a checkout waiting for `oberth init` from a configured, idle one. The key is absent when a
+manifest exists.
+
 `worktree.ad_hoc_runs` attributes every listener that no running service row already names. The run is
 identified by its run id, not by its name: an `oberth start` run the manifest does not declare, a stale
 generation that still uses a declared service's name, and a declared service's run holding an extra

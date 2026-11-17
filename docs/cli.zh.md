@@ -249,6 +249,11 @@ JSON 顶层固定包含：
 }
 ~~~
 
+`worktree.manifest_missing` 只在没有 `oberth.yaml` 声明这个 worktree 时出现且为 `true`，于是空的
+`services` 表示「没有可读的清单」而不是「没有声明服务」。完整文档用 `config_path` 为 null 说同一件事；
+brief 丢掉了路径，没有这个标志，brief 读者就分不清一个等待 `oberth init` 的 checkout 和一个已经配置
+好、只是空闲的 checkout。清单存在时该键不出现。
+
 `worktree.ad_hoc_runs` 给每个未被运行中服务行命名的监听一个归属。运行按 run id 识别，不按名字：
 清单没有声明的 `oberth start` 运行、仍用着声明服务名字的旧代际、以及声明服务的运行额外持有的
 端口都会出现在这里。每行带 `name`、`run_id`、`group`、`pid`，运行 mirror 还保留时带记录的
