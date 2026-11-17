@@ -22,7 +22,7 @@ release, use `python3 scripts/release.py --verify-only`.
 | Workflow | Trigger | Platforms and contents |
 |---|---|---|
 | CI | PRs, manual | Ubuntu: maps the changed paths to the checks they need and calls the matching workflow. `Gate / required checks` is the required check: it fails when a called check failed or was cancelled, and passes when the routing skipped one. |
-| Engine verification | PRs via `CI`, manual | Automated: macOS / Ubuntu native build, vet, full engine unit tests, Mage workflow regression, Python helper tests, cross builds for the six release targets on Ubuntu, a checkout of `option-berth-skill` on Linux to verify agent contract coverage, and parsing of the install/uninstall scripts with Windows PowerShell 5.1. Manual runs additionally execute core race and real-service scenarios. |
+| Engine verification | PRs via `CI`, manual | Automated: macOS / Ubuntu native build, vet, full engine unit tests, Mage workflow regression, Python helper tests, cross builds for the six release targets on Ubuntu, a checkout of `option-berth-skill` on Linux at the commit pinned in `.github/workflows/engine.yml` to verify agent contract coverage, an advisory `Skill contract / drift from main` job, and parsing of the install/uninstall scripts with Windows PowerShell 5.1. Manual runs additionally execute core race and real-service scenarios. |
 | Nightly full verification | Daily 18:23 UTC, manual | macOS / Ubuntu: the same full gate as `scripts/release.py --verify-only`, including core race and real-service scenarios. |
 | Listener observation self-check | Daily 07:41 UTC, manual | macOS / Ubuntu: builds the CLI and runs `oberth doctor --only listener_observation` under a throwaway `BERTH_HOME`, so a runner whose collector can no longer see this process's own listening socket turns red on its own. It is not a required check. |
 | Git read verification | PRs via `CI`, manual | macOS / Ubuntu: repeated tests and race for Git, worktree, attribution, and observation. |
@@ -87,8 +87,14 @@ manifest reference table, and the table of JSON fields that agents read),
 `engine/docs/schema/manifest.schema.json` (manifest fields and the three `health` forms), and
 `engine/internal/state/observation.go` (`observation.state`), and requires both the skill's
 `SKILL.md` and `references/*.md` to mention them. The Linux job of `Engine verification` checks out
-`main` of `option-berth-skill` and then runs it; a skill update has to be merged first before a
-contract change in the engine can pass.
+the literal commit pinned in `.github/workflows/engine.yml`, so a push to the separate skill
+repository cannot turn an unrelated pull request red and a contract change is adopted by moving the
+pin in that workflow.
+
+`Skill contract / drift from main` is advisory and never a required check: it runs the same check
+against `main` of `option-berth-skill` with the failing step marked `continue-on-error`, and turns a
+failure into a warning annotation. It proves only that the pin lags the skill's `main`; it does not
+block a merge and it does not fail the job.
 
 This check only proves that the fields, error codes, and references are mentioned in the skill; it
 does not prove the explanation is correct, and it does not prove that a real agent will follow it.
