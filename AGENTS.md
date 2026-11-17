@@ -92,6 +92,10 @@ fonts as MIT.
 
 ## Documentation
 
+新增功能、变更用户行为或整理文档/第三方材料时，先读项目
+[option-berth-docs](.agents/skills/option-berth-docs/SKILL.md)：按实际影响更新，不机械全改，
+README 保持上手入口，不删现行合同；不新增文档专用脚本、机器锁清单或 CI 门禁。
+
 Keep only the contracts, evidence and real gaps that are useful now; once a landed plan is merged into
 the contract documents, delete it from the plan.
 
