@@ -28,6 +28,7 @@ class ReleaseStore:
         self.is_draft: bool | None = None
         self.assets: dict[str, bytes] = {}
         self.uploads: list[list[str]] = []
+        self.events: list[str] = []
         self.promotions = 0
         # A racing publisher: (is_draft, assets) that appears between the read
         # and the create, so the create itself fails.
@@ -52,6 +53,7 @@ class ReleaseStore:
                    "download": self.download, "edit": self.edit}.get(args[1])
         if handler is None:
             raise AssertionError("unexpected gh release subcommand: " + args[1])
+        self.events.append(args[1])
         return handler(list(args[3:]))
 
     def view(self, rest: list[str]) -> subprocess.CompletedProcess:
@@ -201,6 +203,7 @@ class PublishTests(unittest.TestCase):
 
     def test_publish_occurs_only_after_matching_roundtrip(self):
         release.publish(self.root, self.tag)
+        self.assertEqual(self.store.events, ["view", "create", "upload", "download", "edit"])
         self.assertEqual(self.store.promotions, 1)
         self.assertFalse(self.store.is_draft)
 
@@ -225,6 +228,7 @@ class PublishTests(unittest.TestCase):
         self.store.seed(expected)
         release.publish(self.root, self.tag)
         self.assertEqual(self.store.uploads, [])
+        self.assertEqual(self.store.events, ["view", "download", "download", "edit"])
         self.assertEqual(self.store.assets, expected)
         self.assertFalse(self.store.is_draft)
         self.assertEqual(self.store.promotions, 1)
