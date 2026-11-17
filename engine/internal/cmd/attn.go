@@ -43,6 +43,7 @@ var (
 	attnArtifactFlag       string
 	attnStatusSinceFlag    time.Duration
 	attnQualityProjectFlag string
+	attnQualityFlag        bool
 
 	attnPreflightStatusFlag     string
 	attnPreflightFileFlag       string
@@ -130,9 +131,11 @@ func init() {
 		"Consent check / offline poll interval (with --follow)")
 
 	attnStatusCmd.Flags().DurationVar(&attnStatusSinceFlag, "since", 168*time.Hour,
-		"Quality ledger lookback window (0 means all records)")
+		"Quality ledger lookback window (0 means all records; implies --quality)")
 	attnStatusCmd.Flags().StringVar(&attnQualityProjectFlag, "quality-project", "",
-		"Project label or worktree id to filter quality data on")
+		"Project label or worktree id to filter quality data on (implies --quality)")
+	attnStatusCmd.Flags().BoolVar(&attnQualityFlag, "quality", false,
+		"Include the full quality ledger report under quality")
 
 	attnFeedbackCmd.Flags().StringVar(&attnFeedbackFileFlag, "file", "", "Feedback JSON document to append")
 	attnFeedbackCmd.Flags().StringVar(&attnArtifactFlag, "attention", "",

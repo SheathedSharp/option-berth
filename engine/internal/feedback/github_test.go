@@ -25,8 +25,39 @@ func TestGHLoginReadsTheAccountFromTheStructuredStatus(t *testing.T) {
 		return []byte(`{"hosts":{"github.com":[{"state":"success","active":true,"login":"zayJu"}]}}`), nil
 	})
 	account := GHLogin(context.Background())
-	if !account.Available || account.Account != "zayJu" || account.Reason != "" {
+	if !account.AttemptsGH() || account.State != GHSignedIn || account.Account != "zayJu" || account.Reason != "" {
 		t.Fatalf("GHLogin = %+v", account)
+	}
+}
+
+// Issue #356: github.com was unreachable, so gh exited 0 with state "error"
+// while the keyring credential and the login were right there. "Unreachable" is
+// not "not signed in": the report was filed through gh all along.
+func TestGHLoginKeepsACredentialWhenTheProbeCannotReachGitHub(t *testing.T) {
+	stubGH(t, func(context.Context, ...string) ([]byte, error) {
+		return []byte(`{"hosts":{"github.com":[{"state":"error","active":true,"host":"github.com","login":"zayJu","tokenSource":"keyring","error":"Post \"https://api.github.com/graphql\": dial tcp: i/o timeout"}]}}`), nil
+	})
+	account := GHLogin(context.Background())
+	if !account.AttemptsGH() || account.State != GHCredentialUnconfirmed {
+		t.Fatalf("GHLogin = %+v, want the gh path to stay worth attempting", account)
+	}
+	if account.Account != "zayJu" || !strings.Contains(account.Reason, "unreachable") {
+		t.Fatalf("GHLogin = %+v", account)
+	}
+}
+
+// An environment token has a source but no login: the credential is still
+// stored, so the state is the same unconfirmed one, only without a name.
+func TestGHLoginKeepsACredentialWithoutALogin(t *testing.T) {
+	stubGH(t, func(context.Context, ...string) ([]byte, error) {
+		return []byte(`{"hosts":{"github.com":[{"state":"error","active":true,"host":"github.com","login":"","tokenSource":"GH_TOKEN","error":"proxyconnect tcp: connection refused"}]}}`), nil
+	})
+	account := GHLogin(context.Background())
+	if !account.AttemptsGH() || account.State != GHCredentialUnconfirmed || account.Account != "" {
+		t.Fatalf("GHLogin = %+v", account)
+	}
+	if !strings.Contains(account.Reason, "unreachable") {
+		t.Fatalf("reason = %q", account.Reason)
 	}
 }
 
@@ -40,24 +71,48 @@ func TestGHLoginFallsBackToTheExitStatus(t *testing.T) {
 		return nil, nil
 	})
 	account := GHLogin(context.Background())
-	if !account.Available || account.Account != "" || account.Reason != "" {
+	if !account.AttemptsGH() || account.State != GHSignedIn || account.Account != "" || account.Reason != "" {
 		t.Fatalf("GHLogin = %+v", account)
 	}
 }
 
-func TestGHLoginReportsAMissingOrSignedOutGH(t *testing.T) {
+func TestGHLoginReportsAMissingGH(t *testing.T) {
 	stubGH(t, func(context.Context, ...string) ([]byte, error) {
 		return nil, &exec.Error{Name: "gh", Err: exec.ErrNotFound}
 	})
-	if account := GHLogin(context.Background()); account.Available || account.Reason != "gh is not installed" {
+	account := GHLogin(context.Background())
+	if account.AttemptsGH() || account.State != GHNotInstalled || account.Reason != "gh is not installed" {
 		t.Fatalf("missing gh = %+v", account)
 	}
+}
 
+// gh answered, printed the hosts it knows, and none of them is a github.com
+// credential. This is the only shape that may be reported as signed out.
+func TestGHLoginReportsSignedOutFromAnEmptyHostList(t *testing.T) {
+	stubGH(t, func(context.Context, ...string) ([]byte, error) {
+		return []byte(`{"hosts":{}}`), nil
+	})
+	account := GHLogin(context.Background())
+	if account.AttemptsGH() || account.State != GHSignedOut || account.Reason != "gh is not signed in to github.com" {
+		t.Fatalf("signed-out gh = %+v", account)
+	}
+}
+
+// A failure with no account document says nothing about whether a credential
+// exists. Claiming "not signed in" there is the false claim issue #356 was.
+func TestGHLoginDoesNotInventASignedOutState(t *testing.T) {
 	stubGH(t, func(context.Context, ...string) ([]byte, error) {
 		return nil, errors.New("exit status 1")
 	})
-	if account := GHLogin(context.Background()); account.Available || account.Reason != "gh is not signed in" {
-		t.Fatalf("signed-out gh = %+v", account)
+	account := GHLogin(context.Background())
+	if account.State != GHUnknown {
+		t.Fatalf("GHLogin = %+v, want an unknown state", account)
+	}
+	if strings.Contains(account.Reason, "not signed in") {
+		t.Fatalf("reason = %q, want no claim about being signed out", account.Reason)
+	}
+	if !account.AttemptsGH() {
+		t.Fatalf("GHLogin = %+v, want gh attempted when nothing says it cannot file", account)
 	}
 }
 
@@ -68,7 +123,7 @@ func TestGHLoginRefusesACredentialForAnotherHost(t *testing.T) {
 		return []byte(`{"hosts":{"gitlab.com":[{"state":"success","active":true,"login":"zayJu"}]}}`), nil
 	})
 	account := GHLogin(context.Background())
-	if account.Available || account.Reason != "gh is not signed in to github.com" {
+	if account.AttemptsGH() || account.State != GHSignedOut || account.Reason != "gh is not signed in to github.com" {
 		t.Fatalf("GHLogin = %+v", account)
 	}
 }
@@ -105,7 +160,7 @@ func TestLookupIssuesAsksOneFilteredListing(t *testing.T) {
 			"updatedAt":"2026-11-13T01:00:00Z","closedAt":"2026-11-13T01:00:00Z",
 			"labels":[{"name":"fixed"}]}]`), nil
 	})
-	lookup := LookupIssues(context.Background(), GHAccount{Available: true, Account: "zayJu"}, DefaultRepo, []int{42})
+	lookup := LookupIssues(context.Background(), GHAccount{State: GHSignedIn, Account: "zayJu"}, DefaultRepo, []int{42})
 	if lookup.Reason != "" {
 		t.Fatalf("lookup reason = %q", lookup.Reason)
 	}
