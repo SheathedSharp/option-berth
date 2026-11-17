@@ -621,19 +621,13 @@ func unobservedEndings(group string) []rpc.RunRecord {
 			continue
 		}
 		code := state.ExitCodeUnknown
-		record := rpc.RunRecord{
-			ID: entry.ID, PID: entry.PID, Group: entry.GroupOf(), Name: entry.NameOf(),
-			Cmd: entry.Cmd, Cwd: entry.Cwd, StartedAt: normalizeStartedAt(entry.StartedAt),
-			Ports: []int{}, Status: "exited", LogPath: entry.LogPath,
-			ExitCode: &code, Reason: state.ExitEndedUnobserved,
-		}
-		offset := entry.LogOffset
-		record.LogOffset = &offset
-		if entry.PortHint > 0 {
-			hint := entry.PortHint
-			record.PortHint = &hint
-			record.URL = "http://localhost:" + strconv.Itoa(hint)
-		}
+		// The ending changes only how the run is classified: every fact about
+		// what was run comes from the one live conversion, so a field added
+		// there reaches this record too.
+		record := liveRunRecord(entry)
+		record.Status = "exited"
+		record.ExitCode = &code
+		record.Reason = state.ExitEndedUnobserved
 		out = append(out, record)
 	}
 	return out

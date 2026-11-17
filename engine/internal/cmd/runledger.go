@@ -18,16 +18,25 @@ import (
 
 // liveRunRecord is one recorded live run as the wire record. runs.Load has
 // already pruned every dead pid, so what is left is a process that is running.
+//
+// This is the only conversion of a live entry: the log paths, the status
+// document and the restart hint all read a run through it, so a field added
+// here reaches every reader at once. A second conversion is how `logs --run`
+// once lost the log offset that `logs` had.
 func liveRunRecord(entry runs.Entry) rpc.RunRecord {
 	record := rpc.RunRecord{
 		ID: entry.ID, PID: entry.PID,
 		Group: entry.GroupOf(), Name: entry.NameOf(),
 		Cmd: entry.Cmd, Argv: append([]string(nil), entry.Argv...), Cwd: entry.Cwd,
-		StartedAt: entry.StartedAt, Status: "running",
+		StartedAt: normalizeStartedAt(entry.StartedAt), Status: "running",
+		Ports: []int{}, LogPath: entry.LogPath,
 	}
+	offset := entry.LogOffset
+	record.LogOffset = &offset
 	if entry.PortHint > 0 {
 		hint := entry.PortHint
 		record.PortHint = &hint
+		record.URL = "http://localhost:" + strconv.Itoa(hint)
 	}
 	return record
 }
