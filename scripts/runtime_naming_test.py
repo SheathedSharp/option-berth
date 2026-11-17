@@ -42,11 +42,12 @@ class RuntimeNamingContract(unittest.TestCase):
         self.assertIn('yaml:"runtime_service"', cfg)
         self.assertNotIn('yaml:"daemon"', cfg)
 
-    # VERSION is deliberately not pinned here: the product version moves
-    # independently of the wire major and release.py validates its shape.
-    def test_new_wire_major_and_no_old_method_registration(self):
+    # No version literal is pinned here: VERSION and ProtocolVersion each have
+    # one home, and release.py checks that the generated schema agrees with the
+    # protocol constant. A literal would report the next version step as a
+    # naming failure.
+    def test_no_retired_rpc_method_registration(self):
         rpc = ROOT / "engine/internal/runtimesvc/rpc"
-        self.assertIn('const ProtocolVersion = "3.0.0"', (rpc / "types.go").read_text())
         for source in rpc.glob("*.go"):
             if source.name.endswith("_test.go"):
                 continue
