@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: SheathedSharp/option-berth-skill
-          ref: 33b6f398508679686c6abf28ba0ae5de4dd4c2fb
+          ref: 35f579dbd784995da74ba7034dcd50295fe7be35
           path: option-berth-skill
           persist-credentials: false
       - name: Skill covers the agent contract
@@ -153,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           # Keep in sync with the literal ref in the required checkout above.
-          pin=33b6f398508679686c6abf28ba0ae5de4dd4c2fb
+          pin=35f579dbd784995da74ba7034dcd50295fe7be35
           head=$(git -C option-berth-skill rev-parse HEAD)
           echo "pinned: $pin"
           echo "main:   $head"
