@@ -96,12 +96,12 @@ test('measured proof is present in both locales', async ({page}) => {
 
 test('real static language navigation and product links', async ({page}) => {
   await page.goto('./');
-  await expect(page.locator('.products a')).toHaveCount(3);
+  await expect(page.locator('.products a')).toHaveCount(2);
   await page.locator('.lang').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('h1')).toHaveText('option-berth');
   await expect(page.locator('.hero-tagline')).toContainText('Stop guessing');
-  await expect(page.locator('.products a[href$="option-berth-macos"]')).toHaveCount(1);
+  await expect(page.locator('.products a[href$="option-berth-skill"]')).toHaveCount(1);
   await page.locator('.lang').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
 });

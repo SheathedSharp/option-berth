@@ -45,6 +45,6 @@ External agent sessions remain the external provider's responsibility: login, mo
 
 ## What this does not promise
 
-It is not OS-level isolation: service commands run with the user's permissions and can access shared files, databases and containers. It is not a production scheduler, remote-host manager, public port-sharing service, whole-machine radar or autonomous cleanup agent. The separate macOS client displays the same facts and must not become a second authority.
+It is not OS-level isolation: service commands run with the user's permissions and can access shared files, databases and containers. It is not a production scheduler, remote-host manager, public port-sharing service, whole-machine radar or autonomous cleanup agent.
 
 Optional [Attention](attention.md) can judge task relevance but cannot establish process truth or authorize side effects. The engine stays usable without keys, network access or a model. [Open work](backlog.md) and [verification scope](agent/validation.md) limit claims to evidence actually obtained.

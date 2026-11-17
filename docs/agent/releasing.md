@@ -4,9 +4,9 @@ For maintainers publishing this engine, not users installing it. Follow the stag
 
 ## This repository releases only the engine
 
-option-berth is three independent products: this repository releases the `oberth` engine and CLI; the
-macOS client and the coding-agent skill release from their own repositories. All three meet only at the
-CLI and its `--json` contract; their versions and release cadences are independent.
+option-berth is two independent products: this repository releases the `oberth` engine and CLI; the
+coding-agent skill releases from its own repository. Both meet only at the CLI and its `--json`
+contract; their versions and release cadences are independent.
 
 This repository's release assets are the engine only:
 
@@ -16,7 +16,7 @@ This repository's release assets are the engine only:
 - a `.sha256` per asset;
 - an aggregate `SHA256SUMS`.
 
-No macOS application, DMG, notarized bundle, client screenshot or skill installer is published here.
+No desktop application, DMG, notarized bundle, screenshot or skill installer is published here.
 
 The install entry points are `install.sh` (macOS/Linux) and `install.ps1` (Windows) at the repository
 root, plus the matching `uninstall.sh` / `uninstall.ps1`; they are not release assets and are served

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The layout is something other people write down: the macOS client hardcodes
+// The layout is something other people write down: another reader hardcodes
 // the socket, the docs quote the directory, an agent's hook exports the session
 // variables, a shell script greps the log. So it is pinned here — move the
 // directory and exactly one test goes red, instead of three downstream things

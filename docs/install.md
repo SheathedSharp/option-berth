@@ -6,8 +6,8 @@ English | [中文](install.zh.md)
 
 The script and manual-package methods below are alternatives, not a sequence. First-time users should install the CLI, check `oberth version --json`, then follow the [quick start](quickstart.md). Existing users should read the protocol-switch warning before replacing anything. Installation does not start project services. For failures, use [troubleshooting](troubleshooting.md).
 
-This page covers installing, upgrading and uninstalling the engine CLI only. The macOS client and the
-coding-agent skill are independent products distributed from their own repositories.
+This page covers installing, upgrading and uninstalling the engine CLI only. The coding-agent skill is an
+independent product distributed from its own repository.
 
 Protocol 3 is a breaking host-interface switch. Before replacing an older installation, use that older host's matching CLI to stop it normally. New commands cannot stop old endpoints; do not delete locks, sockets or data to force a second instance. Persistent data stays in the same home/database. See [the switch contract](cli.md#runtime-service-protocol-3-switch).
 

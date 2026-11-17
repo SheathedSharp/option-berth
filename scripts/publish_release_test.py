@@ -39,7 +39,7 @@ class PublishAssetsTests(unittest.TestCase):
         self.assertIn("option-berth-1.2.3-1.x86_64.rpm", expected)
         self.assertIn("option-berth-1.2.3-1.aarch64.rpm", expected)
         self.assertFalse(any(name.startswith("OptionBerth-") for name in expected),
-                         "the macOS application is a separate product and must not ride in this release")
+                         "a desktop application is a separate product and must not ride in this release")
         extra = self.root / "OptionBerth-v1.2.3-macos-arm64-adhoc.dmg"
         extra.write_bytes(b"not part of this release")
         with patch.object(release, "gh") as gh, patch.object(release.subprocess, "run") as run:

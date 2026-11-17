@@ -43,7 +43,7 @@ See [product scope and safety boundaries](docs/product.md) for the complete defi
 | Leave a structured handoff | [Work records](docs/workplace.md) |
 | Look up flags, JSON, RPC or manifest fields | [Interface reference](docs/cli.md) |
 
-The [documentation index](docs/index.md) covers the full reading path. The [macOS interface](https://github.com/SheathedSharp/option-berth-macos) is a separate project, not a CLI prerequisite; components need matching protocol versions.
+The [documentation index](docs/index.md) covers the full reading path. Components need matching protocol versions.
 
 ## Contribute
 

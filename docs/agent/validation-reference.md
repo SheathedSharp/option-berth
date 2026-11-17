@@ -36,10 +36,8 @@ The single list of required checks is `.github/quality-gate-checks.json`; workfl
 verified by `CI configuration` on the PR, and the live ruleset is verified separately by the daily
 `Nightly full verification`.
 
-The CLI, Mage, and brand migrations were reviewed, verified, and merged separately, and no old
-private Git ancestor was introduced. The brand check compares the SVG exported from this repository
-with `BerthGeometry.swift` in a sibling `option-berth-macos` checkout; when there is no sibling
-checkout it skips explicitly instead of pretending a comparison happened.
+The CLI and Mage migrations were reviewed, verified, and merged separately, and no old private
+Git ancestor was introduced.
 The basic Windows service scenarios and the selected native tests are not acceptance of the full
 service tree, the Windows GUI, or native arm64 execution.
 
@@ -454,6 +452,6 @@ engine cannot prove which copy is current, which is why a single copy is never c
 
 Long-running load still needs separate acceptance; without a reliable control we do not advertise an
 overall speedup or long-term absence of leaks.
-Client interaction and signed installers are in the client repository's verification scope.
+Signed installers and GUI interaction are outside this repository's verification scope.
 Automated secret scanning, license input retention, and CI success each have their own boundaries and
 cannot replace a security review or a full distribution audit.

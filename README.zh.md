@@ -43,7 +43,7 @@ oberth down
 | 留下结构化交接信息 | [工作记录](docs/workplace.zh.md) |
 | 查参数、JSON、RPC、配置字段 | [接口参考](docs/cli.zh.md) |
 
-全部阅读路径见[文档导航](docs/index.zh.md)。macOS 界面是[独立项目](https://github.com/SheathedSharp/option-berth-macos)，不是 CLI 的必要组件；各组件需要匹配的协议版本。
+全部阅读路径见[文档导航](docs/index.zh.md)。各组件需要匹配的协议版本。
 
 ## 参与开发
 

@@ -4,10 +4,8 @@
 
 禁用 JavaScript 时，正文、目录、语言切换和下载入口仍然可用。只有靠脚本才有意义的控件（产品页的舞台切换、指南的搜索、主题和抽屉）在没有脚本时不出现，而不是留下点了没反应的按钮。
 
-产品界面和给 coding agent 的 skill 是独立产品，分别在
-[option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) 和
-[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)。本仓库不再保存
-macOS 应用截图或采集脚本；旧页面里的截图还留在 Git 历史中，客户端仓库可以按需取用。
+给 coding agent 的 skill 是独立产品，在
+[option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)。本仓库不保存其他产品的截图或采集脚本。
 
 ## 构建与预览
 

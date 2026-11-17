@@ -36,7 +36,6 @@ Contracts and practices each have a home; when they conflict, the contract wins:
 | Versions, tags, pre-release gates | [docs/agent/releasing.md](docs/agent/releasing.md) |
 | Agent scenario library and release matrix | [docs/agent/agent-eval.md](docs/agent/agent-eval.md) |
 | Optional attention adapter | [docs/agent/attn-adapter.md](docs/agent/attn-adapter.md) |
-| Changing the macOS client | [option-berth-macos](https://github.com/SheathedSharp/option-berth-macos) (separate product) |
 | Changing the coding-agent skill | [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill) (separate product) |
 
 Past designs, temporary debugging and requirements from older iterations are not the current contract;

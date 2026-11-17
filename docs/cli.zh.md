@@ -814,7 +814,7 @@ Runtime 运行领域仍是 worktree → manifest → service → run → runtime
 
 Runtime Service 的存储及控制文件目录必须位于已验证的本地文件系统：macOS 为带本地标记的 APFS/HFS/tmpfs，Linux 为明确支持的本地文件系统类型，Windows 为本地固定/可移动/RAM 卷。网络、FUSE 及未知文件系统在创建存储 sidecar 前被拒绝；换 socket 不能削弱数据库所有权。坏库及未来 schema 阻止启动并保留可检查证据，不会静默挪走、重置或替换。命名改造不改变数据库 schema 及历史记录。
 
-默认根 `BERTH_HOME` / `.option-berth`、数据库 schema/内容、`oberth` 可执行文件和公共 Go module 路径不变。Windows 使用 `\\.\pipe\option-berth-runtime-service`。独立的 macOS app 必须先适配协议 3、新端点及字段/检查名才能控制此宿主，本次不改 app。
+默认根 `BERTH_HOME` / `.option-berth`、数据库 schema/内容、`oberth` 可执行文件和公共 Go module 路径不变。Windows 使用 `\\.\pipe\option-berth-runtime-service`。外部客户端必须先适配协议 3、新端点及字段/检查名才能控制此宿主。
 
 ### oberth feedback
 
@@ -994,7 +994,7 @@ or a particular installed version; a provider failure remains a provider failure
 
 `oberth agent stream <provider> --worktree <path> [--resume-file <path>]` 启动结构化桥进程：
 stdin 每行一条命令、stdout 每行一个事件，均为带 `"v":1` 的 NDJSON；stderr 只写诊断。
-契约见 `engine/docs/schema/agent-stream.schema.json` 与 [console-plan.md](https://github.com/SheathedSharp/option-berth-macos/blob/main/docs/console-plan.md) 第 4.6 节。
+契约见 `engine/docs/schema/agent-stream.schema.json`。
 `agent list --json` 的 `"stream": true|false` 表示本构建是否包含该 provider 的流式适配器（Codex、Claude Code、OpenCode ACP、Pi RPC）。
 生产环境需已安装对应 CLI；自动化测试可设 `BERTH_AGENT_STREAM_FAKE=<provider>` 使用纯 NDJSON 假驱动，或对
 `go test` 注入 `LookPath` 指向 `engine/internal/agentstream/testdata/fake*` 替身。
@@ -1035,9 +1035,7 @@ Provider contracts: [OpenCode CLI](https://opencode.ai/docs/cli/),
 成功时带 `(latest)` 或 `(latest version vX.Y.Z)`；检查未知时只打印本机版本，不把“没查到”写成
 “最新”。发现更新时，首屏底部给出对应平台的安装命令和 `oberth runtime service stop`。还没有记录过改进报告
 的决定时，首屏也可能问一次是否发送关于 oberth 自身的脱敏报告；这个问题和报告携带什么，写在
-基础设施命令一节的 `oberth feedback` 里。标记由
-`scripts/brand_export.py` 从客户端几何源生成到 `engine/internal/cmd/mark_gen.go`，
-不手写；字标是轮廓字，终端里用粗体文字表示。
+基础设施命令一节的 `oberth feedback` 里。标记是 `engine/internal/cmd/mark_gen.go` 里的静态生成资产，不手写；字标是轮廓字，终端里用粗体文字表示。
 
 标记按品牌自己的分工上两色：两条轨用墨色（深色终端用纸色），胶囊用陶土色。涂成一色时
 胶囊会和两个轨帽并成三个一样的块，看起来像一张脸，所以这个分工是语义的一部分，不是配色
