@@ -34,6 +34,8 @@ These checks do not start product services or use model keys. Verify the selecte
 
 Production-only `go build ./...` and `go vet ./...` from `engine/` do not execute TestMain. They still depend on the selected toolchain, module graph and target OS; record those. Downloaded third-party source is archived as data outside the Go package scan, never built or tested as part of archive verification.
 
+A check reads a version from its single home (`VERSION`, or `ProtocolVersion` in `engine/internal/runtimesvc/rpc/types.go`) or asserts a relation between two published documents; it never embeds the current version as a literal. A literal tests nothing new — it turns the next legitimate version step into a test edit and reports it as a failure.
+
 ## Storage ownership and naming
 
 `scripts/check_runtime_naming.py` audits active identifiers with explicit migration/rejection, historical SQL, third-party Docker and standard-library exceptions. `check_runtime_naming_cli.py` checks a supplied candidate's real help, usage rejection, JSON and doctor IDs without starting a host.
