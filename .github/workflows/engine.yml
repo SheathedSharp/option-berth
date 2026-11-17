@@ -139,6 +139,50 @@ jobs:
           path: verification/
           retention-days: 7
 
+  skill-drift:
+    # Advisory, never required: this job reports how far the pinned skill commit
+    # lags `main`, so adopting a skill release is a visible decision instead of a
+    # surprise red pull request. Keep it out of .github/quality-gate-checks.json
+    # and the `main` ruleset.
+    name: Skill contract / drift from main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check out the agent skill at main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: SheathedSharp/option-berth-skill
+          ref: main
+          path: option-berth-skill
+          persist-credentials: false
+      - name: Record the pinned and the moving commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin=$(tr -d '[:space:]' < .github/skill-contract-ref.txt)
+          head=$(git -C option-berth-skill rev-parse HEAD)
+          echo "pinned: $pin"
+          echo "main:   $head"
+          if [ "$pin" = "$head" ]; then
+            echo "skill main is the pinned commit"
+          else
+            echo "skill main has moved past the pin; the required check still uses the pinned commit"
+          fi
+      - name: Skill main covers the agent contract
+        id: drift
+        # Advisory: the step reports failure but the job stays green.
+        continue-on-error: true
+        shell: bash
+        run: python3 scripts/check_skill_contract.py --skill-dir option-berth-skill
+      - name: Publish drift as an annotation
+        if: steps.drift.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning title=Skill contract drift::option-berth-skill main no longer covers the engine's agent contract; review the skill change and move .github/skill-contract-ref.txt when it is ready"
+
   windows-install-scripts:
     name: windows-install-scripts
     runs-on: windows-2025
