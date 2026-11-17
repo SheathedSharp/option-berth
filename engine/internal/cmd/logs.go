@@ -244,10 +244,12 @@ func resolveLogTarget(ctx context.Context, c *client.Client, target, bindIP stri
 	if err != nil {
 		return nil, "", cliError(err)
 	}
+	groupKnown := false
 	for _, group := range groups {
 		if group.Name != name {
 			continue
 		}
+		groupKnown = true
 		for _, service := range group.Services {
 			if service.Name != target {
 				continue
@@ -280,8 +282,19 @@ func resolveLogTarget(ctx context.Context, c *client.Client, target, bindIP stri
 			return nil, "", failHint("not_found", fmt.Sprintf("service %q is not running", target),
 				"run `oberth up`, or use `oberth status` to inspect its last exit")
 		}
+		break
+	}
+	// Not a declared service. `oberth start -d --name X` records a run and the
+	// log file it writes; status publishes that name in ad_hoc_runs and its
+	// exit hint is `oberth logs X --once`, so the name has to resolve here. The
+	// run record is the authority for its own log path, the same rule
+	// `logs --run` follows.
+	if path, ok := recordedRunLogPath(ctx, c, name, target); ok {
+		return nil, path, nil
+	}
+	if groupKnown {
 		return nil, "", failHint("not_found", fmt.Sprintf("no service named %q in %s", target, name),
-			"run `oberth status` to see the declared service names")
+			"run `oberth status` to see the declared services and the runs started with `oberth start`")
 	}
 	return nil, "", failHint("not_found", fmt.Sprintf("no project named %q", name),
 		"run `oberth status` to inspect the current worktree")
