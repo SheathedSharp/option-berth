@@ -48,14 +48,30 @@ def verify_assets(directory: Path, tag: str, aggregate: bool = False) -> list[Pa
     return sorted(directory / name for name in expected)
 
 
-def gh(*args: str) -> None:
-    subprocess.run(["gh", *args, "--repo", REPOSITORY], check=True)
+def gh(*args: str) -> subprocess.CompletedProcess:
+    """Run one `gh` command; the only place this script talks to GitHub.
+
+    Output is captured so that a failure carries `gh`'s own message into the
+    operator report instead of a bare exit status.
+    """
+    result = subprocess.run(["gh", *args, "--repo", REPOSITORY], capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip() or f"exit {result.returncode}"
+        raise RuntimeError("gh " + " ".join(args[:3]) + ": " + detail)
+    return result
+
+
+def release_exists(tag: str) -> bool:
+    try:
+        gh("release", "view", tag, "--json", "tagName")
+    except RuntimeError:
+        return False
+    return True
 
 
 def publish(directory: Path, tag: str) -> None:
     verify_assets(directory, tag)
-    previous = subprocess.run(["gh", "release", "view", tag, "--repo", REPOSITORY], capture_output=True)
-    if previous.returncode == 0:
+    if release_exists(tag):
         raise RuntimeError("release already exists; inspect the existing draft before any manual recovery")
     (directory / "SHA256SUMS").write_text("".join(path.read_text() for path in sorted(directory.glob("*.sha256"))))
     files = verify_assets(directory, tag, aggregate=True)
