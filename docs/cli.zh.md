@@ -277,7 +277,11 @@ brief 丢掉了路径，没有这个标志，brief 读者就分不清一个等�
 直接读这个字段拼库名，不必自己算哈希。
 
 changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对用的原始监听事实，不是
-独立的产品对象，也不是整台机器的端口清单。exits 是最近 5 次结束运行的新到旧历史，
+独立的产品对象，也不是整台机器的端口清单。runs 是这个 worktree 拥有的全部在跑运行，
+不论清单是否声明、也不论它是否持有监听——brief 文档把这些投影成 `ad_hoc_runs`，两者是
+同一个集合。没有监听的运行只出现在这里，`oberth start -d` 起的 worker 因此不必靠 `ps`
+才看得见。null 表示运行集合没能读出来，空数组表示这个 worktree 没有在跑运行，两者不是
+同一个答案。exits 是最近 5 次结束运行的新到旧历史，
 不是当前失败集合；当前事实以 `worktree.services[].last_exit` 为准。`exits[].ports`
 描述退出运行仍持有的端口，所以已退出的运行保持空数组；失败端口在 `port_hint`，
 占用者在 `port_holder`。每条失败记录可带 `hint`（与 `groups.start` 的 per-service hint 同义），
