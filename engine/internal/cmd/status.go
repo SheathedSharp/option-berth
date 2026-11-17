@@ -96,7 +96,12 @@ type statusDocument struct {
 	Ports           []state.Port    `json:"ports"`
 	Git             *git.Tree       `json:"git,omitempty"`
 	Drafts          []draft.Pending `json:"drafts"`
-	Exits           []rpc.RunRecord `json:"exits"`
+	// Runs are the live runs this worktree owns, from the same resolver every
+	// command reads. It is the symmetric half of Exits: without it a run that
+	// holds no listener appears in no section at all, which is how an
+	// `oberth start -d` worker became visible only to `ps`.
+	Runs  []rpc.RunRecord `json:"runs"`
+	Exits []rpc.RunRecord `json:"exits"`
 	// AttnPath points to a derived, fact-only handoff for an optional
 	// agent adapter. It is absent when there is no current anomaly.
 	AttnPath string `json:"attn_path,omitempty"`
@@ -333,10 +338,14 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 	if exitErr != nil {
 		return statusDocument{}, storageReadError(exitErr)
 	}
+	// One resolver answers "which runs does this worktree have", and both
+	// documents project from the answer. A read that could not produce it
+	// leaves Runs null — unknown, not "started nothing".
 	doc := statusDocument{
 		manifestMissing: missingManifest(*group),
 		Scope:           display.Scope{Kind: "worktree", Name: name, Root: root},
 		Worktree:        *group,
+		Runs:            statusRuns(ctx, name),
 		Ports:           ports,
 		Git:             tree,
 		Drafts:          []draft.Pending{},
@@ -537,6 +546,36 @@ func publicObservation(obs *rpc.ObservationStatus) *rpc.ObservationStatus {
 		return nil
 	}
 	return obs
+}
+
+// statusRuns is this worktree's live runs from the one run-set resolver. It is
+// best effort for the same reason log metadata is: a status read must still
+// publish the facts it did read. A failure yields nil — unknown — which is not
+// the empty slice that says the worktree started nothing.
+//
+// A nameless worktree gets nothing: the resolver's "" means "every run in the
+// ledger", which is the right answer for a refusal about an unknown project and
+// the wrong one for a document that speaks for one checkout.
+func statusRuns(ctx context.Context, group string) []rpc.RunRecord {
+	if group == "" {
+		return nil
+	}
+	c := runtimeServiceClient(ctx)
+	if c != nil {
+		defer c.Close()
+	}
+	records, err := worktreeRuns(ctx, c, group)
+	if err != nil {
+		return nil
+	}
+	live := make([]rpc.RunRecord, 0, len(records))
+	for _, record := range records {
+		if record.Status == "exited" {
+			continue
+		}
+		live = append(live, record)
+	}
+	return live
 }
 
 // statusExits reads durable ended-run evidence through the owning Store online,

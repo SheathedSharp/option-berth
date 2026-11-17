@@ -1,17 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
 	"github.com/sheathedsharp/option-berth/engine/internal/draft"
 	"github.com/sheathedsharp/option-berth/engine/internal/git"
-	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -360,29 +358,29 @@ func TestBriefStatusAttributesEveryListener(t *testing.T) {
 	}
 }
 
-// The run's recorded start line is in the mirror, not in the listener row.
+// The run's recorded start line is on the run record, not in the listener row.
 // The brief joins by pid and generation and publishes it, so an agent can
 // rebuild the run without first triggering a refusal to make a hint print.
 func TestBriefStatusCarriesTheRecordedRunCommand(t *testing.T) {
-	t.Setenv("BERTH_HOME", t.TempDir())
-	started := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	pid := os.Getpid() // Load hides a dead mirror entry, as a live listener would be
-	if err := runs.Add(runs.Entry{
-		PID: pid, ID: "adhoc-run", Group: "shop", Name: "finance-web",
-		Cmd: "yarn dev", Cwd: "/work/shop/web", StartedAt: started.Format(time.RFC3339Nano),
-	}); err != nil {
-		t.Fatalf("writing the mirror: %v", err)
-	}
 	doc := statusScopeFixture()
-	doc.Ports[4].Run = &state.Run{ID: "adhoc-run", Group: "shop", Name: "finance-web", RootPID: pid}
+	doc.Ports[4].Run = &state.Run{ID: "adhoc-run", Group: "shop", Name: "finance-web", RootPID: 64530}
+	doc.Runs = []rpc.RunRecord{{
+		ID: "adhoc-run", PID: 64530, Group: "shop", Name: "finance-web",
+		Cmd: "yarn dev", Cwd: "/work/shop/web", StartedAt: "2026-11-16T09:00:00Z", Status: "running",
+	}}
 
 	brief := briefStatusFrom(doc)
-	if len(brief.Worktree.AdHocRuns) != 1 {
+	var run *briefAdHocRun
+	for i := range brief.Worktree.AdHocRuns {
+		if brief.Worktree.AdHocRuns[i].RunID == "adhoc-run" {
+			run = &brief.Worktree.AdHocRuns[i]
+		}
+	}
+	if run == nil {
 		t.Fatalf("run attribution = %+v", brief.Worktree.AdHocRuns)
 	}
-	run := brief.Worktree.AdHocRuns[0]
 	if run.Cmd != "yarn dev" || run.Cwd != "/work/shop/web" || run.StartedAt != "2026-11-16T09:00:00Z" {
-		t.Fatalf("recorded run facts = %+v", run)
+		t.Fatalf("recorded run facts = %+v", *run)
 	}
 }
 
@@ -631,16 +629,12 @@ func TestStatusSummarySaysDeclaredAndStillShowsAdHocRuns(t *testing.T) {
 // names such runs while they are alive; without this a portless run is invisible
 // and only its absence from every section reveals it.
 func TestBriefStatusNamesALiveRunThatHoldsNoListener(t *testing.T) {
-	t.Setenv("BERTH_HOME", t.TempDir())
-	started := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	pid := os.Getpid()
-	if err := runs.Add(runs.Entry{
-		PID: pid, ID: "portless-run", Group: "shop", Name: "portless",
-		Cmd: "sh -c while true", Cwd: "/work/shop", StartedAt: started.Format(time.RFC3339Nano),
-	}); err != nil {
-		t.Fatalf("writing the mirror: %v", err)
-	}
 	doc := statusScopeFixture()
+	doc.Runs = []rpc.RunRecord{{
+		ID: "portless-run", PID: 4242, Group: "shop", Name: "portless",
+		Cmd: "sh -c while true", Cwd: "/work/shop",
+		StartedAt: "2026-11-16T09:00:00Z", Status: "running",
+	}}
 
 	brief := briefStatusFrom(doc)
 	var found *briefAdHocRun
@@ -652,7 +646,7 @@ func TestBriefStatusNamesALiveRunThatHoldsNoListener(t *testing.T) {
 	if found == nil {
 		t.Fatalf("ad_hoc_runs = %+v, want the live portless run named", brief.Worktree.AdHocRuns)
 	}
-	if found.Name != "portless" || found.PID != pid || found.Cmd != "sh -c while true" {
+	if found.Name != "portless" || found.PID != 4242 || found.Cmd != "sh -c while true" {
 		t.Fatalf("portless run = %+v, want its recorded facts", *found)
 	}
 	if found.Ports == nil || len(found.Ports) != 0 {
@@ -664,15 +658,11 @@ func TestBriefStatusNamesALiveRunThatHoldsNoListener(t *testing.T) {
 // service row is its home. A portless declared worker therefore stays out of
 // ad_hoc_runs while its service row is running.
 func TestBriefStatusDoesNotRepeatARunAServiceRowNames(t *testing.T) {
-	t.Setenv("BERTH_HOME", t.TempDir())
-	pid := os.Getpid()
-	if err := runs.Add(runs.Entry{
-		PID: pid, ID: "api-run", Group: "shop", Name: "api",
-		Cmd: "go run ./cmd/api", Cwd: "/work/shop",
-	}); err != nil {
-		t.Fatalf("writing the mirror: %v", err)
-	}
 	doc := statusScopeFixture()
+	doc.Runs = []rpc.RunRecord{{
+		ID: "api-run", PID: 4242, Group: "shop", Name: "api",
+		Cmd: "go run ./cmd/api", Cwd: "/work/shop", Status: "running",
+	}}
 
 	brief := briefStatusFrom(doc)
 	for _, run := range brief.Worktree.AdHocRuns {
@@ -712,5 +702,65 @@ func TestBriefStatusOmitsManifestMissingWhenAManifestExists(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "manifest_missing") {
 		t.Fatalf("brief = %s, want no manifest_missing key for a declared worktree", raw)
+	}
+}
+
+// The full document is the one a reader asks when it wants everything, so it
+// must name the live runs the brief names. Leaving Runs only on the brief made
+// `status --json` blind to a portless run while `status --json --brief` showed
+// it — the same worktree, two different answers.
+func TestFullStatusDocumentPublishesLiveRuns(t *testing.T) {
+	doc := statusDocument{
+		Worktree: state.Group{Name: "shop"},
+		Ports:    []state.Port{},
+		Runs: []rpc.RunRecord{{
+			ID: "portless-run", PID: 4242, Group: "shop", Name: "portless",
+			Cmd: "sh -c while true", Status: "running",
+		}},
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"runs":[{`) || !strings.Contains(string(raw), `"name":"portless"`) {
+		t.Fatalf("full status = %s, want the live run published", raw)
+	}
+}
+
+// Both documents are projections of one run set, so a run the brief names is a
+// run the full document names. This is the invariant that keeps a future
+// command from answering the same question from a different source.
+func TestBriefAndFullDocumentsNameTheSameRuns(t *testing.T) {
+	doc := statusScopeFixture()
+	doc.Runs = []rpc.RunRecord{{
+		ID: "spare-run", PID: 4243, Group: "shop", Name: "spare",
+		Cmd: "sleep 300", Status: "running",
+	}}
+
+	full, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief, err := json.Marshal(briefStatusFrom(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(full), "spare-run") {
+		t.Fatalf("full status = %s, want the spare run", full)
+	}
+	if !strings.Contains(string(brief), "spare-run") {
+		t.Fatalf("brief status = %s, want the spare run", brief)
+	}
+}
+
+// A worktree whose name is unknown must claim nothing. The resolver's "" means
+// "every run in the ledger", which explains a refusal about an unknown project
+// but would attribute every groupless run to a nameless document. The guard
+// lives where the document is built, so no projection has to repeat it.
+func TestNamelessWorktreeClaimsNoRuns(t *testing.T) {
+	resetRouting(t)
+	noRuntimeServiceReachable(t)
+	if got := statusRuns(context.Background(), ""); got != nil {
+		t.Fatalf("nameless worktree claimed %+v", got)
 	}
 }

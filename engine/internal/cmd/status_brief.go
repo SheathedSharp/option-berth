@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
-	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -395,23 +394,19 @@ func listenerAttribution(doc statusDocument) ([]briefAdHocRun, []briefUnownedPor
 		}
 	}
 
-	// The run's start facts are in the mirror, not in the listener row: the
+	// The run's start facts are on the run record, not in the listener row: the
 	// listener's own command is often a child (`node …`) rather than the
 	// recorded start line. Join by pid and generation, never by name.
-	snapshot := runs.Load()
 	for _, item := range byRun {
-		if snapshot == nil || item.PID <= 0 {
+		record, ok := recordedRun(doc.Runs, item.RunID, item.PID)
+		if !ok {
 			continue
 		}
-		entry, ok := snapshot.LookupByPID(item.PID)
-		if !ok || (item.RunID != "" && entry.ID != "" && entry.ID != item.RunID) {
-			continue
-		}
-		item.Cmd = entry.Cmd
-		item.Cwd = entry.Cwd
-		item.StartedAt = normalizeStartedAt(entry.StartedAt)
+		item.Cmd = record.Cmd
+		item.Cwd = record.Cwd
+		item.StartedAt = normalizeStartedAt(record.StartedAt)
 	}
-	addLiveRunsWithoutListeners(doc, snapshot, byRun)
+	addLiveRunsWithoutListeners(doc, byRun)
 
 	out := make([]briefAdHocRun, 0, len(byRun))
 	for _, item := range byRun {
@@ -428,7 +423,7 @@ func listenerAttribution(doc statusDocument) ([]briefAdHocRun, []briefUnownedPor
 	return out, unowned
 }
 
-// adHocRunKey is the identity a listener row and a mirror entry are joined on.
+// adHocRunKey is the identity a listener row and a run record are joined on.
 // The run id is the real identity; a row from a producer that publishes none
 // falls back to the root process, which is the only evidence it carries.
 func adHocRunKey(runID, group string, rootPID int) string {
@@ -438,40 +433,48 @@ func adHocRunKey(runID, group string, rootPID int) string {
 	return fmt.Sprintf("%s/%d", group, rootPID)
 }
 
+// recordedRun is the run record a listener row belongs to: the same generation,
+// matched by id when both name one and by root pid otherwise.
+func recordedRun(records []rpc.RunRecord, runID string, rootPID int) (rpc.RunRecord, bool) {
+	for _, record := range records {
+		if rootPID > 0 && record.PID == rootPID {
+			return record, true
+		}
+		if runID != "" && record.ID == runID {
+			return record, true
+		}
+	}
+	return rpc.RunRecord{}, false
+}
+
 // addLiveRunsWithoutListeners fills in the runs this worktree started that hold
 // no listener, so they are attributable from the brief document instead of only
 // from `ps`. A run a running service row already names stays in `services`: the
 // row is its home and repeating it here would publish one process twice.
 //
-// Only the mirror's live entries are considered — Load has already hidden the
-// dead ones — and only this worktree's group, because a run belonging to
-// another checkout is that checkout's fact.
-func addLiveRunsWithoutListeners(doc statusDocument, snapshot *runs.Registry, byRun map[string]*briefAdHocRun) {
-	if snapshot == nil || doc.manifestMissing && doc.Worktree.Name == "" {
-		return
-	}
+// doc.Runs is already this worktree's live set, resolved once for both documents,
+// so there is no group filter and no second source here — a projection reads the
+// document it was given.
+func addLiveRunsWithoutListeners(doc statusDocument, byRun map[string]*briefAdHocRun) {
 	named := make(map[string]bool, len(doc.Worktree.Services))
 	for _, svc := range doc.Worktree.Services {
 		if svc.RunID != nil && *svc.RunID != "" {
 			named[*svc.RunID] = true
 		}
 	}
-	for _, entry := range snapshot.Active() {
-		if entry.GroupOf() != doc.Worktree.Name {
-			continue
-		}
-		key := adHocRunKey(entry.ID, entry.GroupOf(), entry.PID)
-		if _, seen := byRun[key]; seen || named[entry.ID] {
+	for _, record := range doc.Runs {
+		key := adHocRunKey(record.ID, record.Group, record.PID)
+		if _, seen := byRun[key]; seen || named[record.ID] {
 			continue
 		}
 		byRun[key] = &briefAdHocRun{
-			Name:      entry.NameOf(),
-			RunID:     entry.ID,
-			Group:     entry.GroupOf(),
-			PID:       entry.PID,
-			Cmd:       entry.Cmd,
-			Cwd:       entry.Cwd,
-			StartedAt: normalizeStartedAt(entry.StartedAt),
+			Name:      record.Name,
+			RunID:     record.ID,
+			Group:     record.Group,
+			PID:       record.PID,
+			Cmd:       record.Cmd,
+			Cwd:       record.Cwd,
+			StartedAt: normalizeStartedAt(record.StartedAt),
 			Ports:     []int{},
 		}
 	}
