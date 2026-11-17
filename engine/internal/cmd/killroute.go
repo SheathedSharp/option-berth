@@ -34,21 +34,24 @@ func killThroughRuntimeService(ctx context.Context, conn *client.Client, args []
 	if err != nil {
 		return cliError(err)
 	}
-	targets, confirm, err := killTargets(args, rows, bindIP)
+	resolved, err := resolveKill(ctx, conn, args, rows, bindIP)
 	if err != nil {
 		return err
 	}
-	if len(targets) == 0 {
+	if len(resolved.targets) == 0 {
 		return reportKill(os.Stdout, nil, rows, killJSONFlag, killDryRunFlag)
 	}
 
 	opts := killOptions()
+	// A run is a tree; this is the same rule killDirect applies, so both paths
+	// ask the host for exactly the same stop.
+	opts.Tree = opts.Tree || resolved.tree
 	return killRequest{
 		exec:     killInRuntimeService(conn),
-		targets:  targets,
+		targets:  resolved.targets,
 		snapshot: rows,
 		opts:     opts,
-		confirm:  confirm && !killYesFlag && !killDryRunFlag,
+		confirm:  resolved.confirm && !killYesFlag && !killDryRunFlag,
 		asJSON:   killJSONFlag,
 	}.execute(ctx)
 }

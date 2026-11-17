@@ -378,7 +378,7 @@ func TestKillSelectionRefusesABlindTable(t *testing.T) {
 	resetKillSelectors(t)
 	killAllFlag = true
 
-	snapshot, targets, confirm, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
+	snapshot, resolved, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
 		return nil, blindScan()
 	})
 	if err == nil {
@@ -391,8 +391,8 @@ func TestKillSelectionRefusesABlindTable(t *testing.T) {
 	if !errors.As(err, &oe) || oe.Code != ports.CodeObservationBlind {
 		t.Fatalf("err = %v, want the collector's observation_blind code", err)
 	}
-	if snapshot != nil || targets != nil || confirm {
-		t.Fatalf("snapshot=%+v targets=%+v confirm=%v, want no selection at all", snapshot, targets, confirm)
+	if snapshot != nil || resolved.targets != nil || resolved.confirm {
+		t.Fatalf("snapshot=%+v resolved=%+v, want no selection at all", snapshot, resolved)
 	}
 }
 
@@ -407,7 +407,7 @@ func TestKillSelectionPassesTheCommandContextToTheScan(t *testing.T) {
 	cancel()
 
 	var got context.Context
-	_, _, _, _, err := killSelection(ctx, nil, "", func(scanCtx context.Context) ([]ports.ListeningPort, error) {
+	_, _, _, err := killSelection(ctx, nil, "", func(scanCtx context.Context) ([]ports.ListeningPort, error) {
 		got = scanCtx
 		return nil, blindScan()
 	})
@@ -510,7 +510,7 @@ func TestKillSelectionResolvesAnExplicitPIDAgainstTheAttributedTable(t *testing.
 	table := []ports.ListeningPort{anOwnedRunRow(3300, 4242, 4300)}
 
 	scanned := 0
-	snapshot, targets, confirm, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
+	snapshot, resolved, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
 		scanned++
 		return table, nil
 	})
@@ -526,8 +526,8 @@ func TestKillSelectionResolvesAnExplicitPIDAgainstTheAttributedTable(t *testing.
 	if len(snapshot) != 1 || snapshot[0].RunRootPID != 4300 || snapshot[0].Tag != "api" {
 		t.Fatalf("snapshot = %+v, want the row that names the run", snapshot)
 	}
-	if confirm || len(targets) != 1 || targets[0].PID != 4242 {
-		t.Fatalf("targets = %+v confirm=%v, want the named pid only", targets, confirm)
+	if resolved.confirm || len(resolved.targets) != 1 || resolved.targets[0].PID != 4242 {
+		t.Fatalf("targets = %+v confirm=%v, want the named pid only", resolved.targets, resolved.confirm)
 	}
 }
 
@@ -542,7 +542,7 @@ func TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsUnreadable(t *testing.T) {
 	resetKillSelectors(t)
 	killPIDFlag = []int{12345}
 
-	snapshot, targets, confirm, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
+	snapshot, resolved, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
 		return nil, blindScan()
 	})
 	if err != nil {
@@ -554,8 +554,8 @@ func TestKillSelectionKeepsAnExplicitPIDWhenTheTableIsUnreadable(t *testing.T) {
 	if snapshot != nil {
 		t.Fatalf("snapshot = %+v, want no rows to have been read", snapshot)
 	}
-	if confirm || len(targets) != 1 || targets[0].PID != 12345 {
-		t.Fatalf("targets = %+v confirm=%v, want the named pid only", targets, confirm)
+	if resolved.confirm || len(resolved.targets) != 1 || resolved.targets[0].PID != 12345 {
+		t.Fatalf("targets = %+v confirm=%v, want the named pid only", resolved.targets, resolved.confirm)
 	}
 }
 
@@ -568,7 +568,7 @@ func TestKillSelectionKeepsTheRowsAPartialReadProduced(t *testing.T) {
 	killPIDFlag = []int{4242}
 	partial := []ports.ListeningPort{anOwnedRunRow(3300, 4242, 4300)}
 
-	snapshot, targets, _, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
+	snapshot, resolved, complete, err := killSelection(context.Background(), nil, "", func(context.Context) ([]ports.ListeningPort, error) {
 		return partial, &ports.ObservationError{
 			Code: ports.CodeObservationIncomplete, Detail: "ss: unreadable row", Partial: true, Rows: partial,
 		}
@@ -582,8 +582,8 @@ func TestKillSelectionKeepsTheRowsAPartialReadProduced(t *testing.T) {
 	if len(snapshot) != 1 || snapshot[0].RunRootPID != 4300 {
 		t.Fatalf("snapshot = %+v, want the row the collector did read", snapshot)
 	}
-	if len(targets) != 1 || targets[0].PID != 4242 {
-		t.Fatalf("targets = %+v, want the named pid", targets)
+	if len(resolved.targets) != 1 || resolved.targets[0].PID != 4242 {
+		t.Fatalf("targets = %+v, want the named pid", resolved.targets)
 	}
 }
 

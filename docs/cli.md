@@ -933,7 +933,13 @@ Commands outside the core loop are listed here by layer, and this document is th
   workspace membership changes still go by the new snapshot, and an expired queue window also falls back to a full snapshot;
   membership changes notify existing subscribers with `changed: ["workspace_changed"]`. If you connect to an old runtime service, run
   `oberth runtime service restart` first to obtain the `state.scope` capability.
-- oberth kill <port|pid>...: stops listeners by name; --all is an explicit batch operation and still confirms.
+- oberth kill <port|pid|run>...: stops listeners and runs by name; --all is an explicit batch operation and still confirms.
+  A positional argument is read as a port, then as a pid, and otherwise as a run name or run id — the name `status`
+  publishes in `worktree.ad_hoc_runs`. A name is resolved against the run ledger with the same rule `restart --run`
+  uses (an exact run id always wins; a name must identify one live run), and it is scoped to the worktree the command
+  runs in. A named run is stopped as a whole tree — the processes under its root are the run — including one that holds
+  no listener, and it is pinned by its recorded start time so a recycled pid is refused rather than signalled. The two
+  vocabularies are not mixed in one request: give either run names or ports/pids.
   Human-readable result lines use the reader's vocabulary: `stopped (SIGTERM)` / `stopped (SIGKILL)` / `stopped container`,
   never printing the signal name directly; when `down` stops a portless run it shows the service name (the name in the manifest), not the interpreter name from the process table.
   A released address line reads `released <url>`. `--json`'s `method` field is still the wire enum
