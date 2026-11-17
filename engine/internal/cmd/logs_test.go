@@ -492,3 +492,47 @@ func TestLogsFollowJSONThroughTheRuntimeService(t *testing.T) {
 		t.Fatal("the JSON follow printed no objects")
 	}
 }
+
+// TestLogsOnceReadsAnAdHocRunLog: `oberth start -d` records the run under a
+// name and a log file. `status` publishes that name in ad_hoc_runs and its
+// exit hint says `oberth logs <name> --once`; the name therefore has to resolve
+// here even though no manifest declares it. Issue #393.
+func TestLogsOnceReadsAnAdHocRunLog(t *testing.T) {
+	restore := display.NoColor
+	display.NoColor = true
+	t.Cleanup(func() { display.NoColor = restore })
+
+	home := t.TempDir()
+	t.Setenv("BERTH_HOME", home)
+	t.Setenv("BERTH_DB", filepath.Join(home, "option-berth.db"))
+	demoProject(t)
+	logPath := filepath.Join(home, "logs", "demo", "ai-factory-server.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("listening 8096\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The pid is this process: Load prunes entries whose pid is gone, and the
+	// name is one the manifest does not declare.
+	if err := runs.Add(runs.Entry{
+		PID: os.Getpid(), ID: "run-adhoc", Group: "demo", Name: "ai-factory-server",
+		Cmd: "python3 server.py 8096", LogPath: logPath, LogOffset: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resetRouting(t)
+	noRuntimeServiceReachable(t)
+	withLogsFlags(t, func() { logsOnceFlag, logsLinesFlag = true, 10 })
+
+	var err error
+	out := captureStdout(t, func() { err = logsRun(logsTestCommand(), []string{"ai-factory-server"}) })
+	if err != nil {
+		t.Fatalf("logs ai-factory-server --once: %v", err)
+	}
+	want := "  " + logPath + "\n\nlistening 8096\n"
+	if out != want {
+		t.Fatalf("stdout = %q, want %q", out, want)
+	}
+}

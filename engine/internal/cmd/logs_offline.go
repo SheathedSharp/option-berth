@@ -120,3 +120,37 @@ func currentRunForLogPath(ctx context.Context, c *client.Client, target, logPath
 	}
 	return rec, records, true
 }
+
+// recordedRunLogPath answers a name the manifest does not declare. `oberth
+// start -d --name X` records the log its run writes, and status publishes that
+// name in ad_hoc_runs and in the exit hint `oberth logs X --once`; without this
+// the reader is sent to a command that refuses the very name it was told.
+// Only a current generation with a recorded path answers: a run that logged
+// nowhere has no file to open, and guessing one would invent evidence.
+func recordedRunLogPath(ctx context.Context, c *client.Client, group, target string) (string, bool) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	if group == "" {
+		group, _ = projectAt(wd)
+	}
+	if group == "" {
+		return "", false
+	}
+	var records []rpc.RunRecord
+	if c != nil {
+		var listed rpc.RunsListResult
+		if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
+			return "", false
+		}
+		records = append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
+	} else {
+		records, _ = offlineRunRecords(ctx, group)
+	}
+	rec, err := selectRunForLogs(records, group, target, "current")
+	if err != nil || rec.LogPath == "" {
+		return "", false
+	}
+	return rec.LogPath, true
+}
