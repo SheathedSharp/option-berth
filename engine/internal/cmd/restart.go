@@ -195,11 +195,10 @@ func restartRefusal(ctx context.Context, c *client.Client, params rpc.GroupsStar
 	if !ok || coded.Code != "not_found" || len(params.Only) == 0 {
 		return converted
 	}
-	var listed rpc.RunsListResult
-	if callErr := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); callErr != nil {
+	records, recordsErr := worktreeRuns(ctx, c, "")
+	if recordsErr != nil {
 		return converted
 	}
-	records := append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
 	return adHocRestartRefusal(coded, records, params)
 }
 

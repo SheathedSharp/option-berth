@@ -15,7 +15,6 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/docker"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
-	"github.com/sheathedsharp/option-berth/engine/internal/runs"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/spf13/cobra"
@@ -706,29 +705,23 @@ func logMetadataForTarget(ctx context.Context, c *client.Client, target string, 
 	if wd, err := os.Getwd(); err == nil {
 		group, _ = projectAt(wd)
 	}
-	if c != nil {
-		var listed rpc.RunsListResult
-		if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err == nil {
-			for _, rec := range listed.Runs {
-				if rec.Name == target && (group == "" || rec.Group == group) {
-					return logMetadataFromRun(rec)
-				}
-			}
-			for _, rec := range listed.Exited {
-				if rec.Name == target && (group == "" || rec.Group == group) {
-					return logMetadataFromRun(rec)
-				}
-			}
-		}
+	// Best effort by construction, but from the same set every other reader
+	// uses: a name this cannot resolve is a name the rest of the CLI cannot
+	// resolve either.
+	records, err := worktreeRuns(ctx, c, group)
+	if err != nil {
 		return meta
 	}
-
-	for _, rec := range runs.Load().Active() {
-		if rec.NameOf() == target && (group == "" || rec.GroupOf() == group) {
-			meta.RunID = rec.ID
-			meta.PID = rec.PID
-			meta.Status = "running"
-			return meta
+	// Live generations come first, matching selectRunForLogs: a name the
+	// service is running now is not answered by an older finished generation.
+	for _, rec := range records {
+		if rec.Name == target && rec.Status != "exited" {
+			return logMetadataFromRun(rec)
+		}
+	}
+	for _, rec := range records {
+		if rec.Name == target {
+			return logMetadataFromRun(rec)
 		}
 	}
 	return meta

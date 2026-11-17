@@ -96,6 +96,17 @@ func dedupeRunRecords(records []rpc.RunRecord) []rpc.RunRecord {
 // current generation with the ones before it. A record whose log path moved or
 // whose start offset was never recorded is not usable as a scope.
 func currentRunForLogPath(ctx context.Context, c *client.Client, target, logPath string) (rpc.RunRecord, []rpc.RunRecord, bool) {
+	rec, records, ok := currentRunForLogs(ctx, c, target)
+	if !ok || rec.LogPath != logPath || rec.LogOffset == nil {
+		return rpc.RunRecord{}, nil, false
+	}
+	return rec, records, true
+}
+
+// currentRunForLogs resolves the generation a name refers to right now, from the
+// one run-set resolver. Both log paths share it so the default read and the
+// ad-hoc-name fallback cannot disagree about which generation is "now".
+func currentRunForLogs(ctx context.Context, c *client.Client, target string) (rpc.RunRecord, []rpc.RunRecord, bool) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return rpc.RunRecord{}, nil, false
@@ -104,18 +115,12 @@ func currentRunForLogPath(ctx context.Context, c *client.Client, target, logPath
 	if group == "" {
 		return rpc.RunRecord{}, nil, false
 	}
-	var records []rpc.RunRecord
-	if c != nil {
-		var listed rpc.RunsListResult
-		if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
-			return rpc.RunRecord{}, nil, false
-		}
-		records = append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
-	} else {
-		records, _ = offlineRunRecords(ctx, group)
+	records, err := worktreeRuns(ctx, c, group)
+	if err != nil {
+		return rpc.RunRecord{}, nil, false
 	}
 	rec, err := selectRunForLogs(records, group, target, "current")
-	if err != nil || rec.LogPath != logPath || rec.LogOffset == nil {
+	if err != nil {
 		return rpc.RunRecord{}, nil, false
 	}
 	return rec, records, true
@@ -128,25 +133,19 @@ func currentRunForLogPath(ctx context.Context, c *client.Client, target, logPath
 // Only a current generation with a recorded path answers: a run that logged
 // nowhere has no file to open, and guessing one would invent evidence.
 func recordedRunLogPath(ctx context.Context, c *client.Client, group, target string) (string, bool) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", false
-	}
 	if group == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", false
+		}
 		group, _ = projectAt(wd)
 	}
 	if group == "" {
 		return "", false
 	}
-	var records []rpc.RunRecord
-	if c != nil {
-		var listed rpc.RunsListResult
-		if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
-			return "", false
-		}
-		records = append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
-	} else {
-		records, _ = offlineRunRecords(ctx, group)
+	records, err := worktreeRuns(ctx, c, group)
+	if err != nil {
+		return "", false
 	}
 	rec, err := selectRunForLogs(records, group, target, "current")
 	if err != nil || rec.LogPath == "" {

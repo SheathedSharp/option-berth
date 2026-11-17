@@ -144,12 +144,10 @@ func resolveRunForLogs(ctx context.Context, c *client.Client, target, selector s
 			"run this command inside a worktree with an oberth.yaml")
 	}
 
-	var listed rpc.RunsListResult
-	if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
-		return rpc.RunRecord{}, nil, cliError(err)
+	records, err := worktreeRuns(ctx, c, group)
+	if err != nil {
+		return rpc.RunRecord{}, nil, err
 	}
-
-	records := append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
 	rec, err := selectRunForLogs(records, group, target, selector)
 	return rec, records, err
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
@@ -63,17 +64,42 @@ func exitRunRecord(row store.RunExitRow) rpc.RunRecord {
 // store leaves the live records standing rather than replacing the refusal the
 // caller asked for with a storage error.
 func runLedgerRecords(ctx context.Context) []rpc.RunRecord {
-	registry := runs.Load()
-	records := make([]rpc.RunRecord, 0, len(registry.Runs))
-	for _, entry := range registry.Active() {
-		records = append(records, liveRunRecord(entry))
-	}
-	exits, err := storedRunExits(ctx)
-	if err != nil {
-		return records
-	}
-	for _, row := range exits {
-		records = append(records, exitRunRecord(row))
-	}
+	records, _ := worktreeRuns(ctx, nil, "")
 	return records
+}
+
+// worktreeRuns is the single answer to "which runs belong to this worktree".
+// Every command reads it instead of re-deriving the set, because a command that
+// derives its own answer can disagree with the command next to it: `logs` once
+// refused a name `status` had just printed, and `status --brief` could not name
+// a run `restart --run` could replay. Those were not three bugs; they were three
+// copies of this question.
+//
+// The runtime service owns the answer while it answers — it is the one writer of
+// run state — and the mirror plus the store are the same answer when it does not.
+// group scopes the answer to one worktree; "" asks for every run the ledger
+// holds, which only a caller explaining a refusal about an unknown project does.
+//
+// A nil client means the caller must not reach a host (explaining a refusal is no
+// reason to start one). Otherwise a host failure is returned rather than
+// silently answered from a possibly staler local copy.
+func worktreeRuns(ctx context.Context, c *client.Client, group string) ([]rpc.RunRecord, error) {
+	if c == nil {
+		return offlineRunRecords(ctx, group)
+	}
+	var listed rpc.RunsListResult
+	if err := c.Call(ctx, "runs.list", rpc.Empty{}, &listed); err != nil {
+		return nil, cliError(err)
+	}
+	records := append(append([]rpc.RunRecord{}, listed.Runs...), listed.Exited...)
+	if group == "" {
+		return records, nil
+	}
+	out := records[:0]
+	for _, record := range records {
+		if record.Group == group {
+			out = append(out, record)
+		}
+	}
+	return out, nil
 }
