@@ -15,6 +15,7 @@ Run `oberth doctor`, then `oberth status --json` in the affected worktree. Keep 
 | Fixed port is occupied | Service error and `last_exit.port_holder`, when present | Identify the owner; do not kill an unrelated process or silently edit the port |
 | `up --wait` times out | Service log, dependencies and health check | Fix the actual readiness failure; a live PID is not enough |
 | A worker has no listening port | Its run and exit fields | No-port workers are supported; do not infer “stopped” from no listener |
+| An agent starts services with `nohup` or kills them by hand | `oberth doctor --only agent_integration` and the worktree's `AGENTS.md` / `CLAUDE.md` | Paste the section from the [integration guide](integrations.md); do not add a hook or let the agent keep bypassing oberth |
 | `runtime_service_busy` | Matching host and database owner | Read through the owner, or stop a previous host normally before a version switch |
 | A group or identity is ambiguous | `worktrees --json` and the exact checkout path | Select the worktree/identity, not every matching name |
 | No update is announced | The first screen's version line, the installed PATH/version and `version --check` | An automatic notice is not guaranteed on every invocation; if the first screen says the update check is unavailable, run `version --check` yourself; explicit checking does not install |

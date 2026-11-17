@@ -157,10 +157,12 @@ var catalog = []check{
 	{id: "db_ok", ask: checkDBOK},
 	{id: "listener_observation", ask: checkListenerObservation},
 	{id: "project_config", ask: checkProjectConfig},
+	{id: "agent_integration", ask: checkAgentIntegration},
 	{id: "docker", ask: checkDocker},
 	// No row reports agent wiring: option-berth registers no MCP server, hook
 	// or another tool's config. The skill row only reads what a user already
-	// installed, and a single copy is never called outdated.
+	// installed, and a single copy is never called outdated; the integration
+	// row only reads the worktree's own instruction files.
 	{id: "agent_skill", ask: checkSkillVersion},
 	// The optional assessment goes last: it is enrichment, and its row must
 	// never push a fact or a control check off the table.
