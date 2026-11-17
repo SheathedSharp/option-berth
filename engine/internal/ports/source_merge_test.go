@@ -70,11 +70,12 @@ func TestMergeLimitClampsToTheChainLength(t *testing.T) {
 	if want := []string{"ss", "netstat"}; !reflect.DeepEqual(run.tried, want) {
 		t.Fatalf("collectors tried = %v, want the whole chain once", run.tried)
 	}
-	// Windows has a single rung, so any limit above it reads exactly that one.
-	single := &fakeCollectors{answers: map[string]collectorAnswer{"netstat": {out: netstatRow("18202", "77")}}}
-	if _, sources, err := collectListenersSources("windows", single.run, 4); err != nil ||
-		!reflect.DeepEqual(sources, []string{"netstat"}) {
-		t.Fatalf("sources=%v err=%v, want the single Windows rung", sources, err)
+	// Windows has a single rung, so any limit above it is still the platform's own
+	// table: no source list, because nothing was merged.
+	single := &fakeCollectors{answers: map[string]collectorAnswer{"netstat": {out: "  TCP    127.0.0.1:18202        0.0.0.0:0              LISTENING       77\n"}}}
+	rows, sources, err = collectListenersSources("windows", single.run, 4)
+	if err != nil || sources != nil || len(rows) != 1 {
+		t.Fatalf("rows=%v sources=%v err=%v, want the single Windows table", rows, sources, err)
 	}
 }
 
@@ -144,6 +145,29 @@ func TestMergeDropsAFailedCollector(t *testing.T) {
 	}
 	if want := []string{"netstat"}; !reflect.DeepEqual(sources, want) {
 		t.Fatalf("sources = %v, want only the collector that read a table", sources)
+	}
+}
+
+// A partial pass still read rows; the rest of its table is unknown. The union
+// keeps the verdict, so a reader cannot take the merged table as a clean read of
+// the whole machine.
+func TestMergeKeepsAPartialVerdict(t *testing.T) {
+	rows, sources, err := mergedScan(t, "darwin", 2, map[string]collectorAnswer{
+		"netstat": {out: darwinTCPHeader +
+			"tcp4 0 0 127.0.0.1.18120 *.* LISTEN 0 0 128 128 node:42 0 0\n" +
+			"tcp4 0\n"},
+		"lsof": {out: "p900\ncrelayd\nf3\ntIPv4\nn127.0.0.1:18123\n"},
+	})
+	if len(rows) != 2 || !reflect.DeepEqual(sources, []string{"netstat", "lsof"}) {
+		t.Fatalf("rows=%+v sources=%v, want the union of both tables", rows, sources)
+	}
+	var observed *ObservationError
+	if !errors.As(err, &observed) || !observed.Partial {
+		t.Fatalf("err=%v, want a partial observation", err)
+	}
+	got, ok := PartialRows(err)
+	if !ok || len(got) != 2 {
+		t.Fatalf("partial rows=%+v ok=%v, want the union", got, ok)
 	}
 }
 

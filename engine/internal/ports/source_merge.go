@@ -46,7 +46,9 @@ func ScanContextSources(ctx context.Context, limit int) ([]ListeningPort, []stri
 // What each rung contributes:
 //
 //   - readable rows contribute the rows and the name, whether the pass was clean
-//     or partial: a row that was read is a fact about this machine;
+//     or partial: a row that was read is a fact about this machine, and a
+//     partial pass keeps its verdict so the union is published as partial
+//     rather than as a clean table;
 //   - a clean table with no row contributes its name and no rows — the collector
 //     looked and saw nothing, which is not the same as not having looked, and
 //     the self-probe is still what decides what that silence means;
@@ -58,10 +60,17 @@ func collectListenersSources(platform string, run listenerCommand, limit int) ([
 	if len(rungs) == 0 {
 		return nil, nil, fmt.Errorf("unsupported platform: %s", platform)
 	}
-	limit = max(1, min(limit, len(rungs)))
+	// One table is not a merge: the platform's own answer travels in
+	// observation.source, and a one-element list would make a primary table look
+	// narrow. A one-rung platform stays single however large the limit is.
+	if limit <= 1 || len(rungs) == 1 {
+		rows, err := rungs[0].collect(run)
+		return rows, nil, err
+	}
+	limit = min(limit, len(rungs))
 	merged := newRowUnion()
 	sources := make([]string, 0, limit)
-	var failures []error
+	var failures, partials []error
 	for _, rung := range rungs[:limit] {
 		rows, err := rung.collect(run)
 		if withdrawn(err) {
@@ -73,6 +82,12 @@ func collectListenersSources(platform string, run listenerCommand, limit int) ([
 		case len(rows) > 0:
 			merged.add(rows)
 			sources = append(sources, rung.Name)
+			if err != nil {
+				// A partial pass still read rows, but the rest of its table is
+				// unknown. Dropping the error here would publish the union as a
+				// clean observation of the whole machine.
+				partials = append(partials, err)
+			}
 		case err == nil:
 			sources = append(sources, rung.Name)
 		default:
@@ -80,11 +95,38 @@ func collectListenersSources(platform string, run listenerCommand, limit int) ([
 		}
 	}
 	if len(sources) > 0 {
-		return merged.rows(), sources, nil
+		rows := merged.rows()
+		return rows, sources, mergedPartial(partials, rows)
 	}
 	// At least one rung ran, and every rung that ran either contributed or
 	// failed, so an empty source list means the primary's reason is here to keep.
 	return nil, nil, simultaneousFailure(failures[0], failures[1:]...)
+}
+
+// mergedPartial keeps the verdict of any collector whose pass was incomplete.
+// The union's readable rows stay facts; the unreadable part of one contributor's
+// table is still unknown, and the caller must publish that verdict with the
+// rows rather than a clean observation.
+func mergedPartial(partials []error, rows []ListeningPort) error {
+	if len(partials) == 0 {
+		return nil
+	}
+	first := partials[0]
+	detail := first.Error()
+	for _, partial := range partials[1:] {
+		detail += "; " + partial.Error()
+	}
+	var observed *ObservationError
+	if errors.As(first, &observed) {
+		return &ObservationError{
+			Code: observed.Code, Detail: detail, Hint: observed.Hint,
+			Err: first, Partial: true, Rows: rows,
+		}
+	}
+	return &ObservationError{
+		Code: CodeObservationIncomplete, Detail: detail, Hint: observationIncompleteHint,
+		Err: first, Partial: true, Rows: rows,
+	}
 }
 
 // socketID is one socket as two collectors can both name it: one port on one
