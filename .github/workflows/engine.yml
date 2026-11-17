@@ -36,15 +36,31 @@ jobs:
           mkdir -p verification
           git rev-parse HEAD > verification/commit.txt
           git rev-parse 'HEAD^{tree}' > verification/tree.txt
-      # The skill is a separate repository, but it teaches this contract. Merge
-      # the skill update first; this check fails until its main covers every
-      # stable error code, manifest field, reference, and observation state.
-      - name: Check out the agent skill
+      # The skill is a separate repository, but it teaches this contract. The
+      # required check reads the commit recorded in .github/skill-contract-ref.txt
+      # so an unrelated push to the skill repository cannot turn this pull
+      # request red; moving that pin is how a skill change is adopted.
+      - name: Read the pinned skill contract commit
+        id: skill-pin
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin=$(tr -d '[:space:]' < .github/skill-contract-ref.txt)
+          # `main` was the old value here: it made this required check depend on
+          # a repository the pull request author cannot change.
+          if ! [[ $pin =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::.github/skill-contract-ref.txt must hold one 40-character commit SHA, got '$pin'"
+            exit 1
+          fi
+          echo "sha=$pin" >> "$GITHUB_OUTPUT"
+          echo "skill contract pin: $pin"
+      - name: Check out the agent skill at the pinned commit
         if: runner.os == 'Linux'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: SheathedSharp/option-berth-skill
-          ref: main
+          ref: ${{ steps.skill-pin.outputs.sha }}
           path: option-berth-skill
           persist-credentials: false
       - name: Skill covers the agent contract
