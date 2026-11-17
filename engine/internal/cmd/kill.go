@@ -124,7 +124,14 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 		return err
 	}
 
-	if len(resolved.targets) == 0 {
+	// Without a host the named runs have to become process-local targets here,
+	// which is also the only place the recorded birth time is checked: nothing
+	// below can pin a generation a pid selector does not carry.
+	targets, err := resolved.localTargets()
+	if err != nil {
+		return err
+	}
+	if len(targets) == 0 {
 		return reportKill(os.Stdout, nil, rows, killJSONFlag, killDryRunFlag)
 	}
 
@@ -142,7 +149,7 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 
 	return killRequest{
 		exec:     killHere,
-		targets:  resolved.targets,
+		targets:  targets,
 		snapshot: rows,
 		opts:     opts,
 		confirm:  resolved.confirm && !killYesFlag && !killDryRunFlag,
@@ -335,11 +342,29 @@ func namedRuns(records []rpc.RunRecord, group string, names []string) ([]rpc.Run
 	return out, nil
 }
 
-// runTargets turns resolved runs into killer targets that pin the recorded
-// generation: the root pid plus the birth time the host recorded for it. The
-// birth time is what makes the stop safe against a recycled pid, so a run whose
-// start was never recorded is refused rather than signalled blind — the same
-// rule the runtime service's own exact-run stop applies.
+// liveRunRecords drops the generations that have already ended. A stop of a run
+// that is not running asks for the end state the caller already has, so it is
+// nothing to stop rather than a target — and certainly not the process that
+// happens to hold the pid now.
+func liveRunRecords(records []rpc.RunRecord) []rpc.RunRecord {
+	out := make([]rpc.RunRecord, 0, len(records))
+	for _, rec := range records {
+		if rec.Status != "exited" {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// runTargets is the no-host route's reading of a named run: its root pid plus the
+// birth time the host recorded for it. The birth time is what makes a pid-only
+// stop safe against a recycled pid, so a run whose start was never recorded is
+// refused rather than signalled blind — the same rule the runtime service's own
+// exact-run stop applies.
+//
+// It is not how a named run reaches a host. A pid selector has no room for the
+// claim, so a host would receive a bare pid and lose exactly the thing that makes
+// the stop safe; a named run with a host therefore travels as its run id.
 func runTargets(records []rpc.RunRecord) ([]killer.Target, error) {
 	out := make([]killer.Target, 0, len(records))
 	for _, rec := range records {
@@ -404,6 +429,26 @@ type killResolution struct {
 	targets []killer.Target
 	confirm bool
 	tree    bool
+	// runs and group are the subject when names resolved to runs. A run is
+	// stopped by its identity, so a route that has a host sends these to
+	// `groups.kill`'s run selector and leaves targets empty; a route without
+	// one turns them into pinned pid targets first (localTargets).
+	runs  []rpc.RunRecord
+	group string
+}
+
+// empty reports whether the selection named nothing to stop.
+func (r killResolution) empty() bool { return len(r.targets) == 0 && len(r.runs) == 0 }
+
+// localTargets is the resolution as a process-local signal: ports and pids as
+// they are, and each named run as its recorded root pid plus the birth time that
+// pins the generation. It is the only reading of a named run a route without a
+// host can use, because a pid selector is the whole vocabulary such a route has.
+func (r killResolution) localTargets() ([]killer.Target, error) {
+	if len(r.runs) == 0 {
+		return r.targets, nil
+	}
+	return runTargets(r.runs)
 }
 
 // resolveKill turns the positional arguments into a stop request. A number is a
@@ -441,15 +486,28 @@ func resolveKill(ctx context.Context, c *client.Client, args []string, snapshot 
 	if err != nil {
 		return killResolution{}, err
 	}
+	return namedRunResolution(records, group, names, killNoEscalateFlag)
+}
+
+// namedRunResolution turns run names into the stop they spell. The names resolve
+// by the one rule the product has for that question, ended generations drop out
+// because a stop of a run that is not running is nothing to stop, and the result
+// names the runs themselves rather than the pids they held — a host that owns the
+// ledger stops a run by identity, and only a route without one needs the pid.
+//
+// noEscalate is refused rather than ignored: a run is stopped whole, so the flag
+// would promise a politeness this subject cannot express.
+func namedRunResolution(records []rpc.RunRecord, group string, names []string, noEscalate bool) (killResolution, error) {
+	if noEscalate {
+		return killResolution{}, usageError{fmt.Errorf(
+			"--no-escalate cannot be combined with a run (%s): a run is stopped as a whole tree",
+			strings.Join(names, ", "))}
+	}
 	resolved, err := namedRuns(records, group, names)
 	if err != nil {
 		return killResolution{}, err
 	}
-	targets, err := runTargets(resolved)
-	if err != nil {
-		return killResolution{}, err
-	}
-	return killResolution{targets: targets, tree: true}, nil
+	return killResolution{runs: liveRunRecords(resolved), group: group, tree: true}, nil
 }
 
 // positionalTarget treats a bare number as a port, unless nothing listens on

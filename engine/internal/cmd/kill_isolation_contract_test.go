@@ -12,6 +12,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
@@ -124,12 +125,24 @@ func TestKillRuntimeServiceRoutesRefuseWithoutABoundFixture(t *testing.T) {
 			c := fakeRuntimeServiceKillClient()
 			targets := []killer.Target{{Port: 3100, PID: 4242}}
 
-			results, err := killInRuntimeService(c)(context.Background(), targets, killer.Options{}, tc.dryRun)
+			results, err := killInRuntimeService(c, killResolution{})(context.Background(), targets, killer.Options{}, tc.dryRun)
 			if !errors.Is(err, errUnscopedRuntimeServiceKill) {
 				t.Fatalf("killInRuntimeService err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 			}
 			if results != nil {
 				t.Fatalf("killInRuntimeService results = %+v, want nothing: a refusal is not a kill result", results)
+			}
+
+			// A named run takes a different RPC, so it is a separate round the
+			// guard has to gate: an ungated one would stop a run through an
+			// arbitrary runtime service even though the port route is refused.
+			byRun := killResolution{runs: []rpc.RunRecord{{ID: "run-synthetic"}}, group: "synthetic"}
+			results, err = killInRuntimeService(c, byRun)(context.Background(), nil, killer.Options{}, tc.dryRun)
+			if !errors.Is(err, errUnscopedRuntimeServiceKill) {
+				t.Fatalf("killInRuntimeService(named run) err = %v, want %v", err, errUnscopedRuntimeServiceKill)
+			}
+			if results != nil {
+				t.Fatalf("killInRuntimeService(named run) results = %+v, want nothing: a refusal is not a kill result", results)
 			}
 
 			results, err = killSessionInRuntimeService(c, "sess-synthetic")(context.Background(), nil, killer.Options{}, tc.dryRun)
@@ -161,8 +174,12 @@ func TestKillRuntimeServiceRoutesRefuseAnUnboundClientInstance(t *testing.T) {
 	}
 
 	targets := []killer.Target{{PID: 4242}}
-	if _, err := killInRuntimeService(stranger)(context.Background(), targets, killer.Options{}, false); !errors.Is(err, errUnscopedRuntimeServiceKill) {
+	if _, err := killInRuntimeService(stranger, killResolution{})(context.Background(), targets, killer.Options{}, false); !errors.Is(err, errUnscopedRuntimeServiceKill) {
 		t.Fatalf("killInRuntimeService on an unbound instance err = %v, want %v", err, errUnscopedRuntimeServiceKill)
+	}
+	byRun := killResolution{runs: []rpc.RunRecord{{ID: "run-synthetic"}}, group: "synthetic"}
+	if _, err := killInRuntimeService(stranger, byRun)(context.Background(), nil, killer.Options{}, false); !errors.Is(err, errUnscopedRuntimeServiceKill) {
+		t.Fatalf("killInRuntimeService(named run) on an unbound instance err = %v, want %v", err, errUnscopedRuntimeServiceKill)
 	}
 	if _, err := killSessionInRuntimeService(stranger, "sess-synthetic")(context.Background(), nil, killer.Options{}, false); !errors.Is(err, errUnscopedRuntimeServiceKill) {
 		t.Fatalf("killSessionInRuntimeService on an unbound instance err = %v, want %v", err, errUnscopedRuntimeServiceKill)
@@ -224,12 +241,21 @@ func TestKillRuntimeServiceExecutorsUseInjectedGuard(t *testing.T) {
 
 	targets := []killer.Target{{Port: 3100, PID: 4242}}
 
-	results, err := killInRuntimeService(c)(context.Background(), targets, killer.Options{}, false)
+	results, err := killInRuntimeService(c, killResolution{})(context.Background(), targets, killer.Options{}, false)
 	if err != injected {
 		t.Fatalf("killInRuntimeService err = %v, want the injected guard error %v", err, injected)
 	}
 	if results != nil {
 		t.Fatalf("killInRuntimeService results = %+v, want nothing: a refusal is not a kill result", results)
+	}
+
+	byRun := killResolution{runs: []rpc.RunRecord{{ID: "run-synthetic"}}, group: "synthetic"}
+	results, err = killInRuntimeService(c, byRun)(context.Background(), nil, killer.Options{}, false)
+	if err != injected {
+		t.Fatalf("killInRuntimeService(named run) err = %v, want the injected guard error %v", err, injected)
+	}
+	if results != nil {
+		t.Fatalf("killInRuntimeService(named run) results = %+v, want nothing: a refusal is not a kill result", results)
 	}
 
 	results, err = killSessionInRuntimeService(c, "sess-synthetic")(context.Background(), nil, killer.Options{}, false)
@@ -240,8 +266,8 @@ func TestKillRuntimeServiceExecutorsUseInjectedGuard(t *testing.T) {
 		t.Fatalf("killSessionInRuntimeService results = %+v, want nothing: a refusal is not a kill result", results)
 	}
 
-	if calls != 2 {
-		t.Fatalf("the installed guard ran %d time(s), want exactly once per route (2)", calls)
+	if calls != 3 {
+		t.Fatalf("the installed guard ran %d time(s), want exactly once per route (3)", calls)
 	}
 }
 

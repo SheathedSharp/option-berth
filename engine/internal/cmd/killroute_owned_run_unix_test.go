@@ -208,6 +208,57 @@ func TestKillJSONNamesAnOwnedRunForAPIDOnBothPaths(t *testing.T) {
 	}
 }
 
+// TestKillByNameStopsTheRunThroughTheRuntimeService is the end-to-end half of
+// the named-run selector. There is a host, so the stop is the runtime service's
+// own: it resolves the name against the run ledger it owns, stops that run's
+// tree, and reports it — the wrapper and the listener both go.
+//
+// The name is what the caller has: `status` publishes it and `logs` accepts it,
+// so `kill` has to reach the same run without the caller finding a pid first.
+func TestKillByNameStopsTheRunThroughTheRuntimeService(t *testing.T) {
+	resetRouting(t)
+	t.Setenv("BERTH_HOME", t.TempDir())
+	run := startOwnedRun(t)
+
+	// The name resolves inside a project, so the command runs in one whose group
+	// is the group the run was recorded under.
+	dir := t.TempDir()
+	manifest := "name: storefront\nservices:\n  - name: api\n    cmd: echo api\n"
+	if err := os.WriteFile(filepath.Join(dir, "oberth.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	startScanningRuntimeService(t)
+
+	// The plan comes first: it has to name the run, or the caller is being told
+	// there is nothing to stop right before something is stopped.
+	withKillFlags(t, func() { killDryRunFlag = true })
+	plan, err := runKillCmd(t, "api")
+	if err != nil {
+		t.Fatalf("kill api --dry-run: %v\n%s", err, plan)
+	}
+	if !strings.Contains(plan, "api") || strings.Contains(plan, "Nothing to stop") {
+		t.Fatalf("plan = %q, want the run the name named", plan)
+	}
+	if !run.alive(run.listenerID) || !run.alive(run.rootID) {
+		t.Fatal("a dry run stopped something")
+	}
+	killDryRunFlag = false
+
+	out, err := runKillCmd(t, "api")
+	if err != nil {
+		t.Fatalf("kill api: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "api") {
+		t.Fatalf("stdout = %q, want the run the name named", out)
+	}
+	// A run is its whole tree: stopping only the listener would leave the
+	// wrapper running, which is the thing the caller was trying to end.
+	run.waitGone(t, run.listenerID, "the listener")
+	run.waitGone(t, run.rootID, "the run root")
+}
+
 // TestKillPIDStopsTheOwnedRunTreeAndReportsTheReleasedURL is the behavior the
 // parity test above can only imply: `kill --pid <a run's listener>` stops the
 // run — the wrapper goes with the listener — and reports the address that was

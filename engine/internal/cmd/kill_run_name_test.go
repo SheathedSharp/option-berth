@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 )
 
@@ -85,6 +86,91 @@ func TestNamedRunsRefuseAnAmbiguousName(t *testing.T) {
 	code, _, hint := describe(err)
 	if code != "ambiguous" || !strings.Contains(hint, "run-a") || !strings.Contains(hint, "run-b") {
 		t.Fatalf("code = %q hint = %q, want both run ids offered", code, hint)
+	}
+}
+
+// A host that owns the run ledger stops a name by the run's identity, not by a
+// pid: the generation is captured there, from the record that names it. The
+// resolution therefore carries the runs themselves, and the wire selector — which
+// has no room for a birth time — is never the shape they travel in.
+func TestNamedRunResolutionCarriesTheRunsNotAPid(t *testing.T) {
+	records := []rpc.RunRecord{
+		{ID: "run-a", PID: 4242, Group: "shop", Name: "api", Status: "running",
+			StartedAt: "2026-11-16T09:00:00Z"},
+	}
+	resolved, err := namedRunResolution(records, "shop", []string{"api"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.targets) != 0 {
+		t.Fatalf("targets = %+v, want none: a host stops the run by identity", resolved.targets)
+	}
+	if len(resolved.runs) != 1 || resolved.runs[0].ID != "run-a" {
+		t.Fatalf("runs = %+v, want the run the name spells", resolved.runs)
+	}
+	if resolved.group != "shop" {
+		t.Fatalf("group = %q, want the worktree's group", resolved.group)
+	}
+	if !resolved.tree {
+		t.Fatal("a run is a tree; the resolution has to say so")
+	}
+}
+
+// The stop a named run becomes once a host answers names the group and the run
+// ids and nothing else. A field that selects by service, by expected run or for
+// release would widen one run's stop into the group's.
+func TestRunStopParamsCannotWidenIntoAGroupStop(t *testing.T) {
+	params := runStopParams("shop", []string{"run-a", "run-b"}, killer.Options{Force: true, Grace: 3 * time.Second}, false)
+	if params.Name != "shop" {
+		t.Errorf("name = %q, want the worktree's group", params.Name)
+	}
+	if strings.Join(params.Runs, ",") != "run-a,run-b" {
+		t.Errorf("runs = %v, want exactly the named runs", params.Runs)
+	}
+	if len(params.Only) != 0 || len(params.ExpectRuns) != 0 || params.Release {
+		t.Errorf("params = %+v, want nothing that widens the stop", params)
+	}
+	if !params.Force || params.GraceMs != 3000 {
+		t.Errorf("params = %+v, want the flags carried", params)
+	}
+}
+
+// A run that already ended is not a stop subject: the end state the caller asked
+// for holds, so it is dropped rather than sent to a host that would call it a
+// failure.
+func TestLiveRunRecordsDropEndedGenerations(t *testing.T) {
+	live := liveRunRecords([]rpc.RunRecord{
+		{ID: "run-a", Status: "running"},
+		{ID: "run-old", Status: "exited"},
+	})
+	if len(live) != 1 || live[0].ID != "run-a" {
+		t.Fatalf("live = %+v, want only the running generation", live)
+	}
+}
+
+// Every named generation having ended means there is nothing to stop — not a
+// failure and not a stop of some other process that now holds the pid.
+func TestNamedRunResolutionReportsNothingToStopWhenEveryRunEnded(t *testing.T) {
+	resolved, err := namedRunResolution([]rpc.RunRecord{
+		{ID: "run-old", PID: 4242, Group: "shop", Name: "api", Status: "exited",
+			StartedAt: "2026-11-16T09:00:00Z"},
+	}, "shop", []string{"api"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.runs) != 0 || len(resolved.targets) != 0 {
+		t.Fatalf("resolution = %+v, want an empty stop", resolved)
+	}
+}
+
+// A run is stopped whole, so the flag that would ask for a half stop is a flag
+// combination the subject cannot carry. Refusing says so; ignoring it would send
+// SIGKILL after a stop the caller asked to keep polite.
+func TestNamedRunResolutionRefusesNoEscalate(t *testing.T) {
+	_, err := namedRunResolution(nil, "shop", []string{"api"}, true)
+	code, msg, _ := describe(err)
+	if code != "invalid_params" || !strings.Contains(msg, "--no-escalate") {
+		t.Fatalf("code = %q msg = %q, want the refused flag named", code, msg)
 	}
 }
 
