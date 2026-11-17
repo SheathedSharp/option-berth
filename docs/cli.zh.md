@@ -47,6 +47,17 @@
   事实，但缺失不是：消费者先读 `observation.source`，再判断端口是否空闲。窄表里缺失的端口
   `machine[].listening_known` 为 false，`port: auto` 逐个用绑定实测而不是信任缺失，
   人读的 `status` 打印 `listening unknown`。
+- `runtime_service.observe_sources`（默认 1）决定一轮扫描最多读这条链的几级。默认仍是单采集器，
+  由 `observation.source` 写明答话的那一级；大于 1 的 N 会被裁到本平台采集链的长度（macOS 和
+  Linux 为 2，Windows 为 1），并发布 `observation.sources`——按链顺序列出参与合并的采集器，
+  此时 `observation.source` 为空。读到行的采集器贡献这些行；跑干净却什么都没看到的只贡献名字；
+  硬失败什么都不贡献，所以失败的一级永远不能把没读到的端口变成“没有监听”。合并表一律是窄表：
+  表里的行是事实，缺失的端口是未知而不是空闲，`machine[].listening_known` 与有名字的 source
+  同一规则，`detail` 写明这轮由哪些采集器合并而来。
+- `observation.degraded_since` 与 `observation.recovered_at` 是由 Runtime Service 维护的
+  RFC 3339 时间。前者是已发布的观察不再由主采集器整表读出的起始时刻；后者是这样的降级之后
+  重新开始健康运行的时刻，并一直保留到下一次降级。`checked_at` 只是最近一次检查的时刻，不是
+  降级的起点。直读（`--no-runtime-service`）没有历史，这两个字段都为空。
 - --no-runtime-service 让事实读取在本地采集，不连接或启动 Runtime Service；记录及起停 run 的操作仍需要宿主。历史记录只在离线时从同一数据库只读读取；活跃拥有者持有数据库时，直接读取返回 `runtime_service_busy`，不能假装历史为空。在线读取应去掉该参数，通过拥有者宿主查询。
 - 不接受任何不被读取的协议字段。协议 schema 由 runtime service 的 Go 类型生成，因此在那里声明的字段是
   每个客户端都可以依赖的承诺；一个没有任何 handler 处理的字段比缺一个更糟，因为调用会成功，
@@ -185,7 +196,8 @@ worker 不再因为不占端口而看不到资源。没有样本时字段缺省�
 该事实、路径无法解析、或文件已不在——不是“没变”。
 
 监听表不可信时（例如 agent 沙箱拒绝系统内省），`status` 仍然返回清单、服务、运行记录、
-日志路径和最近退出；顶层带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`）。
+日志路径和最近退出；顶层带 `observation`（`state`、`code`、`source`、`sources`、`detail`、`hint`、
+`checked_at`、`degraded_since`、`recovered_at`）。
 完全失明时 `ports` 为空、`port_actual` 为 null；部分行不可读时 `ports` 只含可读行，
 未读到的端口不在其中，`observation.state` 为 partial。`up --wait` 在所选服务需要监听或健康观察、且观察不是 observable 时
 立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对托管服务
@@ -411,6 +423,9 @@ worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入�
 | `worktree.identity` | `status` | `${worktree}` 的展开值，用于命名 per-worktree 数据。 |
 | `observation.state` | `status` | 监听表是否可信；先读它再读 `ports`。 |
 | `observation.source` | `status` | 非主采集器或 `runtime_registry` 回退；非空表示缺失的端口是未知，不是空闲。 |
+| `observation.sources` | `status` | 合并表由哪些采集器按链顺序合成；只在合并读时出现，与 `source` 一样表示缺失的端口是未知，不是空闲。 |
+| `observation.degraded_since` | `status` | 当前这次降级从何时开始；主采集器整表读出时为空。 |
+| `observation.recovered_at` | `status` | 降级之后当前这段健康运行从何时开始；从未降级时为空。 |
 | `machine[].listening_known` | `status` | `listening` 是否是观察到的；false 表示这张表看不到该端口的所有者。 |
 | `attn_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
 | `attn` | `status` | 这份交接现在能否被评估：`enabled`、固定 `reason`、`assessment`（`assessed`、`pending` 或 `unavailable`）。 |

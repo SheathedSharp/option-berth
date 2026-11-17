@@ -46,6 +46,20 @@ Use the [documentation index](index.md) to select a task. Below are common rules
   `observation.source` before concluding that a port is free. `machine[].listening_known` is false
   for a port missing from a narrow table, `port: auto` verifies each candidate by binding it instead
   of trusting absence, and the human `status` prints `listening unknown`.
+- `runtime_service.observe_sources` (default 1) says how many rungs of that chain one scan may read.
+  The default stays a single collector, whose alternative is named in `observation.source`; a larger
+  N is clamped to the platform's chain length (two on macOS and Linux, one on Windows) and publishes
+  `observation.sources`, the collectors that contributed, in chain order, while `observation.source`
+  stays empty. A collector that read rows contributes them; one that ran clean and saw nothing
+  contributes its name alone; one that failed contributes nothing, so a failing rung can never turn
+  an unread port into an absent one. A merged table is always narrow — its rows are facts, a port
+  missing from it is unknown rather than free, `machine[].listening_known` follows the same rule as
+  for a named source, and its `detail` names the collectors it came from.
+- `observation.degraded_since` and `observation.recovered_at` are RFC 3339 times maintained by the
+  Runtime Service. The first is when the published observation stopped being a whole read of the
+  primary table; the second is when a healthy run began again after such a degradation, and it stays
+  until the next one. `checked_at` is only the moment of the latest check, never the start of a
+  degradation. A direct `--no-runtime-service` read has no history, so it leaves both empty.
 
 - --no-runtime-service makes fact reads collect locally without connecting to or starting a Runtime Service; operations that record or start/stop runs still need the host. Historical records use the same database read-only while it is offline. If an active owner holds it, the direct read returns `runtime_service_busy`, not empty history; omit the flag for online reads through the owning host.
 - No wire field is accepted without being read. The protocol schema is generated from the runtime service's Go types, so a field declared there is a promise every client may rely on; a field no handler acts on is worse than a missing one, because the call succeeds and the caller cannot tell it was ignored. Every field a method's params can carry is therefore read by this repository's own code, and `internal/runtimesvc/rpc` fails the build otherwise. Withdrawing a published field is a protocol change; the names removed on purpose are recorded in that package so they cannot return silently.
@@ -218,7 +232,8 @@ fact, the path could not be resolved, or the file is gone — never "unchanged".
 
 When the listener table cannot be trusted (for example an agent sandbox refuses system introspection),
 `status` still returns the manifest, services, run records, log paths and recent exits; the top level
-carries `observation` (`state`, `code`, `detail`, `hint`, `checked_at`). When fully blind, `ports` is
+carries `observation` (`state`, `code`, `source`, `sources`, `detail`, `hint`, `checked_at`,
+`degraded_since`, `recovered_at`). When fully blind, `ports` is
 empty and `port_actual` is null; when some lines are unreadable, `ports` contains only the readable
 lines, ports that were not read are not in it, and `observation.state` is partial. `up --wait` returns
 an observation-class error immediately when a selected service needs listener/health observation and it is not observable, and keeps the run it
@@ -486,6 +501,9 @@ or renaming one.
 | `worktree.identity` | `status` | The expanded value of `${worktree}`, used to name per-worktree data. |
 | `observation.state` | `status` | Whether the listener table can be trusted; read it before `ports`. |
 | `observation.source` | `status` | The non-primary collector or `runtime_registry` fallback; non-empty means a missing port is unknown, not free. |
+| `observation.sources` | `status` | Every collector a merged table came from, in chain order; present only for a merged read, and like `source` it means a missing port is unknown, not free. |
+| `observation.degraded_since` | `status` | When the current degradation began; empty while the primary collector reads the whole table. |
+| `observation.recovered_at` | `status` | When the current healthy run began after a degradation; empty when nothing was degraded. |
 | `machine[].listening_known` | `status` | Whether `listening` was observed; false means the table cannot see that port's owner. |
 | `attn_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
 | `attn` | `status` | Whether that handoff can be assessed now: `enabled`, fixed `reason`, `assessment` (`assessed`, `pending` or `unavailable`). |
