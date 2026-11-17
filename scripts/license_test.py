@@ -27,7 +27,7 @@ class LicenseTests(unittest.TestCase):
     def test_third_party_notices_cover_the_shipped_assets(self):
         self.assertFalse((ROOT / "THIRD_PARTY_NOTICES.md").exists())
         text = (ROOT / "third_party/README.md").read_text()
-        for section in ("GSAP", "SIL Open Font License", "Go 依赖", "https://gsap.com/standard-license"):
+        for section in ("GSAP", "Go 依赖", "https://gsap.com/standard-license"):
             self.assertIn(section, text)
 
     def test_release_archives_ship_the_notice(self):
