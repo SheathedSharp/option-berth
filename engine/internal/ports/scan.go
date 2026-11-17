@@ -148,12 +148,19 @@ func collectListenersSource(platform string, run listenerCommand) ([]ListeningPo
 }
 
 // retryable reports whether a primary collector left nothing usable, so another
-// rung may still answer. Only the "ran, but printed no table at all" shape does
-// today (the macOS 27 shape, issue #156): the command succeeded and produced
-// nothing to decode, which is exactly what a second collector exists for. A
-// table that was printed and could not be decoded is a decoder problem, and
-// switching tools would hide it. A withdrawn observation belongs to the caller,
-// so no second command runs after one.
+// rung may still answer.
+//
+// Three shapes qualify: the tool is not installed; it ran and printed no table
+// at all (the macOS 27 shape, issue #156); or its pass was invalidated with no
+// readable row.
+//
+// Two shapes never do. A pass that produced readable rows is a fact about this
+// machine and stays the answer even though it failed: those rows are published
+// with their verdict, and another tool's table must not replace them. A pass the
+// decoder marked Partial is the collector's own answer that the table was
+// printed but unreadable — no row may survive it — and switching tools would
+// hide a decoder problem instead of reporting it. A withdrawn observation
+// belongs to the caller, so no second command runs after one.
 func retryable(rows []ListeningPort, err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
@@ -162,7 +169,14 @@ func retryable(rows []ListeningPort, err error) bool {
 		return false
 	}
 	var observed *ObservationError
-	return errors.As(err, &observed) && observed.Code == CodeObservationEmpty
+	if errors.As(err, &observed) {
+		return !observed.Partial &&
+			(observed.Code == CodeObservationEmpty || observed.Code == CodeObservationIncomplete)
+	}
+	// A bare failure — the executable is not installed, the command was refused
+	// before it read anything — has no table behind it, so the next rung may
+	// still produce one.
+	return true
 }
 
 // simultaneousFailure reports every collector that failed. The primary keeps its
