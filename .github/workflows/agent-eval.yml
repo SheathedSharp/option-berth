@@ -383,7 +383,7 @@ jobs:
           chmod +x source/bin/oberth
           source/bin/oberth version --json
       - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v4
         with:
           node-version: '22.20.0'
       - name: Install this shard's agent
