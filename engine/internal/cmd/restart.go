@@ -208,12 +208,17 @@ func restartRefusal(ctx context.Context, c *client.Client, params rpc.GroupsStar
 // manifest-present refusal prints. Only when no requested name is in the ledger
 // does the manifest refusal stand: it is the answer that tells the caller how to
 // make the project usable.
+//
+// A nil client is the point: explaining a refusal is no reason to start a host,
+// and an unreadable store leaves the live runs standing rather than replacing the
+// refusal with a storage error.
 func restartWithoutManifest(ctx context.Context, params rpc.GroupsStartParams, err error) error {
 	var coded *cliErr
 	if !errors.As(err, &coded) || coded.Code != "not_found" {
 		return err
 	}
-	return adHocRestartRefusal(coded, runLedgerRecords(ctx), params)
+	records, _ := worktreeRuns(ctx, nil, "")
+	return adHocRestartRefusal(coded, records, params)
 }
 
 // adHocRestartRefusal keeps a refusal's code and message and replaces its hint

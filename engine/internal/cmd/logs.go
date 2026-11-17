@@ -148,7 +148,8 @@ func logsFromResolvedTarget(ctx context.Context, target, bindIP string) error {
 		// A service log file is append-only across generations. Scope the
 		// default read to the generation that is current now; when no run
 		// records its start, read the file but say the scope is unknown.
-		if rec, records, ok := currentRunForLogPath(ctx, c, target, logPath); ok {
+		if rec, records, ok := currentRunForLogs(ctx, c, "", target); ok &&
+			rec.LogPath == logPath && rec.LogOffset != nil {
 			meta = logMetadataFromRunRecord(rec)
 			meta.Service = target
 			rng := runLogRange(rec, records)
@@ -288,8 +289,8 @@ func resolveLogTarget(ctx context.Context, c *client.Client, target, bindIP stri
 	// exit hint is `oberth logs X --once`, so the name has to resolve here. The
 	// run record is the authority for its own log path, the same rule
 	// `logs --run` follows.
-	if path, ok := recordedRunLogPath(ctx, c, name, target); ok {
-		return nil, path, nil
+	if rec, _, ok := currentRunForLogs(ctx, c, name, target); ok && rec.LogPath != "" {
+		return nil, rec.LogPath, nil
 	}
 	if groupKnown {
 		return nil, "", failHint("not_found", fmt.Sprintf("no service named %q in %s", target, name),

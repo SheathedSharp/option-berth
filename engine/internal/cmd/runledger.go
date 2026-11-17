@@ -63,19 +63,6 @@ func exitRunRecord(row store.RunExitRow) rpc.RunRecord {
 	return record
 }
 
-// runLedgerRecords is the whole ledger as records: live runs from the mirror,
-// ended runs from the store. It never starts a runtime service — explaining a
-// refusal is no reason to bring one up — and never takes the write path; the
-// ended half is read through a runtime service that already answers, or from the
-// store read-only when none does.
-//
-// The ended half only sharpens an answer the caller already has: an unreadable
-// store leaves the live records standing rather than replacing the refusal the
-// caller asked for with a storage error.
-func runLedgerRecords(ctx context.Context) []rpc.RunRecord {
-	records, _ := worktreeRuns(ctx, nil, "")
-	return records
-}
 
 // worktreeRuns is the single answer to "which runs belong to this worktree".
 // Every command reads it instead of re-deriving the set, because a command that

@@ -61,66 +61,33 @@ func dedupeRunRecords(records []rpc.RunRecord) []rpc.RunRecord {
 	return out
 }
 
-// currentRunForLogPath finds the generation whose bytes the default `logs
-// <service>` read should show. It asks the runtime service when one answers
-// and uses local evidence otherwise, so a stopped host does not mix the
-// current generation with the ones before it. A record whose log path moved or
-// whose start offset was never recorded is not usable as a scope.
-func currentRunForLogPath(ctx context.Context, c *client.Client, target, logPath string) (rpc.RunRecord, []rpc.RunRecord, bool) {
-	rec, records, ok := currentRunForLogs(ctx, c, target)
-	if !ok || rec.LogPath != logPath || rec.LogOffset == nil {
-		return rpc.RunRecord{}, nil, false
-	}
-	return rec, records, true
-}
-
 // currentRunForLogs resolves the generation a name refers to right now, from the
-// one run-set resolver. Both log paths share it so the default read and the
-// ad-hoc-name fallback cannot disagree about which generation is "now".
-func currentRunForLogs(ctx context.Context, c *client.Client, target string) (rpc.RunRecord, []rpc.RunRecord, bool) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return rpc.RunRecord{}, nil, false
-	}
-	group, _ := projectAt(wd)
-	if group == "" {
-		return rpc.RunRecord{}, nil, false
-	}
-	records, err := worktreeRuns(ctx, c, group)
-	if err != nil {
-		return rpc.RunRecord{}, nil, false
-	}
-	rec, err := selectRunForLogs(records, group, target, "current")
-	if err != nil {
-		return rpc.RunRecord{}, nil, false
-	}
-	return rec, records, true
-}
-
-// recordedRunLogPath answers a name the manifest does not declare. `oberth
-// start -d --name X` records the log its run writes, and status publishes that
-// name in ad_hoc_runs and in the exit hint `oberth logs X --once`; without this
-// the reader is sent to a command that refuses the very name it was told.
-// Only a current generation with a recorded path answers: a run that logged
-// nowhere has no file to open, and guessing one would invent evidence.
-func recordedRunLogPath(ctx context.Context, c *client.Client, group, target string) (string, bool) {
+// one run-set resolver. Every log reader goes through it, so the default read
+// and the ad-hoc-name fallback cannot disagree about which generation is "now".
+// group "" means the checkout the command runs in; a target outside any project
+// has no current run to resolve.
+//
+// It answers unconditionally on purpose: what makes a generation usable as a
+// scope (a matching path, a recorded start) is the caller's rule, and the two
+// callers have different rules.
+func currentRunForLogs(ctx context.Context, c *client.Client, group, target string) (rpc.RunRecord, []rpc.RunRecord, bool) {
 	if group == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			return "", false
+			return rpc.RunRecord{}, nil, false
 		}
 		group, _ = projectAt(wd)
 	}
 	if group == "" {
-		return "", false
+		return rpc.RunRecord{}, nil, false
 	}
 	records, err := worktreeRuns(ctx, c, group)
 	if err != nil {
-		return "", false
+		return rpc.RunRecord{}, nil, false
 	}
 	rec, err := selectRunForLogs(records, group, target, "current")
-	if err != nil || rec.LogPath == "" {
-		return "", false
+	if err != nil {
+		return rpc.RunRecord{}, nil, false
 	}
-	return rec.LogPath, true
+	return rec, records, true
 }
