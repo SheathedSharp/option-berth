@@ -224,7 +224,8 @@ lines, ports that were not read are not in it, and `observation.state` is partia
 an observation-class error immediately when a selected service needs listener/health observation and it is not observable, and keeps the run it
 just started, instead of waiting out the full timeout and then stopping it; `logs <service>` still
 uses the log path registered by the run for managed services and does not depend on the listener
-table. Write commands that need to auto-start the runtime service run the self-proof probe first, and when
+table. Write commands that need to auto-start the runtime service ask the installed user-level service
+unit first; without one they run the self-proof probe, and when
 blind they refuse to create a runtime service from the current process, suggesting that
 `oberth runtime service run --detach` be run in an ordinary terminal.
 
@@ -933,6 +934,7 @@ appear in public help.
 - oberth runtime service run|status|path|stop|restart|log|schema: manages or inspects the background collector. `runtime service status --json`
   carries `observation` (`state`, `code`, `detail`, `hint`, `checked_at`), saying whether the runtime service itself can see listeners;
   `runtime.service.hello` carries the same result, and clients must not take a blind runtime service's empty port table as fact.
+  `run` is foreground unless `--detach` is given; `--persistent` disables idle shutdown regardless of `runtime_service.idle_timeout`, and it is what the user-level service unit passes. Where that unit is installed, `restart` restarts the unit and never starts a detached process of its own.
 - `oberth -v` / `oberth --version`: prints the current CLI version concisely; `oberth config init|path|edit`, `oberth runtime service run`, `oberth version`, `oberth completion`: configuration and runtime environment entry points.
 - `oberth version --json` outputs `version`, `commit`, `built` and `platform` for the current build, for install check scripts to confirm the build actually running.
 - `oberth version --check` reads the latest release tag and reports whether this machine is behind; `--check --json` adds

@@ -189,7 +189,8 @@ worker 不再因为不占端口而看不到资源。没有样本时字段缺省�
 完全失明时 `ports` 为空、`port_actual` 为 null；部分行不可读时 `ports` 只含可读行，
 未读到的端口不在其中，`observation.state` 为 partial。`up --wait` 在所选服务需要监听或健康观察、且观察不是 observable 时
 立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对托管服务
-仍使用运行登记的日志路径，不依赖监听表。需要自启 runtime service 的写命令会先跑自证探针，失明时
+仍使用运行登记的日志路径，不依赖监听表。需要自启 runtime service 的写命令会先请求已安装的用户级
+服务单元；没有单元时才跑自证探针，失明时
 拒绝从当前进程创建 runtime service，提示在普通终端运行 `oberth runtime service run --detach`。
 
 系统观察繁忙时，已知运行和 worker 状态可以独立发布。上一批监听信息过期时，`observation.state` 为 `partial`，code 为 `observation_incomplete`，source 为 `runtime_registry`；缺失端口和 `machine` 可用性仍为未知，不是空闲或已停止。无端口且无健康检查的 worker 可以仅凭精确运行身份就绪。其他就绪判断及强制控制路径不会把这种回退当作新鲜监听观察。
@@ -774,6 +775,7 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 - oberth runtime service run|status|path|stop|restart|log|schema：管理或查看后台采集器。`runtime service status --json`
   带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`），表示 runtime service 自己能否看见监听；
   `runtime.service.hello` 也带同一份结果，客户端不能把失明 runtime service 的空端口表当成事实。
+  `run` 默认前台，`--detach` 转后台；`--persistent` 无视 `runtime_service.idle_timeout` 关闭空闲退出，用户级服务单元正是带它启动的。装了该单元的机器上，`restart` 重启单元，不会另起一个游离进程。
 - `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth runtime service run`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
 - `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加

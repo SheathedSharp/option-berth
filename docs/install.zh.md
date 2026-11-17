@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 | 二进制 | `~/.local/bin/oberth` |
 | 许可与构建清单 | `~/.local/share/option-berth` |
 | PATH | 已有的 shell 启动文件里加一行（不新建启动文件） |
-| 运行状态 | `~/.option-berth`（安装器不创建、不改动） |
+| 运行状态 | `~/.option-berth`（macOS 上会为单元日志创建；其余情况不动） |
 
 固定版本、换目录或不动 PATH：
 
@@ -40,8 +40,22 @@ curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/ins
 curl -fsSL https://raw.githubusercontent.com/SheathedSharp/option-berth/main/install.sh | sh -s -- --no-modify-path
 ```
 
-安装器不启动服务、不写 Git、不需要管理员权限。安装后可以运行 `oberth version` 与
+安装器不写 Git、不需要管理员权限。macOS / Linux 上它还会注册下面说的用户级常驻服务；
+`--no-service` 可以跳过。安装后可以运行 `oberth version` 与
 `oberth doctor` 确认。
+
+### 用户级常驻服务
+
+`oberth version` 能跑通之后，安装器会把 runtime service 注册成用户级单元并启动它：macOS 是
+launchd LaunchAgent（`~/Library/LaunchAgents/com.sheathedsharp.option-berth.runtime.plist`），
+Linux 是 systemd 用户单元（`~/.config/systemd/user/option-berth-runtime.service`）。单元运行
+`oberth runtime service run --persistent`，因此一个 runtime service 跨登录常驻，而不是由当时
+需要它的命令临时拉起；它的生命周期属于[后台服务页](runtime-service.zh.md)。
+
+- 只有 `oberth doctor --only listener_observation` 退出码为 0 时才注册：看不见监听的机器不该得到一个永远看不见的 runtime service；
+- `--no-service` 或 `BERTH_INSTALL_NO_SERVICE=1` 跳过注册；此时已存在的单元保持运行，安装器会说明；
+- supervisor 缺失或拒绝只警告：单元文件保留，下次登录时加载；
+- 全程不需要 root，supervisor 不可用也不会让安装失败。
 
 ### 下载慢或被网络限制
 
@@ -118,7 +132,8 @@ sudo dnf remove option-berth
 ```
 
 安装包把 `oberth` 放到 `/usr/bin`，许可与构建清单放到
-`/usr/share/doc/option-berth`。`apt remove` / `dnf remove` 不删除 `~/.option-berth` 运行状态；
+`/usr/share/doc/option-berth`。系统安装包不注册用户级常驻服务，只有 `install.sh` 会。
+`apt remove` / `dnf remove` 不删除 `~/.option-berth` 运行状态；
 确认不再需要后再执行 `oberth runtime service stop` 并删除该目录。arm64 使用 `_arm64.deb` 与
 `.aarch64.rpm` 文件名。
 
@@ -138,7 +153,8 @@ irm https://raw.githubusercontent.com/SheathedSharp/option-berth/main/uninstall.
 
 卸载器会：
 
-- 尽量先执行 `oberth runtime service stop`，避免留下正在运行的旧进程；
+- 先注销用户级常驻服务并删除单元文件，避免 supervisor 去启动一个马上要被删掉的二进制；
+- 再用 `oberth runtime service stop` 停掉仍在运行的进程；
 - 删除 `oberth`；
 - 删除安装器放在 `~/.local/share/option-berth` 的许可与构建清单；
 - 删除安装器写进 shell 启动文件的那一行（只删自己写的精确行，不动其他 PATH 配置）。
@@ -173,9 +189,9 @@ rm -rf ~/.option-berth
 
 ## 升级
 
-重新执行对应平台的安装命令即可替换二进制；升级后执行一次 `oberth runtime service stop`，下一次
-CLI 调用会启动新版本。Windows 先停止正在运行的 `oberth`，再重新安装。需要固定版本时使用
-`--version` / `-Version`。
+重新执行对应平台的安装命令即可替换二进制。除非传了 `--no-service`，替换前安装器会停止旧的
+runtime service 并卸载单元，替换后再写入并启动单元，所以跑起来的是新构建。Windows 先停止正在
+运行的 `oberth`，再重新安装。需要固定版本时使用 `--version` / `-Version`。
 
 `oberth` 首屏会显示本机版本；有更新时底部直接给出本平台的安装命令和 `oberth runtime service stop`。
 其他输出给人看的终端命令也会以同样的两行升级提示收尾，同一发布只提示一次。
@@ -197,4 +213,5 @@ CLI 调用会启动新版本。Windows 先停止正在运行的 `oberth`，再�
 ## 平台边界
 
 完整服务场景在 **macOS / Linux** 验证。Windows 有独立原生构建、冒烟和部分事实/持久化测试，
-但不是完整生命周期支持。各平台都不提供自动升级守护进程或后台更新器。
+但不是完整生命周期支持，也没有用户级常驻单元：那里的 runtime service 由
+`oberth runtime service run --detach` 启动。各平台都不提供自动升级守护进程或后台更新器。
