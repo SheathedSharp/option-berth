@@ -54,6 +54,8 @@ Linux 是 systemd 用户单元（`~/.config/systemd/user/option-berth-runtime.se
 
 - 只有 `oberth doctor --only listener_observation` 退出码为 0 时才注册：看不见监听的机器不该得到一个永远看不见的 runtime service；
 - `--no-service` 或 `BERTH_INSTALL_NO_SERVICE=1` 跳过注册；此时已存在的单元保持运行，安装器会说明；
+- 早于 `--persistent` 的 release 不注册：`--version` 可以固定旧构建，安装器会移除新版本留下的单元，
+  而不是留下一个反复崩溃的单元；
 - supervisor 缺失或拒绝只警告：单元文件保留，下次登录时加载；
 - 全程不需要 root，supervisor 不可用也不会让安装失败。
 

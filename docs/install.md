@@ -57,6 +57,8 @@ being started ad hoc by whichever command needed one; its lifecycle belongs to
   cannot see listeners should not get a permanent runtime service that cannot see them either;
 - `--no-service` or `BERTH_INSTALL_NO_SERVICE=1` skips it; an existing unit is then left running, and the
   installer says so;
+- a release that predates `--persistent` is not registered: `--version` can pin an older build, and the
+  installer removes a unit left by a newer release rather than leave it crashlooping;
 - a missing or refusing supervisor is a warning: the unit file stays and is loaded at the next login;
 - nothing here needs root, and an unavailable supervisor does not fail the install.
 
