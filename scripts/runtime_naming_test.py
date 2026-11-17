@@ -42,6 +42,8 @@ class RuntimeNamingContract(unittest.TestCase):
         self.assertIn('yaml:"runtime_service"', cfg)
         self.assertNotIn('yaml:"daemon"', cfg)
 
+    # VERSION is deliberately not pinned here: the product version moves
+    # independently of the wire major and release.py validates its shape.
     def test_new_wire_major_and_no_old_method_registration(self):
         rpc = ROOT / "engine/internal/runtimesvc/rpc"
         self.assertIn('const ProtocolVersion = "3.0.0"', (rpc / "types.go").read_text())
@@ -50,7 +52,6 @@ class RuntimeNamingContract(unittest.TestCase):
                 continue
             text = source.read_text()
             self.assertNotRegex(text, r'"daemon\.(hello|status|shutdown|schema|doctor)"', str(source))
-        self.assertEqual((ROOT / "VERSION").read_text().strip(), "3.0.0")
 
     def test_doctor_public_identifiers_are_runtime_service(self):
         source = (ROOT / "engine/internal/doctor/doctor.go").read_text()
