@@ -123,10 +123,15 @@ jobs:
         run: go test -race -count=1 magefiles/build.go magefiles/workflow.go magefiles/workflow_test.go
       - name: Install package tools for tests
         if: runner.os == 'Linux'
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
+          # Only the network fetch is retried: a mirror hiccup is not a result
+          # about this change. Never wrap a test, vet or verification step —
+          # a retry there would mask a real failure behind a slower red build.
+          source scripts/retry.sh
+          retry 4 5 -- sudo apt-get update
+          retry 4 5 -- sudo apt-get install -y rpm
+          retry 4 5 -- go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Measurement helper tests
         shell: bash

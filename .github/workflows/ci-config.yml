@@ -35,8 +35,12 @@ jobs:
           go-version-file: engine/go.mod
           cache-dependency-path: engine/go.sum
       - name: Install actionlint
+        shell: bash
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          # Only the network fetch is retried; the lint step below runs once, so
+          # a real workflow error still fails this check on the first attempt.
+          source scripts/retry.sh
+          retry 4 5 -- go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Lint every workflow
         run: actionlint .github/workflows/*.yml
