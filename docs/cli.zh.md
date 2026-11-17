@@ -30,16 +30,23 @@
   - observation_bind_denied：探针连本地端口都不能绑定，从这里启动的服务也无法监听。
   hint 指向离开沙箱重试、升级 option-berth 或运行
   `oberth doctor --only listener_observation` 检查当前进程。
+- 每个平台按一条有序的采集链读监听表：macOS 是 `netstat` → `lsof`，Linux 是 `ss` → `netstat`，
+  Windows 只有 `netstat -ano`。链首是主采集器，`observation.source` 不写它；只有主采集器读不出、
+  由后面的采集器答话时才写那一级的名字。换下一级的条件只有“这一趟没有留下可用行”：工具没装、
+  以 0 退出却没打印表，或它自己的诊断信息把这一趟判废且没有任何可读行。已经读到行的那一趟即使
+  失败也就此定论——可读行连同判定一起发布，不会被别的工具的表顶掉；打印了表却解不出来属于解码
+  问题，同样不换。所有采集器都失败时，保留主采集器的 code 和 hint，其余采集器的原因并入同一句
+  `detail`。
 - macOS 27 起，由非 Apple 签名父进程（Go、Homebrew Python 等）启动的子进程执行 `netstat`
   会以 0 退出却拿不到 TCP 表。这种“一行都没有”仍按 observation_empty 处理，由自证探针判定；
-  探针能看到自己的监听时，本轮改用 `lsof` 采集并照常报 observable。采集器不是主采集器时，
-  `observation.source` 写出它的名字（`lsof`）；主采集器留空。`doctor` 的 detail 与
+  探针能看到自己的监听时，本轮由 `lsof` 答话并照常报 observable。`doctor` 的 detail 与
   `runtime service status` 的 `observation` 描述的是同一轮观察。
-- 这条回退比 `netstat` 窄，读取时要知道两件事：非 root 的 `lsof` 看不到其他用户的 socket，
-  root 进程持有的端口可能不在表里；同一个 `lsof` 也只把双栈通配 socket 报成 `::`，不补另一个
-  地址族。表里出现的行仍是事实，但缺失不是：消费者先读 `observation.source`，再判断端口是否空闲。
-  窄表里缺失的端口 `machine[].listening_known` 为 false，`port: auto` 逐个用绑定实测而不是
-  信任缺失，人读的 `status` 打印 `listening unknown`。
+- 有名字的 source 比主采集器窄，它的 `detail` 句子写出该采集器声明了哪些限制：非 root 的 `lsof`
+  看不到其他用户的 socket，root 进程持有的端口可能不在表里，而且它只把双栈通配 socket 报成 `::`，
+  不补另一个地址族；Linux `netstat` 同样只把双栈通配 socket 报在一个地址族下。表里出现的行仍是
+  事实，但缺失不是：消费者先读 `observation.source`，再判断端口是否空闲。窄表里缺失的端口
+  `machine[].listening_known` 为 false，`port: auto` 逐个用绑定实测而不是信任缺失，
+  人读的 `status` 打印 `listening unknown`。
 - --no-runtime-service 让事实读取在本地采集，不连接或启动 Runtime Service；记录及起停 run 的操作仍需要宿主。历史记录只在离线时从同一数据库只读读取；活跃拥有者持有数据库时，直接读取返回 `runtime_service_busy`，不能假装历史为空。在线读取应去掉该参数，通过拥有者宿主查询。
 - 不接受任何不被读取的协议字段。协议 schema 由 runtime service 的 Go 类型生成，因此在那里声明的字段是
   每个客户端都可以依赖的承诺；一个没有任何 handler 处理的字段比缺一个更糟，因为调用会成功，
