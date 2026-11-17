@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +83,89 @@ func TestRunSetReaderExemptionsAreStillNeeded(t *testing.T) {
 		body := string(data)
 		if !strings.Contains(body, "runs.Load()") && !strings.Contains(body, `"runs.list"`) {
 			t.Errorf("%s no longer reads run state; drop its exemption (%s)", name, reason)
+		}
+	}
+}
+
+// recordConversions is every file allowed to build a wire run record from local
+// evidence. The two conversions in runledger.go are the only ones: a second
+// hand-written conversion is how the offline reader lost Argv, how the unobserved
+// ending lost it too, and how `restart --run` refused runs this version started.
+var recordConversions = map[string]string{
+	"runledger.go": "the live and ended conversions themselves",
+}
+
+// TestRunRecordsAreConvertedInOnePlace guards the second half of the same bug
+// class: one recorded run must look the same to every reader. A projection that
+// writes its own rpc.RunRecord literal invents a second shape, and the field it
+// forgets is the field a command silently loses.
+func TestRunRecordsAreConvertedInOnePlace(t *testing.T) {
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		files, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, name), nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		// An empty literal is the zero value a failed lookup returns, not a
+		// conversion: only a literal with fields invents a record shape.
+		if !buildsRunRecord(files) {
+			continue
+		}
+		if _, allowed := recordConversions[name]; !allowed {
+			t.Errorf("%s builds an rpc.RunRecord literal.\n"+
+				"Derive it from liveRunRecord or exitRunRecord in runledger.go. A second "+
+				"conversion is how the offline and unobserved paths lost Argv while the "+
+				"host path kept it.", name)
+		}
+	}
+}
+
+// buildsRunRecord reports whether the file contains a non-empty rpc.RunRecord
+// composite literal.
+func buildsRunRecord(file *ast.File) bool {
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		lit, ok := node.(*ast.CompositeLit)
+		if !ok || len(lit.Elts) == 0 {
+			return true
+		}
+		sel, ok := lit.Type.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "rpc" && sel.Sel.Name == "RunRecord" {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+// The exemption list must not outlive its reason, same rule as above.
+func TestRecordConversionExemptionsAreStillNeeded(t *testing.T) {
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, reason := range recordConversions {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Errorf("exemption %q (%s) names a file that does not exist", name, reason)
+			continue
+		}
+		if !strings.Contains(string(data), "rpc.RunRecord{") {
+			t.Errorf("%s no longer builds a run record; drop its exemption (%s)", name, reason)
 		}
 	}
 }
