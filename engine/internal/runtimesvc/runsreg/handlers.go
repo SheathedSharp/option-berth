@@ -470,7 +470,8 @@ func row(rec Record, snap state.Snapshot, portsKnown bool) rpc.RunRecord {
 
 // liveRow is the part of a row that comes straight from the run's own record.
 // A run that has ended carries the same block, which is why exitRow starts here
-// too: identity, provenance and where it logs are the run's facts either way.
+// too: identity, provenance, the exact vector and where it logs are the run's
+// facts either way.
 func liveRow(rec Record) rpc.RunRecord {
 	out := rpc.RunRecord{
 		ID:  rec.ID,
@@ -479,7 +480,12 @@ func liveRow(rec Record) rpc.RunRecord {
 		Group: rec.Group,
 		Name:  rec.Name,
 		Cmd:   rec.Cmd,
-		Cwd:   rec.Cwd,
+		// Argv is the exact vector Cmd was joined from: `restart --run` replays
+		// it, so a row that omitted it would tell every caller the run predates
+		// recorded vectors. A record with none stays nil — absent means the run
+		// never recorded one, never "started with no arguments".
+		Argv: append([]string(nil), rec.Argv...),
+		Cwd:  rec.Cwd,
 	}
 	// The rest is renderings of the same record: the start time as the wire's
 	// RFC 3339 string, the provenance, and where the run logs.
