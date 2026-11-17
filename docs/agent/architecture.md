@@ -219,6 +219,8 @@ re-enter the scanner, the claims manager or registry writes.
 
 The in-memory registry is the live authority for one Runtime Service. `runs.json` is its compatible live-run recovery mirror, not a second owner; SQLite stores exit history, reservations and worktree identities.
 
+A Command asks `worktreeRuns` (`internal/cmd/runledger.go`) which runs belong to a worktree; it does not read the registry, the mirror or `runs.list` itself. The host answers when it answers, the mirror plus the store answer when it does not, and the two are the same answer. Every projection — `statusDocument.Runs`, the brief's `ad_hoc_runs`, log and restart name resolution — derives from that one call, so two commands cannot disagree about whether a run exists or what its name means. `statusDocument` and the brief publish a run set that could not be read as null, never as an empty list: unknown is not "started nothing".
+
 Startup acquires the existing single-writer lock, loads durable exits, then imports the mirror transactionally before admitting normal work or pruning.
 
 A required read/commit failure blocks startup rather than replacing evidence with an empty store.
