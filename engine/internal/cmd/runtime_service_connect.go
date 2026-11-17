@@ -38,26 +38,31 @@ var connectForWrite = func(ctx context.Context) (*client.Client, error) {
 	// once and let the command's own observation error carry the next step;
 	// blocking an unrelated write (workplace, events) would not help.
 	if c, err := client.Dial(ctx, info); err == nil {
-		if obs := c.Hello().Observation; obs != nil && obs.State != string(ports.ObservationObservable) {
-			warnBlindRuntimeService(obs)
-		}
+		warnIfBlindRuntimeService(c)
 		return c, nil
 	}
 
+	// Where the user-level unit is installed, the supervisor is the only thing that
+	// may start a runtime service. A detached child beside a unit would be a second
+	// owner of one socket and one lock — exactly what the unit exists to rule out.
+	unitClient, owned, unitErr := startRuntimeServiceUnit(ctx, info)
+	if owned {
+		if unitErr != nil {
+			return nil, withRuntimeServiceLogHint(unitErr)
+		}
+		warnIfBlindRuntimeService(unitClient)
+		return unitClient, nil
+	}
+
 	// Autostart is different: a runtime service created from a blind process outlives
-	// the command and keeps misleading every client that connects to it.
+	// the command and keeps misleading every client that connects to it. Reaching
+	// this point means no unit is installed: an installed one owns the attempt above.
 	if os.Getenv(client.NoAutostartEnv) == "" {
 		if probe := scanProbe(ctx); probe.State != ports.ObservationObservable {
 			code := probe.Code
 			if code == "" {
 				code = string(probe.State)
 			}
-			// The probe names its own next step (leave the sandbox, or run
-			// doctor), but the contract for a refused autostart is specific:
-			// the runtime service has to be started from a terminal that can observe
-			// listeners. Lead with that command instead of leaving it to the
-			// empty-probe fallback, which never applied because the probe
-			// always carries a hint.
 			hint := "run `oberth runtime service run --detach` from a normal terminal"
 			if probe.Hint != "" {
 				hint += "; " + probe.Hint
@@ -76,7 +81,42 @@ var connectForWrite = func(ctx context.Context) (*client.Client, error) {
 	return c, nil
 }
 
+// startRuntimeServiceUnit asks the installed user-level unit to start the runtime
+// service and dials what it starts.
+//
+// owned reports that the unit owned this attempt. It is true whenever the unit is
+// installed, including when Start failed: falling back to a detached child would put
+// a second owner beside the unit the machine already has.
+func startRuntimeServiceUnit(ctx context.Context, info client.ClientInfo) (conn *client.Client, owned bool, err error) {
+	supervisor := runtimeServiceSupervisor
+	if !supervisor.Installed() || runtimesvc.EnvEnabled(os.Getenv(client.NoAutostartEnv)) {
+		return nil, false, nil
+	}
+	if startErr := supervisor.Start(ctx); startErr != nil {
+		return nil, true, startErr
+	}
+	socket := runtimesvc.SocketPath()
+	if waitErr := client.WaitForSocket(ctx, socket, supervisorSocketTimeout); waitErr != nil {
+		return nil, true, waitErr
+	}
+	// The unit started something; dial it, and never let the dial start its own.
+	info.NoAutostart = true
+	c, dialErr := client.Connect(ctx, info)
+	if dialErr != nil {
+		return nil, true, dialErr
+	}
+	return c, true, nil
+}
+
 var blindRuntimeServiceNoteOnce sync.Once
+
+// warnIfBlindRuntimeService warns once about a runtime service that cannot see
+// listeners. The warning is the same whichever way the process was started.
+func warnIfBlindRuntimeService(c *client.Client) {
+	if obs := c.Hello().Observation; obs != nil && obs.State != string(ports.ObservationObservable) {
+		warnBlindRuntimeService(obs)
+	}
+}
 
 func warnBlindRuntimeService(obs *rpc.ObservationStatus) {
 	blindRuntimeServiceNoteOnce.Do(func() {

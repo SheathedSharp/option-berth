@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
+	"github.com/sheathedsharp/option-berth/engine/internal/config"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
@@ -24,7 +25,12 @@ import (
 // child is not a different command, only a differently plumbed one.
 const detachedEnv = "BERTH_RUNTIME_SERVICE_DETACHED"
 
-var runtimeServiceDetach bool
+var (
+	runtimeServiceDetach bool
+	// runtimeServicePersistent is `--persistent`. The user-level service unit passes
+	// it, so the process a supervisor keeps alive never decides on its own to go away.
+	runtimeServicePersistent bool
+)
 
 var runtimeServiceRunCmd = &cobra.Command{
 	Use:   "run",
@@ -42,6 +48,8 @@ func init() {
 	flags := runtimeServiceRunCmd.Flags()
 	flags.BoolVarP(&runtimeServiceDetach, "detach", "d", false,
 		"Start the runtime service in the background and return once it accepts connections")
+	flags.BoolVar(&runtimeServicePersistent, "persistent", false,
+		"Never exit for being idle, whatever runtime_service.idle_timeout says; the user-level service unit passes this")
 	runtimeServiceCmd.AddCommand(runtimeServiceRunCmd)
 }
 
@@ -51,17 +59,23 @@ func runtimeServiceRun(command *cobra.Command, _ []string) error {
 	}
 
 	if runtimeServiceDetach {
+		// A detached child beside an installed unit would be a second owner of one
+		// socket and one lock, and the supervisor would keep restarting a service that
+		// cannot bind. The unit is the only start path on that machine.
+		if runtimeServiceSupervisor.Installed() {
+			return fmt.Errorf("a user-level service unit is installed; start or restart it with `oberth runtime service restart`, or remove the unit before using `run --detach`")
+		}
 		// The parent only forks; the process that becomes the runtime service is the
 		// child, and it is the one that asks for the PATH below.
 		return detachRuntimeService(command.Context(), runtimesvc.SocketPath())
 	}
-	return runForegroundRuntimeService(command.Context())
+	return runForegroundRuntimeService(command.Context(), runtimeServicePersistent)
 }
 
 // runForegroundRuntimeService is the process that becomes the runtime.service. It owns the
 // machine-wide view rather than a project, so its working directory and PATH
 // must not be the checkout that happened to start it.
-func runForegroundRuntimeService(ctx context.Context) error {
+func runForegroundRuntimeService(ctx context.Context, persistent bool) error {
 	if err := enterRuntimeServiceWorkDir(); err != nil {
 		return err
 	}
@@ -87,7 +101,7 @@ func runForegroundRuntimeService(ctx context.Context) error {
 		Socket:                  runtimesvc.SocketPath(),
 		PreviousServiceLockDirs: loadedConfig.RuntimeService.PreviousServiceLockDirs,
 		Version:                 buildinfo.Version,
-		IdleTimeout:             loadedConfig.RuntimeService.ResolvedIdleTimeout(),
+		IdleTimeout:             runtimeServiceIdleTimeout(loadedConfig.RuntimeService, persistent),
 		StatsInterval:           loadedConfig.RuntimeService.ResolvedStatsInterval(),
 		ScanInterval:            loadedConfig.RuntimeService.ResolvedScanInterval(),
 		Logger:                  logger,
@@ -107,6 +121,19 @@ func runForegroundRuntimeService(ctx context.Context) error {
 		os.Exit(1)
 	}
 	return serveErr
+}
+
+// runtimeServiceIdleTimeout is how long this process may sit with nobody watching.
+//
+// `--persistent` wins over config.yaml on purpose: the process a user-level service
+// unit owns must not idle out, or "the runtime service is up" would depend on a
+// client having connected recently — which is exactly the property the unit exists
+// to remove. Zero means the idle watchdog never fires.
+func runtimeServiceIdleTimeout(cfg config.RuntimeServiceConfig, persistent bool) time.Duration {
+	if persistent {
+		return 0
+	}
+	return cfg.ResolvedIdleTimeout()
 }
 
 // enterRuntimeServiceWorkDir moves the runtime service into option-berth's own state directory.

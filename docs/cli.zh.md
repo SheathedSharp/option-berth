@@ -190,7 +190,8 @@ worker 不再因为不占端口而看不到资源。没有样本时字段缺省�
 完全失明时 `ports` 为空、`port_actual` 为 null；部分行不可读时 `ports` 只含可读行，
 未读到的端口不在其中，`observation.state` 为 partial。`up --wait` 在所选服务需要监听或健康观察、且观察不是 observable 时
 立即返回观察类错误并保留刚启动的运行，不会等满超时再把它停掉；`logs <service>` 对托管服务
-仍使用运行登记的日志路径，不依赖监听表。需要自启 runtime service 的写命令会先跑自证探针，失明时
+仍使用运行登记的日志路径，不依赖监听表。需要自启 runtime service 的写命令会先请求已安装的用户级
+服务单元；没有单元时才跑自证探针，失明时
 拒绝从当前进程创建 runtime service，提示在普通终端运行 `oberth runtime service run --detach`。
 
 系统观察繁忙时，已知运行和 worker 状态可以独立发布。上一批监听信息过期时，`observation.state` 为 `partial`，code 为 `observation_incomplete`，source 为 `runtime_registry`；缺失端口和 `machine` 可用性仍为未知，不是空闲或已停止。无端口且无健康检查的 worker 可以仅凭精确运行身份就绪。其他就绪判断及强制控制路径不会把这种回退当作新鲜监听观察。
@@ -779,6 +780,7 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
 - oberth runtime service run|status|path|stop|restart|log|schema：管理或查看后台采集器。`runtime service status --json`
   带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`），表示 runtime service 自己能否看见监听；
   `runtime.service.hello` 也带同一份结果，客户端不能把失明 runtime service 的空端口表当成事实。
+  `run` 默认前台，`--detach` 转后台；`--persistent` 无视 `runtime_service.idle_timeout` 关闭空闲退出，用户级服务单元正是带它启动的。装了该单元的机器上，`restart` 重启单元，不会另起一个游离进程。
 - `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth runtime service run`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
 - `oberth version --check` 读取最新发布标签，报告本机是否落后；`--check --json` 在原来的字段上增加
@@ -830,7 +832,7 @@ Runtime 运行领域仍是 worktree → manifest → service → run → runtime
 
 新 CLI 对旧命令、参数、配置键及非空的旧环境变量明确报迁移错误，不输出环境变量值。 无法解析的 YAML 以及无效/相对的 `previous_service_lock_dirs` 在操作前直接拒绝，不会改用默认安全门闩；配置读写共用同一校验。旧 `daemon.*` 请求得到带协议 3 提示的 `not_found`。没有旧 socket 探测、命令别名、RPC 双路、自动关闭旧宿主或删除数据。
 
-真正切换之前，必须使用匹配的 v2 CLI 显式停止旧宿主（`oberth daemon stop`；若是自定义端点，则使用旧端点设置），并确认状态已经停止。之后再改 shell/配置键，保留数据库及 run ledger，用配套新 CLI 执行 `oberth runtime service run --detach`。不要用新 `restart` 或 `doctor --fix` 停止 v2 宿主。本次源码改造不执行该切换，也不安装任何东西。
+真正切换之前，必须使用匹配的 v2 CLI 显式停止旧宿主（`oberth daemon stop`；若是自定义端点，则使用旧端点设置），并确认状态已经停止。之后再改 shell/配置键，保留数据库及 run ledger，用配套新 CLI 执行 `oberth runtime service restart`（未安装用户级常驻单元时用 `oberth runtime service run --detach`）。不要用新 `restart` 或 `doctor --fix` 停止 v2 宿主。本次源码改造不执行该切换，也不安装任何东西。
 
 `daemon.lock` 只能作为额外的跨代门闩，绝不是传输回退。可选的 `runtime_service.previous_service_lock_dirs` 为已知旧端点增加持续持有的门闩；数据库安全不依赖枚举这些目录。新宿主在监听、恢复或发布之前，以单个不超时连接取得 SQLite EXCLUSIVE/WAL 所有权。未修改的 v2 Store 已持有数据库时，新宿主拒绝进入；新拥有者运行期间，旧/新写者即使换端点、`BERTH_HOME` 或文件别名也不能重开。没有打开 SQL 连接的静默旧进程不被宣称已识别或停止：新拥有者持有 SQLite 时，它不能恢复数据库写入，显式关闭旧宿主的切换步骤仍然适用。每次写入正常提交，不会把事务一直留到退出。拥有者连接丢失后直接失败，不偷偷重连。所有生产者停止后才关闭存储，端点锁最后释放。
 <!-- retired-runtime-v2-end -->

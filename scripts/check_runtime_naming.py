@@ -56,6 +56,7 @@ def audit(root):
                 elif name in MIGRATIONS and line.lstrip().startswith("--"): reason = "historical immutable SQL migration comment"
                 elif name in DOCKER and "docker" in line.lower(): reason = "third-party Docker terminology"
                 elif name in ("site/guide/quickstart.en.html", "site/guide/quickstart.zh.html") and "daemon" in line: reason = "unrelated user background processes, not product host identity"
+                elif name in ("install.sh", "uninstall.sh") and "daemon-reload" in line: reason = "systemd's own reload command, not product host identity"
                 elif name in THREADS and re.search(r"daemon\s*=\s*True", line): reason = "standard-library thread lifetime flag"
                 elif name == "scripts/measure_runtime.py" and ("engine/internal/daemon" in line): reason = "historical baseline import adapter"
                 elif name == "engine/internal/testenv/runtime_service_process_test.go" and "false" in line: reason = "old argv explicitly not recognized as a new host"

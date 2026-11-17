@@ -225,7 +225,8 @@ lines, ports that were not read are not in it, and `observation.state` is partia
 an observation-class error immediately when a selected service needs listener/health observation and it is not observable, and keeps the run it
 just started, instead of waiting out the full timeout and then stopping it; `logs <service>` still
 uses the log path registered by the run for managed services and does not depend on the listener
-table. Write commands that need to auto-start the runtime service run the self-proof probe first, and when
+table. Write commands that need to auto-start the runtime service ask the installed user-level service
+unit first; without one they run the self-proof probe, and when
 blind they refuse to create a runtime service from the current process, suggesting that
 `oberth runtime service run --detach` be run in an ordinary terminal.
 
@@ -939,6 +940,7 @@ appear in public help.
 - oberth runtime service run|status|path|stop|restart|log|schema: manages or inspects the background collector. `runtime service status --json`
   carries `observation` (`state`, `code`, `detail`, `hint`, `checked_at`), saying whether the runtime service itself can see listeners;
   `runtime.service.hello` carries the same result, and clients must not take a blind runtime service's empty port table as fact.
+  `run` is foreground unless `--detach` is given; `--persistent` disables idle shutdown regardless of `runtime_service.idle_timeout`, and it is what the user-level service unit passes. Where that unit is installed, `restart` restarts the unit and never starts a detached process of its own.
 - `oberth -v` / `oberth --version`: prints the current CLI version concisely; `oberth config init|path|edit`, `oberth runtime service run`, `oberth version`, `oberth completion`: configuration and runtime environment entry points.
 - `oberth version --json` outputs `version`, `commit`, `built` and `platform` for the current build, for install check scripts to confirm the build actually running.
 - `oberth version --check` reads the latest release tag and reports whether this machine is behind; `--check --json` adds
@@ -992,7 +994,7 @@ The Runtime domain remains the worktree → manifest → service → run → run
 
 The new CLI rejects retired commands, flags, config keys and non-empty retired environment variables with a migration error, without printing environment values. Malformed YAML and invalid/relative `previous_service_lock_dirs` are refused before operations, never replaced by default safety guards; configuration reads and writes use the same validation. Retired `daemon.*` requests receive `not_found` with a protocol-3 hint. There is no old socket probe, command alias, RPC dual route, automatic old-host shutdown or data deletion.
 
-Before a real switch, stop the old host explicitly with its own matching v2 CLI (`oberth daemon stop`, using the old endpoint setting if it was custom), and verify that its status is stopped. Then rename shell/config keys, retain the database and run ledger, and start the matching new CLI with `oberth runtime service run --detach`. Do not use the new `restart` or `doctor --fix` to stop a v2 host. This source change does not perform that switch or install anything.
+Before a real switch, stop the old host explicitly with its own matching v2 CLI (`oberth daemon stop`, using the old endpoint setting if it was custom), and verify that its status is stopped. Then rename shell/config keys, retain the database and run ledger, and start the matching new CLI with `oberth runtime service restart` (or `oberth runtime service run --detach` when no user-level unit is installed). Do not use the new `restart` or `doctor --fix` to stop a v2 host. This source change does not perform that switch or install anything.
 
 A `daemon.lock` file can remain only as an additional inter-generation interlock, never a transport fallback. Optional `runtime_service.previous_service_lock_dirs` adds held guards for known old endpoints; database safety does not depend on enumerating those directories. The new host takes SQLite EXCLUSIVE/WAL ownership before listening, restoration or publication, on one non-expiring connection. An unmodified v2 Store already holding the database prevents admission; while the new owner runs, old/new writers cannot reopen it, even through another endpoint, `BERTH_HOME` or file alias. A quiescent old process with no open SQL connection is not claimed to have been identified or stopped: it cannot resume database writes while the new owner holds SQLite, and the explicit old-host shutdown step still applies. Each write commits normally; no transaction is held until shutdown. Lost owner connections fail closed instead of silently reconnecting. All producers stop before storage closes, and the endpoint lock is released last.
 <!-- retired-runtime-v2-end -->

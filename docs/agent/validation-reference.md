@@ -382,9 +382,19 @@ latest redirect, pinned versions, a SHA256 mismatch not writing to disk, PATH co
 fallback when an old package lacks `install-path.sh`, an unknown argument failing before download,
 and uninstall removing only the exact PATH line the installer wrote, keeping `~/.option-berth` by
 default, and deleting the state directory only with `--purge-state`.
+`scripts/install_test.py` also covers the user-level service unit: the plist or unit file names the
+installed binary, passes `--persistent` and `BERTH_RUNTIME_SERVICE_DETACHED`, and carries the
+keepalive or restart settings; the enable step ran; `--no-service` and its environment variable write
+no unit; a failing observation check skips registration; a refusing supervisor only warns; an upgrade
+stops the previous unit while the old binary is still on disk and starts the new one afterwards; and
+uninstall removes the unit before anything else. Those tests use a temporary `HOME` and fake
+`launchctl`/`systemctl` placed first on `PATH`, so no real supervisor runs and nothing is installed.
+`internal/usersvc` is tested the same way: the exact argv per platform, the `gui/<uid>` → `user/<uid>`
+fallback, the installed and active states, and the error when the supervisor is missing.
 The tests do not contact real GitHub and do not write to the user's directories. The Windows scripts
 get syntax parsing in Windows CI; their install, uninstall, and PATH behavior needs separate native
-Windows verification, which local tests cannot replace.
+Windows verification, which local tests cannot replace. No test loads a real launchd or systemd user
+unit either; that first load is verified by hand, not in CI.
 
 The `versioncheck` unit tests use a local HTTP server to simulate the release page redirect and the
 releases API, and do not contact real GitHub; cache reads and writes use a temporary directory. The
