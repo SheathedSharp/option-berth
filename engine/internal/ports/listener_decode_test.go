@@ -97,6 +97,7 @@ func FuzzListenerDecoder(f *testing.F) {
 	f.Add(uint8(lsofListeners), "node 42 user 6u IPv4 1 0t0 TCP *:8080 (LISTEN)")
 	f.Add(uint8(ssListeners), `LISTEN 0 128 *:8080 *:* users:(("worker",pid=42,fd=6))`)
 	f.Add(uint8(netstatListeners), "TCP [::]:8080 [::]:0 LISTENING 0")
+	f.Add(uint8(linuxNetstatListeners), "tcp6 0 0 :::8080 :::* LISTEN 42/node")
 	f.Fuzz(func(t *testing.T, format uint8, text string) {
 		seen := map[listenerKey]bool{}
 		for _, row := range decodeListeners(text, listenerFormat(format)) {

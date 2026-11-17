@@ -75,6 +75,8 @@ var (
 	// ss reads the kernel's socket table and shows a dual-stack wildcard socket
 	// once, under its IPv6 family.
 	ssCapabilities = Capabilities{SeesOtherUsers: true, DualStackWildcard: false, AttributesPID: true}
+	// Linux netstat reads the same kernel table as ss, in the older format.
+	linuxNetstatCapabilities = Capabilities{SeesOtherUsers: true, DualStackWildcard: false, AttributesPID: true}
 	// Windows netstat -ano lists every owner's sockets with the owning pid, and
 	// prints a dual-stack wildcard socket once, under its IPv6 family.
 	windowsNetstatCapabilities = Capabilities{SeesOtherUsers: true, DualStackWildcard: false, AttributesPID: true}
@@ -102,6 +104,9 @@ func chain(platform string) []Collector {
 	case "linux":
 		return []Collector{
 			tableCollector("ss", ssCapabilities, []string{"-tlnp"}, ssListeners),
+			// The rung for a minimal image or a host without iproute2, where ss
+			// is simply not installed. Both commands read the same kernel table.
+			tableCollector("netstat", linuxNetstatCapabilities, []string{"-tlnp"}, linuxNetstatListeners),
 		}
 	case "windows":
 		return []Collector{
