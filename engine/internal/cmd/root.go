@@ -284,6 +284,11 @@ var rootCmd = &cobra.Command{
 // welcomeVersion is the version line the signpost can show. It only reaches the
 // release feed when a terminal is attached, the user has not opted out, and
 // this build is a release; an unknown answer stays unknown.
+//
+// This is the one call site that may wait for a real answer: the reader asked
+// for the version by running the bare command, and the budget is sized from the
+// sources it races. Every other command reads the same check for a few hundred
+// milliseconds at most.
 func welcomeVersion() versioncheck.State {
 	current := buildinfo.VersionValue()
 	state := versioncheck.State{Current: current}
@@ -318,7 +323,10 @@ func printWelcome(w io.Writer, version versioncheck.State) {
 
 // versionLine is the build identity under the tagline: what this binary is,
 // and — when a check has run — whether it is the latest release. An unknown
-// answer prints only the version; "not checked" never reads as "latest".
+// answer never reads as "latest"; when a check actually failed it says so and
+// names the command that answers it, because this is the screen where the
+// reader asked for the version. A build that never checked (no terminal, opted
+// out, development build) has nothing to report and stays quiet.
 func versionLine(state versioncheck.State) string {
 	current := state.Current
 	if current == "" {
@@ -330,6 +338,10 @@ func versionLine(state versioncheck.State) string {
 		line += " " + display.Green("(latest)")
 	case versioncheck.Behind:
 		line += " " + display.Yellow("(latest version "+state.Latest+")")
+	case versioncheck.Unknown:
+		if state.Error != "" {
+			line += " " + display.Dim("(update check unavailable — oberth version --check)")
+		}
 	}
 	return line
 }

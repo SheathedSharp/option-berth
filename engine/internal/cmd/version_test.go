@@ -234,22 +234,29 @@ func TestWelcomeVersionLineAndUpgradeHint(t *testing.T) {
 			absent: []string{"(latest)"},
 		},
 		{
-			name:   "a failed check shows only the version",
-			state:  versioncheck.State{Current: "v1.1.2", Error: "network down"},
-			want:   []string{"v1.1.2"},
+			// An unknown answer is not "latest", and it is not silence either:
+			// the reader who came here for the version is told that the check
+			// failed and which command answers it.
+			name: "a failed check says the check is unavailable",
+			state: versioncheck.State{
+				Current: "v1.1.2", Error: "context deadline exceeded", Failure: versioncheck.FailureTimeout,
+			},
+			want:   []string{"v1.1.2", "(update check unavailable — oberth version --check)"},
 			absent: []string{"(latest", "Upgrade to"},
 		},
 		{
 			name:   "a build ahead of the feed is not told to downgrade",
 			state:  versioncheck.State{Current: "v1.2.0", Latest: "v1.1.2"},
 			want:   []string{"v1.2.0"},
-			absent: []string{"(latest", "Upgrade to"},
+			absent: []string{"(latest", "Upgrade to", "unavailable"},
 		},
 		{
+			// No check ran at all — no terminal, opted out, or a development
+			// build. There is nothing to report, so nothing is said.
 			name:   "development build is not compared",
 			state:  versioncheck.State{Current: "dev"},
 			want:   []string{"dev"},
-			absent: []string{"(latest", "Upgrade to"},
+			absent: []string{"(latest", "Upgrade to", "unavailable"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -320,6 +327,27 @@ func TestLatestLineDistinguishesStates(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := latestLine(test.state); got != test.want {
 				t.Fatalf("latestLine = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// A failed explicit check is reported, never turned into an answer, and the
+// code says which failure it was: our own budget running out is a timeout,
+// everything else is the generic internal failure.
+func TestCheckFailureCodeFollowsTheRecordedKind(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		state versioncheck.State
+		want  string
+	}{
+		{"our own deadline", versioncheck.State{Error: "context deadline exceeded", Failure: versioncheck.FailureTimeout}, "timeout"},
+		{"unreachable feed", versioncheck.State{Error: "dial tcp: connection refused", Failure: versioncheck.FailureUnreachable}, "internal"},
+		{"unusable answer", versioncheck.State{Error: "release API returned 500", Failure: versioncheck.FailureProtocol}, "internal"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := checkFailureCode(test.state); got != test.want {
+				t.Fatalf("checkFailureCode(%+v) = %q, want %q", test.state, got, test.want)
 			}
 		})
 	}
