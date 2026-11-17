@@ -181,7 +181,8 @@ func TestResolvedStatsInterval(t *testing.T) {
 }
 
 func TestValidateClampsStatsIntervalAndKeepsNeighbours(t *testing.T) {
-	cfg := &Config{RuntimeService: RuntimeServiceConfig{StatsInterval: "5ms", LogLevel: "debug"}}
+	cfg := newConfig()
+	cfg.RuntimeService.StatsInterval, cfg.RuntimeService.LogLevel = "5ms", "debug"
 	warnings := validate(cfg)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "stats_interval") {
 		t.Fatalf("warnings = %v, want one naming stats_interval", warnings)
@@ -218,7 +219,8 @@ func TestResolvedScanInterval(t *testing.T) {
 }
 
 func TestValidateClampsScanIntervalAndKeepsNeighbours(t *testing.T) {
-	cfg := &Config{RuntimeService: RuntimeServiceConfig{ScanInterval: "50ms", StatsInterval: "1s"}}
+	cfg := newConfig()
+	cfg.RuntimeService.ScanInterval, cfg.RuntimeService.StatsInterval = "50ms", "1s"
 	warnings := validate(cfg)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "scan_interval") {
 		t.Fatalf("warnings = %v, want one naming scan_interval", warnings)
@@ -232,7 +234,8 @@ func TestValidateClampsScanIntervalAndKeepsNeighbours(t *testing.T) {
 }
 
 func TestValidateDropsUnparseableScanInterval(t *testing.T) {
-	cfg := &Config{RuntimeService: RuntimeServiceConfig{ScanInterval: "every so often"}}
+	cfg := newConfig()
+	cfg.RuntimeService.ScanInterval = "every so often"
 	warnings := validate(cfg)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "scan_interval") {
 		t.Fatalf("warnings = %v, want one naming scan_interval", warnings)

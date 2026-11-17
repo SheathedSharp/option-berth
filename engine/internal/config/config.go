@@ -42,6 +42,13 @@ const (
 	// The port-scan cadence and its floor.
 	DefaultScanInterval = 2 * time.Second
 	MinScanInterval     = 1 * time.Second
+
+	// DefaultObserveSources is how many collectors one scan merges. One: the
+	// platform's primary table answers alone, exactly as it always has. A
+	// larger number reads that many rungs of the platform's collector chain and
+	// publishes every contributor, which is narrower, never wider, than the
+	// primary table.
+	DefaultObserveSources = 1
 )
 
 // RuntimeServiceConfig holds `oberth runtime service run` settings.
@@ -70,6 +77,20 @@ type RuntimeServiceConfig struct {
 	// backs off on unchanged scans, and both ceilings scale with this value,
 	// so raising it slows the whole curve rather than only its fastest step.
 	ScanInterval string `yaml:"scan_interval"`
+
+	// ObserveSources is how many collectors of the platform's chain one scan
+	// merges into its listener table. One (the default) reads the primary table
+	// alone; anything larger is clamped to the length of that platform's chain,
+	// and a merged table is always published as narrow — its rows are facts and
+	// its absences are unknown.
+	ObserveSources int `yaml:"observe_sources"`
+}
+
+// newConfig is a Config carrying its non-zero defaults, which a file that omits
+// a key must keep. Decoding over it is what tells an absent `observe_sources`
+// (the default of one) apart from a file that states an unusable number.
+func newConfig() *Config {
+	return &Config{RuntimeService: RuntimeServiceConfig{ObserveSources: DefaultObserveSources}}
 }
 
 // ResolvedIdleTimeout returns the parsed idle timeout, falling back to
@@ -117,6 +138,17 @@ func (d RuntimeServiceConfig) ResolvedScanInterval() time.Duration {
 	return value
 }
 
+// ResolvedObserveSources returns how many collectors one scan may merge,
+// defaulting to DefaultObserveSources. A value the file should not have carried
+// resolves to the default rather than to "read no table at all"; the warning
+// about it is validate's job.
+func (d RuntimeServiceConfig) ResolvedObserveSources() int {
+	if d.ObserveSources < 1 {
+		return DefaultObserveSources
+	}
+	return d.ObserveSources
+}
+
 // ResolvedLogLevel returns the configured level, defaulting to "info".
 func (d RuntimeServiceConfig) ResolvedLogLevel() string {
 	level := strings.ToLower(strings.TrimSpace(d.LogLevel))
@@ -156,7 +188,7 @@ func Load() (*Config, []string) { return LoadFrom(Path()) }
 // its checks read the config path from its own Env and going through Path()
 // would read the developer's file instead of the fixture.
 func LoadFrom(path string) (*Config, []string) {
-	cfg := &Config{}
+	cfg := newConfig()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -164,10 +196,10 @@ func LoadFrom(path string) (*Config, []string) {
 		return cfg, nil
 	}
 	if err := checkRuntimeServiceConfigNames(data); err != nil {
-		return &Config{}, []string{fmt.Sprintf("ignoring %s: %v", path, err)}
+		return newConfig(), []string{fmt.Sprintf("ignoring %s: %v", path, err)}
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return &Config{}, []string{fmt.Sprintf("ignoring %s: %v", path, err)}
+		return newConfig(), []string{fmt.Sprintf("ignoring %s: %v", path, err)}
 	}
 	return cfg, validate(cfg)
 }
@@ -195,6 +227,12 @@ const template = `# option-berth configuration
 #   # runtime service after changing them; oberth runtime service status shows the values
 #   # in effect.
 #   scan_interval: 2s
+#   # How many collectors of the platform's chain one scan merges. 1 reads the
+#   # primary table alone (macOS netstat, Linux ss, Windows netstat -ano); a
+#   # larger number is clamped to the chain's length and publishes every
+#   # contributor in observation.sources. A merged table is always narrow: its
+#   # rows are facts, a port missing from it is unknown rather than free.
+#   observe_sources: 1
 
 # color: true       # false turns off colored output
 
@@ -290,10 +328,11 @@ func repairDuration(raw *string, rule durationRule, warnings *[]string) {
 }
 
 // validate checks every setting and service port, dropping each invalid
-// value and returning one warning per repair. `command` is deliberately not
-// validated here: the supported set lives with the invocation matrix
-// (internal/draft), and an unknown name is reported where the list can be
-// shown — see cmd.resolveAgent.
+// value and returning one warning per repair. It expects a Config that carries
+// its defaults (see newConfig), so a value it repairs is one the file stated.
+// `command` is deliberately not validated here: the supported set lives with
+// the invocation matrix (internal/draft), and an unknown name is reported where
+// the list can be shown — see cmd.resolveAgent.
 func validate(cfg *Config) []string {
 	var warnings []string
 
@@ -313,6 +352,12 @@ func validate(cfg *Config) []string {
 	if level := strings.TrimSpace(cfg.RuntimeService.LogLevel); level != "" && !knownLogLevel(strings.ToLower(level)) {
 		warnings = append(warnings, fmt.Sprintf("config: invalid runtime_service.log_level %q — using info", level))
 		cfg.RuntimeService.LogLevel = ""
+	}
+
+	if cfg.RuntimeService.ObserveSources < 1 {
+		warnings = append(warnings, fmt.Sprintf("config: invalid runtime_service.observe_sources %d — using %d",
+			cfg.RuntimeService.ObserveSources, DefaultObserveSources))
+		cfg.RuntimeService.ObserveSources = DefaultObserveSources
 	}
 
 	for port := range cfg.Services {

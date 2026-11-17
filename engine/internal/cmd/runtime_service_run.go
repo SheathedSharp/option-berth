@@ -104,6 +104,7 @@ func runForegroundRuntimeService(ctx context.Context, persistent bool) error {
 		IdleTimeout:             runtimeServiceIdleTimeout(loadedConfig.RuntimeService, persistent),
 		StatsInterval:           loadedConfig.RuntimeService.ResolvedStatsInterval(),
 		ScanInterval:            loadedConfig.RuntimeService.ResolvedScanInterval(),
+		ObserveSources:          loadedConfig.RuntimeService.ResolvedObserveSources(),
 		Logger:                  logger,
 	})
 

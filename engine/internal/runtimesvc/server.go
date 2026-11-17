@@ -58,6 +58,11 @@ type Options struct {
 	StatsInterval time.Duration // `runtime_service.stats_interval`; zero means the scanner default
 	ScanInterval  time.Duration // `runtime_service.scan_interval`; zero means the scanner default
 
+	// ObserveSources is `runtime_service.observe_sources`: how many collectors
+	// one scan may merge. Zero and one read the platform's primary table alone.
+	// Ignored when Scanner is set, for the same reason as the two intervals.
+	ObserveSources int
+
 	// Collaborators. Logger is required in production and may be nil in tests,
 	// which get a discard logger.
 	Logger  *slog.Logger
@@ -162,6 +167,7 @@ func (s *Server) scannerFor(opts Options) *scanner.Loop {
 		Logger:                opts.Logger,
 		StatsInterval:         opts.StatsInterval,
 		ScanInterval:          opts.ScanInterval,
+		SourceLimit:           opts.ObserveSources,
 	})
 }
 
