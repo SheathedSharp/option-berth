@@ -98,7 +98,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 
 	if killSessionFlag != "" {
 		if len(args) != 0 || len(killPIDFlag) != 0 {
-			return fmt.Errorf("--session cannot be combined with ports or pids")
+			return fmt.Errorf("--session cannot be combined with ports, pids or run names")
 		}
 		return killSession(cmd.Context())
 	}
