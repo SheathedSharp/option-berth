@@ -171,7 +171,7 @@ func validateMap(m map[string]any) error {
 	if err := checkRuntimeServiceConfigNames(body); err != nil {
 		return err
 	}
-	decoded := &Config{}
+	decoded := newConfig()
 	if err := yaml.Unmarshal(body, decoded); err != nil {
 		return fmt.Errorf("the merged config is not valid: %w", err)
 	}

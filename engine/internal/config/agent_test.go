@@ -29,7 +29,7 @@ func TestResolvedAgentTimeoutNeverDropsTheCeiling(t *testing.T) {
 }
 
 func TestValidateDropsAnUnparseableAgentTimeout(t *testing.T) {
-	cfg := &Config{}
+	cfg := newConfig()
 	cfg.Agent.Timeout = "soon"
 	warnings := validate(cfg)
 	if cfg.Agent.Timeout != "" {

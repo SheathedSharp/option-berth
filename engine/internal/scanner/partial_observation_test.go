@@ -69,8 +69,14 @@ func TestResolvedObservationRepublishesWithoutPortChanges(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v, want the resolved verdict published", changed, err)
 	}
-	if next.Observation != nil || prev.Observation == nil {
-		t.Fatalf("next=%+v prev=%+v, want partial -> whole", next.Observation, prev.Observation)
+	// The recovery is news of its own: the whole-table verdict now says when the
+	// healthy run began, and the degradation it replaced said when it started.
+	if next.Observation == nil || next.Observation.State != state.ObservationObservable ||
+		next.Observation.RecoveredAt == "" || next.Observation.DegradedSince != "" {
+		t.Fatalf("next = %+v, want the recovered verdict", next.Observation)
+	}
+	if prev.Observation == nil || prev.Observation.DegradedSince == "" {
+		t.Fatalf("prev = %+v, want the degradation's start", prev.Observation)
 	}
 	if len(next.Ports) != 1 || next.Ports[0].Port != 18001 {
 		t.Fatalf("ports = %+v, want the unchanged row", next.Ports)

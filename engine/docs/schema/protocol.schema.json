@@ -1143,6 +1143,12 @@
         "source": {
           "type": "string"
         },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "detail": {
           "type": "string"
         },
@@ -1150,6 +1156,12 @@
           "type": "string"
         },
         "checked_at": {
+          "type": "string"
+        },
+        "degraded_since": {
+          "type": "string"
+        },
+        "recovered_at": {
           "type": "string"
         }
       },

@@ -25,12 +25,34 @@ import (
 // absence is not evidence that a port is free. Tests that exercise a later stage
 // replace them so they do not depend on the host's ability to read its own
 // listener table.
+//
+// scanSources is the merged read `runtime_service.observe_sources` asks for when
+// it names more than one collector; scanDirect picks between the two.
 var (
 	scanPorts = func() ([]ports.ListeningPort, string, error) {
 		return ports.ScanContextSource(context.Background())
 	}
+	scanSources = func() ([]ports.ListeningPort, []string, error) {
+		return ports.ScanContextSources(context.Background(), loadedConfig.RuntimeService.ResolvedObserveSources())
+	}
 	scanProbe = ports.ProbeListenerObservation
 )
+
+// scanDirect reads the listener table the way this machine's configuration says.
+//
+// One collector is the single-source read, which reports the alternative that
+// answered (if any) instead of a list; that is the seam a test replaces, so a
+// test's scanPorts keeps answering under the default configuration. Above one,
+// the platform chain's rungs are merged and every contributor is published —
+// never the primary collector alone, which is a different, wider claim.
+func scanDirect() ([]ports.ListeningPort, string, []string, error) {
+	if loadedConfig.RuntimeService.ResolvedObserveSources() <= 1 {
+		rows, source, err := scanPorts()
+		return rows, source, nil, err
+	}
+	rows, sources, err := scanSources()
+	return rows, "", sources, err
+}
 
 // groupRows joins the worktree's live port evidence with its manifest index.
 // Status uses the same source whether the runtime service is warm or the caller asks
@@ -106,7 +128,7 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 	if historyErr != nil {
 		return nil, nil, nil, storageReadError(historyErr)
 	}
-	results, source, scanErr := scanPorts()
+	results, source, sources, scanErr := scanDirect()
 	var obs *rpc.ObservationStatus
 	if scanErr != nil {
 		if partial, ok := ports.PartialRows(scanErr); ok {
@@ -122,6 +144,7 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 				State:     state.ObservationPartial,
 				Code:      ports.CodeObservationIncomplete,
 				Source:    source,
+				Sources:   sources,
 				Detail:    scanErr.Error(),
 				Hint:      hint,
 				CheckedAt: time.Now().UTC().Format(time.RFC3339),
@@ -132,29 +155,38 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 				return nil, nil, nil, scanErr
 			}
 			probe := scanProbe(ctx)
-			obs = observationFromProbe(probe, oe)
+			obs = observationFromProbe(probe, oe, sources)
 			// The probe saw its own listener, so the collector works; an empty
 			// first pass may have been transient. One retry settles it without
 			// publishing the probe's own socket.
 			if oe.Code == ports.CodeObservationEmpty && probe.State == ports.ObservationObservable {
-				if retry, retrySource, retryErr := scanPorts(); retryErr == nil {
-					results, source = retry, retrySource
+				if retry, retrySource, retrySources, retryErr := scanDirect(); retryErr == nil {
+					results, source, sources = retry, retrySource, retrySources
 				}
 			}
 		}
 	}
-	narrow := source != ""
+	narrow := source != "" || len(sources) > 0
 	if obs == nil && narrow {
 		// The table was read cleanly, but by a collector that cannot see every
-		// owner. Publish that coverage instead of a healthy-looking empty.
+		// owner, or by several of them at once. Publish that coverage instead of
+		// a healthy-looking empty.
+		detail := ports.NarrowSourceDetail(source)
+		if len(sources) > 0 {
+			detail = ports.MergedSourcesDetail(sources)
+		}
 		obs = &rpc.ObservationStatus{
 			State:     state.ObservationObservable,
 			Source:    source,
-			Detail:    ports.NarrowSourceDetail(source),
+			Sources:   sources,
+			Detail:    detail,
 			CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		}
-	} else if obs != nil && source != "" {
-		obs.Source = source
+	} else if obs != nil {
+		if source != "" {
+			obs.Source = source
+		}
+		obs.Sources = sources
 	}
 	docker.EnrichPorts(results)
 	ports.Enrich(results)
@@ -190,7 +222,12 @@ func scanGroupsObserved(ctx context.Context) ([]ports.ListeningPort, []state.Gro
 // a status reader needs. Empty output takes the probe's reason; a format or row
 // problem keeps its own code but is still reported as blind to a trustworthy
 // table.
-func observationFromProbe(probe ports.ProbeResult, scanErr *ports.ObservationError) *rpc.ObservationStatus {
+//
+// sources is what the failed round contributed, which is nothing — a collector
+// that read no table cannot be named as one this report rests on. It is passed
+// in rather than assumed so the caller's scan shape stays the one source of
+// truth about what was read.
+func observationFromProbe(probe ports.ProbeResult, scanErr *ports.ObservationError, sources []string) *rpc.ObservationStatus {
 	state, code := probe.State, scanErr.Code
 	detail, hint := scanErr.Error(), scanErr.Hint
 	switch {
@@ -216,6 +253,7 @@ func observationFromProbe(probe ports.ProbeResult, scanErr *ports.ObservationErr
 		State:     string(state),
 		Code:      code,
 		Source:    probe.Source,
+		Sources:   sources,
 		Detail:    detail,
 		Hint:      hint,
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),

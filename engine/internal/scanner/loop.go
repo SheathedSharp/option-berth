@@ -144,6 +144,18 @@ type Options struct {
 	// "not listening".
 	ScanSource func(ctx context.Context, include Include) ([]ports.ListeningPort, string, error)
 
+	// ScanSources takes precedence over ScanSource and reports every collector
+	// that contributed instead of a single name. Production installs it when
+	// SourceLimit asks for more than one table: a merged read is always
+	// published as narrow, because no single collector's authority covers a
+	// table assembled from several.
+	ScanSources func(ctx context.Context, include Include) ([]ports.ListeningPort, []string, error)
+
+	// SourceLimit is how many collectors one scan may merge
+	// (`runtime_service.observe_sources`). Zero and one read the platform's
+	// primary table alone and keep the single-source seam.
+	SourceLimit int
+
 	// Probe overrides the health probe. Tests inject a fake; production leaves
 	// it nil and gets ports.ProbeHealth. Configured health goes through this
 	// seam, so tests need not open a real socket.
@@ -282,6 +294,16 @@ type Loop struct {
 	seq           uint64
 	scans         int64
 	lastErr       error
+
+	// degradedSince is when the currently published observation stopped being a
+	// whole read of the primary table, and recoveredAt is when the current
+	// healthy run began after one. They are stamped where the verdict is
+	// committed, under mu, so two scans cannot disagree about which came first,
+	// and they travel on the verdict rather than in a second copy of runtime
+	// state. A collector failure does not move them: that path publishes no
+	// verdict and keeps the last snapshot.
+	degradedSince string
+	recoveredAt   string
 }
 
 // New builds a Loop. It does not start scanning; call Run.
@@ -327,19 +349,24 @@ func withDefaults(opts Options) Options {
 // per call, never cached, because both the runtime service and tests install a collector
 // after New.
 //
-// Precedence is the documented one: source, then context, then the legacy
-// synchronous callback. Only a source can name itself; the other two report an
-// empty name, which means the platform's primary table.
-func (l *Loop) collect(ctx context.Context, include Include) (rows []ports.ListeningPort, source string, err error) {
+// Precedence is the documented one: sources, then source, then context, then the
+// legacy synchronous callback. Only the two source seams can name a collector,
+// and exactly one of source and sources comes back: the other two report neither,
+// which means the platform's primary table was read alone.
+func (l *Loop) collect(ctx context.Context, include Include) (rows []ports.ListeningPort, source string, sources []string, err error) {
 	switch {
+	case l.opts.ScanSources != nil:
+		rows, sources, err = l.opts.ScanSources(ctx, include)
+		return rows, "", sources, err
 	case l.opts.ScanSource != nil:
-		return l.opts.ScanSource(ctx, include)
+		rows, source, err = l.opts.ScanSource(ctx, include)
+		return rows, source, nil, err
 	case l.opts.ScanContext != nil:
 		rows, err = l.opts.ScanContext(ctx, include)
-		return rows, "", err
+		return rows, "", nil, err
 	default:
 		rows, err = l.opts.Scan(include)
-		return rows, "", err
+		return rows, "", nil, err
 	}
 }
 
@@ -351,7 +378,7 @@ func (l *Loop) collect(ctx context.Context, include Include) (rows []ports.Liste
 // list wakes the loop, so a new container's port is enriched within one tick
 // rather than one backed-off interval.
 func (l *Loop) attachDockerWatcher(base time.Duration) {
-	if l.opts.Scan != nil || l.opts.ScanContext != nil || l.opts.ScanSource != nil {
+	if l.opts.Scan != nil || l.opts.ScanContext != nil || l.opts.ScanSource != nil || l.opts.ScanSources != nil {
 		return
 	}
 	l.docker = docker.NewWatcher(docker.WatcherOptions{
@@ -359,6 +386,12 @@ func (l *Loop) attachDockerWatcher(base time.Duration) {
 		Logger:   l.opts.Logger,
 		OnChange: l.Wake,
 	})
+	if l.opts.SourceLimit > 1 {
+		// A configured collector count is a merge, and a merge is never the
+		// single-source read: it publishes a list instead of one name.
+		l.opts.ScanSources = l.osScanSourcesContext
+		return
+	}
 	l.opts.ScanSource = l.osScanSourceContext
 }
 
@@ -383,6 +416,27 @@ func (l *Loop) osScanSourceContext(ctx context.Context, include Include) ([]port
 	if err != nil {
 		return nil, source, err
 	}
+	pp, err = l.enrichScannedContext(ctx, include, pp)
+	return pp, source, err
+}
+
+// osScanSourcesContext is the same read when `runtime_service.observe_sources`
+// asks for more than one table: the platform chain's rungs are merged and every
+// contributor is published, because none of them alone carries the primary
+// table's authority.
+func (l *Loop) osScanSourcesContext(ctx context.Context, include Include) ([]ports.ListeningPort, []string, error) {
+	pp, sources, err := ports.ScanContextSources(ctx, l.opts.SourceLimit)
+	if err != nil {
+		return nil, sources, err
+	}
+	pp, err = l.enrichScannedContext(ctx, include, pp)
+	return pp, sources, err
+}
+
+// enrichScannedContext turns a collector's table into the rows this loop
+// publishes: this process's own probe socket dropped, containers matched, then
+// owner metadata and — when a subscriber asked for them — stats.
+func (l *Loop) enrichScannedContext(ctx context.Context, include Include, pp []ports.ListeningPort) ([]ports.ListeningPort, error) {
 	// The runtime service's own self-probe binds a short-lived loopback socket. A
 	// regular scan that overlaps it would otherwise publish that socket as an
 	// undeclared listener of the checkout the runtime service was started in. The probe
@@ -391,20 +445,20 @@ func (l *Loop) osScanSourceContext(ctx context.Context, include Include) ([]port
 	pp = withoutOwnListeners(pp)
 	l.docker.Enrich(pp)
 	if err := ctx.Err(); err != nil {
-		return nil, source, err
+		return nil, err
 	}
 	// The owner deadline reaches metadata, cwd and full-stat commands.
 	// Filesystem and PEB syscalls remain synchronous, checked between
 	// operations.
 	if err := ports.EnrichContext(ctx, pp); err != nil {
-		return nil, source, err
+		return nil, err
 	}
 	if include.Stats {
 		if err := ports.EnrichStatsContext(ctx, pp, l.docker.Stats()); err != nil {
-			return nil, source, err
+			return nil, err
 		}
 	}
-	return pp, source, ctx.Err()
+	return pp, ctx.Err()
 }
 
 // withoutOwnListeners drops rows owned by the runtime service process. In production
@@ -663,8 +717,12 @@ func (l *Loop) publish(prev, next state.Snapshot, events []state.Event) {
 // commit; a failure keeps the last snapshot without renewing its freshness; a
 // withdrawn observation changes nothing at all.
 type scanReading struct {
-	rows         []ports.ListeningPort
+	rows []ports.ListeningPort
+	// source and sources are the two ways a table names its provenance: one
+	// collector that answered instead of the primary, or every collector a
+	// merged table was assembled from. At most one of them is set.
 	source       string
+	sources      []string
 	narrow       bool
 	partial      bool
 	partialCause error
@@ -675,46 +733,46 @@ type scanReading struct {
 
 // read runs the loop's collector and classifies what came back.
 func (l *Loop) read(ctx context.Context, include Include) scanReading {
-	rows, source, err := l.collect(ctx, include)
+	rows, source, sources, err := l.collect(ctx, include)
 	if ctx.Err() != nil {
 		// Ownership ended, not a collector failure. Preserve the last outcome
 		// and freshness, and leave pending invalidation for a later observer.
 		return scanReading{ownerGone: true}
 	}
-	narrow := source != ""
+	narrow := source != "" || len(sources) > 0
 	if err == nil {
-		reading := scanReading{rows: rows, source: source, narrow: narrow}
+		reading := scanReading{rows: rows, source: source, sources: sources, narrow: narrow}
 		if narrow {
-			reading.verdict = l.observableObservation(source)
+			reading.verdict = l.observableObservation(source, sources)
 		}
 		return reading
 	}
 	if partial, ok := ports.PartialRows(err); ok {
 		// The readable rows are facts; the unreadable ones are not. Publish
-		// them together with the verdict so no port looks absent.
+		// them together with the verdict so no port looks absent. A merged read
+		// keeps the partial verdict: one of its rungs did not finish, and that
+		// is more than "the table is narrow". A single alternative keeps the
+		// coverage sentence, which is the stronger claim about absence.
 		reading := scanReading{
-			rows: partial, source: source, narrow: narrow, partial: true, partialCause: err,
-			verdict: l.partialObservation(err, source),
+			rows: partial, source: source, sources: sources, narrow: narrow, partial: true, partialCause: err,
+			verdict: l.partialObservation(err, source, sources),
 		}
-		if narrow {
-			// An alternative collector from the platform's chain either answers
-			// whole or reports a simultaneous failure, so a named source with
-			// partial rows does not occur there. Keep the coverage sentence
-			// authoritative if it ever does.
-			reading.verdict = l.observableObservation(source)
+		if source != "" && len(sources) == 0 {
+			reading.verdict = l.observableObservation(source, nil)
 		}
 		return reading
 	}
-	return scanReading{source: source, narrow: narrow, failure: err}
+	return scanReading{source: source, sources: sources, narrow: narrow, failure: err}
 }
 
 // partialObservation records that a collector answered with the rows it could
 // read and a verdict on the rest. The code and hint come from the collector's
 // own error, so a sandboxed agent can tell which kind of blindness this was.
-func (l *Loop) partialObservation(reason error, source string) *state.Observation {
+func (l *Loop) partialObservation(reason error, source string, sources []string) *state.Observation {
 	partial := &state.Observation{
 		State:     state.ObservationPartial,
 		Source:    source,
+		Sources:   sources,
 		CheckedAt: l.nowRFC3339(),
 	}
 	var observed *ports.ObservationError
@@ -726,15 +784,20 @@ func (l *Loop) partialObservation(reason error, source string) *state.Observatio
 	return partial
 }
 
-// observableObservation records that this scan could see the machine, though the
-// alternative collector that answered cannot promise everything the primary one
-// does. Publishing the coverage alongside the rows is what stops "no owner" from
-// reading as "nothing there".
-func (l *Loop) observableObservation(source string) *state.Observation {
+// observableObservation records that this scan could see the machine, though
+// neither an alternative collector nor a merged table can promise everything
+// the primary one does. Publishing the coverage alongside the rows is what stops
+// "no owner" from reading as "nothing there".
+func (l *Loop) observableObservation(source string, sources []string) *state.Observation {
+	detail := ports.NarrowSourceDetail(source)
+	if len(sources) > 0 {
+		detail = ports.MergedSourcesDetail(sources)
+	}
 	return &state.Observation{
 		State:     state.ObservationObservable,
 		Source:    source,
-		Detail:    ports.NarrowSourceDetail(source),
+		Sources:   sources,
+		Detail:    detail,
 		CheckedAt: l.nowRFC3339(),
 	}
 }
@@ -955,8 +1018,44 @@ func (l *Loop) commitScan(c commit) (next, prev state.Snapshot, changed bool) {
 		return prev, prev, false
 	}
 	l.noteScanOutcome(c)
+	c.observation = l.stampObservation(c.observation)
 	withStats := carryScanFields(prev, rows, groupRows, c)
 	return l.storeCommitted(prev, rows, groupRows, c, withStats)
+}
+
+// stampObservation gives the verdict this scan publishes its place in the
+// degradation history.
+//
+// A healthy verdict is a whole read of the primary table: no partial rows, no
+// alternative collector, no merged list. The two times answer "how long has this
+// been going on", which no single scan can — degradedSince is stamped when the
+// first unhealthy verdict is published and handed over to recoveredAt when a
+// healthy one comes back — and they stay on the verdict, so a delta can never
+// carry one without the other. The times are not part of SameObservation: they
+// move exactly when the state they describe moves.
+//
+// A healthy scan with nothing to report publishes no verdict at all, which is
+// the shape a clean read has always had on the wire.
+func (l *Loop) stampObservation(verdict *state.Observation) *state.Observation {
+	healthy := verdict == nil ||
+		(verdict.State == state.ObservationObservable && verdict.Source == "" && len(verdict.Sources) == 0)
+	switch {
+	case !healthy && l.degradedSince == "":
+		l.degradedSince, l.recoveredAt = l.nowRFC3339(), ""
+	case healthy && l.degradedSince != "":
+		l.degradedSince, l.recoveredAt = "", l.nowRFC3339()
+	}
+	if verdict == nil {
+		if l.recoveredAt == "" {
+			return nil
+		}
+		// The recovery is news, so this one healthy scan carries a verdict:
+		// without it a reader could only tell that the degradation ended, never
+		// when.
+		verdict = &state.Observation{State: state.ObservationObservable, CheckedAt: l.nowRFC3339()}
+	}
+	verdict.DegradedSince, verdict.RecoveredAt = l.degradedSince, l.recoveredAt
+	return verdict
 }
 
 // noteScanOutcome records that this generation produced a reading. An older
