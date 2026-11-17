@@ -32,10 +32,17 @@ type briefStatusDocument struct {
 }
 
 type briefWorktree struct {
-	Name     string         `json:"name"`
-	Identity string         `json:"identity"`
-	Branch   string         `json:"branch,omitempty"`
-	Services []briefService `json:"services"`
+	Name     string `json:"name"`
+	Identity string `json:"identity"`
+	Branch   string `json:"branch,omitempty"`
+	// ManifestMissing says no oberth.yaml declares this worktree's services, so
+	// an empty `services` means "nothing to read", not "nothing declared". The
+	// full document publishes the same fact as a null `config_path`; the brief
+	// drops that field, and without this an agent cannot tell a checkout waiting
+	// for `oberth init` from a configured, idle one. Absent when a manifest
+	// exists: an explicit false would be a second spelling of the same silence.
+	ManifestMissing bool           `json:"manifest_missing,omitempty"`
+	Services        []briefService `json:"services"`
 	// AdHocRuns lists every run whose listeners no running service row
 	// already names. That includes an `oberth start` run the manifest does not
 	// declare, a stale generation still holding a port, and a declared
@@ -202,6 +209,7 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 			Name:            doc.Worktree.Name,
 			Identity:        doc.Worktree.Identity,
 			Branch:          doc.Worktree.Branch,
+			ManifestMissing: doc.manifestMissing,
 			Services:        make([]briefService, 0, len(doc.Worktree.Services)),
 			AdHocRuns:       adHoc,
 			UnownedPorts:    unowned,

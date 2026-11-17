@@ -681,3 +681,36 @@ func TestBriefStatusDoesNotRepeatARunAServiceRowNames(t *testing.T) {
 		}
 	}
 }
+
+// An empty `services` array means two different things, and a brief reader
+// cannot ask the full document to tell them apart. "No oberth.yaml declares
+// this worktree" sends the reader to `oberth init`; "the manifest declares no
+// services" says the checkout is configured and idle. Publishing only the
+// empty list makes the first look like the second. Issue #384.
+func TestBriefStatusSaysWhenNoManifestDeclaresTheServices(t *testing.T) {
+	doc := statusScopeFixture()
+	doc.Worktree.Services = []state.Service{}
+	doc.Ports = nil
+	doc.manifestMissing = true
+
+	raw, err := json.Marshal(briefStatusFrom(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"manifest_missing":true`) {
+		t.Fatalf("brief = %s, want the missing-manifest fact published", raw)
+	}
+}
+
+// The fact is absent when a manifest did declare the worktree: an explicit
+// false would be a second spelling of "nothing to say here".
+func TestBriefStatusOmitsManifestMissingWhenAManifestExists(t *testing.T) {
+	doc := statusScopeFixture()
+	raw, err := json.Marshal(briefStatusFrom(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "manifest_missing") {
+		t.Fatalf("brief = %s, want no manifest_missing key for a declared worktree", raw)
+	}
+}
