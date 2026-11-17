@@ -36,15 +36,16 @@ jobs:
           mkdir -p verification
           git rev-parse HEAD > verification/commit.txt
           git rev-parse 'HEAD^{tree}' > verification/tree.txt
-      # The skill is a separate repository, but it teaches this contract. Merge
-      # the skill update first; this check fails until its main covers every
-      # stable error code, manifest field, reference, and observation state.
-      - name: Check out the agent skill
+      # The skill is a separate repository, but it teaches this contract. The
+      # required check reads a literal commit, so an unrelated push to the skill
+      # repository cannot turn this pull request red. Moving the pin is a change
+      # to this workflow, which Gate integrity already limits to a maintainer.
+      - name: Check out the agent skill at the pinned commit
         if: runner.os == 'Linux'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: SheathedSharp/option-berth-skill
-          ref: main
+          ref: 33b6f398508679686c6abf28ba0ae5de4dd4c2fb
           path: option-berth-skill
           persist-credentials: false
       - name: Skill covers the agent contract
@@ -107,10 +108,15 @@ jobs:
         run: go test -race -count=1 magefiles/build.go magefiles/workflow.go magefiles/workflow_test.go
       - name: Install package tools for tests
         if: runner.os == 'Linux'
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
+          # Only the network fetch is retried: a mirror hiccup is not a result
+          # about this change. Never wrap a test, vet or verification step —
+          # a retry there would mask a real failure behind a slower red build.
+          source scripts/retry.sh
+          retry 4 5 -- sudo apt-get update
+          retry 4 5 -- sudo apt-get install -y rpm
+          retry 4 5 -- go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Measurement helper tests
         shell: bash
@@ -122,6 +128,51 @@ jobs:
           name: engine-verification-${{ matrix.os }}-${{ github.run_id }}
           path: verification/
           retention-days: 7
+
+  skill-drift:
+    # Advisory, never required: this job reports how far the pinned skill commit
+    # lags `main`, so adopting a skill release is a visible decision instead of a
+    # surprise red pull request. Keep it out of .github/quality-gate-checks.json
+    # and the `main` ruleset.
+    name: Skill contract / drift from main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check out the agent skill at main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: SheathedSharp/option-berth-skill
+          ref: main
+          path: option-berth-skill
+          persist-credentials: false
+      - name: Record the pinned and the moving commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep in sync with the literal ref in the required checkout above.
+          pin=33b6f398508679686c6abf28ba0ae5de4dd4c2fb
+          head=$(git -C option-berth-skill rev-parse HEAD)
+          echo "pinned: $pin"
+          echo "main:   $head"
+          if [ "$pin" = "$head" ]; then
+            echo "skill main is the pinned commit"
+          else
+            echo "skill main has moved past the pin; the required check still uses the pinned commit"
+          fi
+      - name: Skill main covers the agent contract
+        id: drift
+        # Advisory: the step reports failure but the job stays green.
+        continue-on-error: true
+        shell: bash
+        run: python3 scripts/check_skill_contract.py --skill-dir option-berth-skill
+      - name: Publish drift as an annotation
+        if: steps.drift.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning title=Skill contract drift::option-berth-skill main no longer covers the engine's agent contract; review the skill change and move the pinned ref in .github/workflows/engine.yml when it is ready"
 
   windows-install-scripts:
     name: windows-install-scripts
