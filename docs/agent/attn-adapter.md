@@ -262,31 +262,43 @@ values. Copy `event_id`, `attn_revision` (as `state_revision`),
 an older status poll. Feedback never changes the attention artifact or grants
 permission.
 
-Inspect the accumulated evidence with:
+A task-entry read wants one fact: whether a runner is observing this task and
+whether anything is happening. `oberth attn status --json` therefore returns the
+decision document — consent and configuration plus a `quality` summary of the
+ledger counts. Keep reading `quality.activity` from that default document: the
+automatic-attachment safety rule depends on it, and the summary keeps it beside
+the record, case and session counts. A zero count stays in the document; this
+CLI does not say "nothing recorded yet" by leaving a field out.
+
+The full report is one flag away. `--quality` puts it under `quality`; `--since`
+and `--quality-project` narrow that report, so they imply `--quality`:
 
 ```sh
+oberth attn status --json --quality
 oberth attn status --json --since 0
 oberth attn status --json --since 168h --quality-project example-worker
 oberth attn status --json --since 168h --quality-project example-api
 ```
 
-The `quality.model_calls` and `quality.cache_hits` counters include single calls
-and active subscriptions; per-poll records do not get added a second time from
-a stopped lifecycle summary. Legacy aggregates are allocated only to all-time
-or fully covered session windows; `legacy_counts_unallocated` identifies partial
-windows with only lower-bound counts. Exact root-path filters use the hashed
-worktree identity, not the potentially shared basename.
+In the full report, the `quality.model_calls` and `quality.cache_hits` counters
+include single calls and active subscriptions; per-poll records do not get added
+a second time from a stopped lifecycle summary. Legacy aggregates are allocated
+only to all-time or fully covered session windows; `legacy_counts_unallocated`
+identifies partial windows with only lower-bound counts. Exact root-path filters
+use the hashed worktree identity, not the potentially shared basename.
 
 `quality.activity` is recent-observation evidence, not a PID check: only a valid
 15–60 second per-poll lease establishes `observing`; historical subscriptions
 remain `recent`. No ledger gives `no_session`; observation failures give `failed`.
-The CLI contract in `docs/cli.md` owns the field meanings. The ledger never
-contains raw errors or credentials, and a missing record does not prove no
+It is present in both documents, because it is the one metric a task-entry read
+acts on. The CLI contract in `docs/cli.md` owns the field meanings. The ledger
+never contains raw errors or credentials, and a missing record does not prove no
 external request happened.
 
-The `quality` object also includes session lifecycle and polling counts, observation/status counts, labelled/unlabelled-case
-coverage, assessment availability, routing-reason and model/option breakdowns,
-user decisions, the conservative human-routing precision/recall/F1, the model's
+With `--quality`, the `quality` object also includes session lifecycle and
+polling counts, observation/status counts, labelled/unlabelled-case coverage,
+assessment availability, routing-reason and model/option breakdowns, user
+decisions, the conservative human-routing precision/recall/F1, the model's
 `needs_human` and `task_relevant` Brier scores and mean absolute errors,
 recommendation matches, action success rate, resolution rate, and
 event-to-observation latency. A metric is `null` until enough feedback labels
