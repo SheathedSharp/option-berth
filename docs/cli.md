@@ -85,8 +85,9 @@ used. The command only leaves a "last look" marker in its own state file, and a 
 factual changes in changed; --no-mark reads without moving the marker.
 
 `--only api,worker` keeps only those services and the transitive closure of their `depends_on`;
-service/port changes in `ports[]`, `exits[]` and `changed` narrow along with it, while `machine:` and
-the git summary stay unchanged. Names must already be declared: an unknown name returns `not_found`
+service/port changes in `ports[]`, `exits[]` and `changed` narrow along with it, while `machine:`,
+`runs` and the git summary stay unchanged — `runs` names runs the manifest does not declare, so a
+service selection cannot speak for it. Names must already be declared: an unknown name returns `not_found`
 and lists the available services, and an empty name is treated as an argument error. Filtering
 happens after the full snapshot and the "last look" marker are written, so it never writes a partial
 state as the baseline for the next comparison. Code comparison also runs only for the selected
