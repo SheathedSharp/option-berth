@@ -106,8 +106,21 @@ class ReleaseTests(unittest.TestCase):
                         result = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", script],
                                                 cwd=root, env=env, text=True, capture_output=True, timeout=10)
                         self.assertEqual(result.returncode, 0, result.stderr)
-                        expected = ["scripts/package_release.py", "--os", system, "--arch", arch, "--output", "dist"]
+                        expected = ["scripts/package_release.py", "--os", system, "--arch", arch,
+                                    "--output", "dist", "--resume"]
                         self.assertEqual(result.stdout.splitlines(), expected)
+
+    def test_package_job_resumes_from_its_own_earlier_upload(self):
+        # A re-run starts on a fresh runner, so the only state that can cross is
+        # this target's artifact from the previous attempt.
+        workflow = (release.ROOT / ".github/workflows/release.yml").read_text()
+        job = workflow.split("  package:\n", 1)[1].split("\n  publish:", 1)[0]
+        restore = job.index("actions/download-artifact@")
+        build = job.index("scripts/package_release.py")
+        self.assertLess(restore, build, "the earlier upload must be restored before anything is built")
+        self.assertIn("name: release-${{ matrix.os }}-${{ matrix.arch }}", job[restore:build])
+        self.assertIn('scripts/package_linux.py --arch "$TARGET_ARCH" --dist dist --resume', job)
+        self.assertIn("overwrite: true", job[build:], "a re-run replaces its own earlier upload")
 
     def test_missing_target_is_still_rejected_before_packaging(self):
         script = self.packaging_script()
