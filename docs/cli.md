@@ -1256,6 +1256,29 @@ or a particular installed version; a provider failure remains a provider failure
 
 
 
+### Native Claude project hooks
+
+`agent claude-hook` handles Claude Code's official `UserPromptSubmit`, `Stop`, `StopFailure` and `SessionEnd` JSON envelopes. The adapter is verified with Claude Code **2.1.322 on macOS**; earlier versions and native Windows execution are not verified/supported by this adapter. It is not a transparent attachment to arbitrary running `claude`/`cld` processes. A wrapper must preserve project hooks.
+
+Enable once per project, only after reviewing its selected scope and read-only evaluation options:
+
+```sh
+oberth agent claude-hook --project "$PWD" --service api \
+  --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m --print-config
+```
+
+The command only prints JSON. Review it and merge its `hooks` into the selected project's `.claude/settings.json` without replacing unrelated settings; start a new native Claude session under the tool's normal project-trust rules. It does not write settings, install a global hook or change Attention consent. A minimal configuration is in [the example](../examples/claude-hooks/settings.example.json); prefer generated output when using a nonstandard executable path. A matching installed skill is not evidence that these hooks ran.
+
+`--project` is mandatory and must resolve to the hook input's exact worktree. `--service` selects declared services; `--run` selects exact already-recorded run IDs, including portless workers. Both accept comma-separated values. Same-named foreign processes and replacement ad-hoc generations are never adopted. `--authorize` is an explicit subset of fixed read-only evaluation options, not tool/action approval. Task scope is fixed for the lease; associate a newly created ad-hoc run explicitly in later project/task configuration. No manifest is generated, no home directory scanned, and no missing service started. An already-running Runtime must know the selected project; an absent service/project/context returns `runtime_context_unavailable` rather than switching to a system scan. The hook reads no source, git diff or log contents. A task that needs services still uses the ordinary authorized `up`/`start` path; healthy existing runs are reused as facts.
+
+`UserPromptSubmit` binds canonical worktree, opaque session identity and a fresh task generation. It injects only selected Runtime facts, including observation coverage: a blind/narrow listener view does not become `running:false`. Exact task runs read the existing full exit facts, not the status display's five-row cap. The hook ignores `prompt`, `transcript_path`, assistant messages and error details. The assessment summary is a fixed conservative development-task label, so relevance has less task detail than a manually supplied redacted summary; conversations are neither stored by the adapter nor used as assessment summaries.
+
+With complete task scope, explicit options and existing Attention consent/configuration, a bounded child observer reuses the existing runner, scoped change feed, reconnect, cache and quality ledger. Filtering precedes model requests; no eligible event means no model request. `on` alone starts no observer and promises no unlimited model budget. Selected Runtime facts still enter the task if Attention is off; its missing permission/configuration or options are reported separately. Missing scope gives `scope_required`; `OBERTH_CLAUDE_TASK_MODE=edit` disables observation and context for a pure-edit session with `pure_edit`. The adapter does not infer runtime intent by reading the prompt. A project's explicit service scope otherwise applies conservatively to each submitted task.
+
+At `Stop`, the hook cancels and joins only its own observer, then checks consent, configuration identity, scope, event revision and freshness again. Both relevant read-only recommendations and human-required/unavailable findings can be returned. Top-level official `decision: "block"` / `reason` JSON gives the same native Claude task **at most one** bounded reporting/inspection continuation; `systemMessage` reports the local state. No keystrokes, transcript scraping, new tool permissions or automatic service control are involved. Consumption is recorded before output: a crash can lose feedback, but cannot replay it. `stop_hook_active` and the consumed cursor prevent loops; a native answer is not proof that the finding was fixed.
+
+`StopFailure` and `SessionEnd` close without continuation. A new submitted task replaces and joins the old generation. The default and maximum non-renewable lease is `10m` (`--lease` can shorten it); a lost/expired/killed observer is never resumed and old pending feedback is discarded. An interrupt that supplies no Stop/SessionEnd is reclaimed by the next prompt or lease deadline, not claimed as an immediate callback. Cleanup never stops shared services. Only small owner-private delivery cursors live under `BERTH_HOME/attention/claude/`; they are not another runtime registry. Removing project hooks does not synchronously signal an already-owned lease; disable Attention to revoke assessments, or let that bounded lease close. Session-wide or global hooks are not required.
+
 ### Explicit native continuation
 
 `oberth agent plan <provider> --worktree /workspace/project --resume-file /absolute/session-file --json`

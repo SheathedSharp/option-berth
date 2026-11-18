@@ -178,6 +178,10 @@ The command and field contract is [workplace.md](../workplace.md).
   `start`, states itself once on stderr, and is dropped with a note when the queue is
   full, because a silently lost record reads exactly like a complete one.
 
+## Native task observation ownership
+
+`claudehook.Adapter` owns only a short-lived delivery lease: worktree/session hash, task generation, selected service/run scope, configuration fingerprint and one pending bounded result. Runtime facts are re-read through the existing owner, never recovered from this cursor. The hook and state locks serialize lifecycle transitions; the observer's separate kernel lock is released only after runner/socket cancellation and join. A dead observer cannot resume a lease. Project enablement, limits and native protocol are defined in the [CLI contract](../cli.md#native-claude-project-hooks).
+
 ## Start, stop and port reservations
 
 A start accepts only readiness evidence for the current service. The no-port run's ID/PID/StartedAt and

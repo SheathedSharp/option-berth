@@ -15,9 +15,11 @@ Integration works by **the user calling the CLI in their own scripts**: where a 
 run / cleanup slots, paste the `oberth` commands into them; where it has no slots, use an outer
 wrapper or a note in `AGENTS.md`. The user creates these scripts and configuration themselves;
 option-berth does not install hooks, does not register an MCP, does not modify any tool's
-configuration, and does not distribute integration code; the interface is still only the CLI and
+configuration, and provides only the explicit CLI handler described below; the interface remains the CLI and
 `--json`.
 
+
+Claude Code also has a built-in CLI lifecycle handler, enabled only through reviewed project settings. It needs no wrapper scripts and leaves native TTY, permissions and answers with Claude. See the [project hook contract](cli.md#native-claude-project-hooks); it is separate from the service teardown recipes below and never stops shared services at task end.
 
 ## Version prerequisite
 

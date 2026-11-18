@@ -8,8 +8,8 @@ import (
 )
 
 // A recorder with no worker behind it: the queue is the whole observable
-// behaviour of Observe, and reading it is how these tests see what a bridge
-// event turned into.
+// behaviour of Observe, and reading it is how these tests see what a shell
+// observation turned into.
 func quietRecorder() *workplaceRecorder {
 	return &workplaceRecorder{
 		root:   "/home/dev/code/demo",
@@ -34,7 +34,7 @@ func (r *workplaceRecorder) drain() []workplace.Record {
 func TestRecorderObserveDropsRatherThanBlocks(t *testing.T) {
 	r := quietRecorder()
 	// Fill the queue past its depth: a recorder that blocked here would stall
-	// the bridge, which is the thing it must never do.
+	// the shell command, which is the thing it must never do.
 	for i := 0; i < recordQueueDepth*2; i++ {
 		r.Observe(workplace.Record{Kind: workplace.KindShell, Input: "many"})
 	}

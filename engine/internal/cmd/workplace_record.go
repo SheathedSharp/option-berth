@@ -36,7 +36,7 @@ const (
 	// record is bookkeeping beside work someone is waiting on.
 	recordTimeout = 3 * time.Second
 	// recordQueueDepth is how many events may be waiting to be written. A
-	// bridge emits a handful per turn, so this is far more than a healthy
+	// shell run emits only its start/end, so this is far more than a healthy
 	// runtime service needs and small enough that a wedged one cannot grow it.
 	recordQueueDepth = 64
 )
