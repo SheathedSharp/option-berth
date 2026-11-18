@@ -14,6 +14,7 @@ func FromListening(lp ports.ListeningPort) Port {
 		BindAddress:   lp.BindAddress,
 		BindAddresses: lp.BindAddresses,
 		IPVersion:     lp.IPVersion,
+		Source:        lp.Source,
 		URL:           lp.URL(),
 		PID:           lp.PID,
 		PPID:          lp.PPID,

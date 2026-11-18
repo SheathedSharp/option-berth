@@ -1181,6 +1181,9 @@
         "bind_address": {
           "type": "string"
         },
+        "source": {
+          "type": "string"
+        },
         "bind_addresses": {
           "items": {
             "type": "string"

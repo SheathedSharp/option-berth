@@ -9,7 +9,8 @@ import "slices"
 func portsEqual(a, b *Port, withStats bool) bool {
 	return a.Host == b.Host && a.Port == b.Port && a.BindAddress == b.BindAddress &&
 		sliceEqual(a.BindAddresses, b.BindAddresses) &&
-		a.IPVersion == b.IPVersion && a.URL == b.URL && a.PID == b.PID && a.PPID == b.PPID &&
+		a.IPVersion == b.IPVersion && a.Source == b.Source && a.URL == b.URL &&
+		a.PID == b.PID && a.PPID == b.PPID &&
 		a.Process == b.Process && a.DisplayName == b.DisplayName && pointerEqual(a.Name, b.Name) &&
 		a.Command == b.Command && a.Cwd == b.Cwd && a.CwdInTrash == b.CwdInTrash && a.CwdGone == b.CwdGone &&
 		pointerEqual(a.ProjectRoot, b.ProjectRoot) && pointerEqual(a.Group, b.Group) &&

@@ -64,6 +64,7 @@ class ExtractionTests(unittest.TestCase):
                 "observation.sources",
                 "observation.degraded_since",
                 "observation.recovered_at",
+                "ports[].source",
                 "machine[].listening_known",
                 "attn_path",
                 "attn",
