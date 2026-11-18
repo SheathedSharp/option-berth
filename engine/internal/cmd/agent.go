@@ -3,6 +3,9 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/agentlaunch"
 	"github.com/sheathedsharp/option-berth/engine/internal/agentstream"
@@ -47,9 +50,14 @@ func newAgentCommand() *cobra.Command {
 			// interrupts the session the client is running.
 			recorder := startRecording(streamWorktree)
 			defer recorder.Close()
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 			return agentstream.Run(agentstream.Options{
+				Context:  ctx,
 				Provider: args[0], Worktree: streamWorktree, ResumeFile: streamResume,
-				Observer: recorder.bridgeEvents(args[0]),
+				Observer:       recorder.bridgeEvents(args[0]),
+				RuntimeWatch:   watchAgentRuntime,
+				RuntimePrepare: prepareAgentRuntime,
 			}, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -91,6 +99,9 @@ func newAgentCommand() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s mode in %s\nExecutable: %s\nArguments are not printed; use --json to inspect locally.\n", plan.Provider, plan.Mode, plan.Worktree, plan.Executable)
 				return nil
+			}
+			if attnResolvedConsent().Enabled {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Attention is permitted but not attached to a native handoff; task-scoped attachment requires a supported agent stream client with explicit runtime scope.")
 			}
 			return executeAgent(plan)
 		}}

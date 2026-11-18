@@ -122,7 +122,12 @@ func Revision(f Facts) string {
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s", filepath.Clean(f.WorktreeRoot), f.Branch, f.StateRevision)
 	services := append([]Service(nil), f.Services...)
 	services = append(services, f.Runs...)
-	sort.SliceStable(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+	sort.SliceStable(services, func(i, j int) bool {
+		if services[i].Name != services[j].Name {
+			return services[i].Name < services[j].Name
+		}
+		return services[i].RunID < services[j].RunID
+	})
 	for _, service := range services {
 		_, _ = fmt.Fprintf(h, "\x00service\x00%s\x00%t\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s", service.Name, service.Running, service.RunID, service.StartedAt, service.LogPath, service.HealthStatus, service.HealthCode, service.HealthReason)
 		_, _ = fmt.Fprintf(h, "\x00run_only\x00%t", service.RunOnly)
@@ -261,7 +266,12 @@ func ClassifyAll(f Facts) []Event {
 			services = append(services, run)
 		}
 	}
-	sort.SliceStable(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+	sort.SliceStable(services, func(i, j int) bool {
+		if services[i].Name != services[j].Name {
+			return services[i].Name < services[j].Name
+		}
+		return services[i].RunID < services[j].RunID
+	})
 	events := make([]Event, 0, len(services)+len(f.Machine)+len(f.Listeners))
 	for _, service := range services {
 		first := len(events)
