@@ -112,3 +112,14 @@ func mapSignalErr(target int, signalErr error) error {
 // Unix kill/getpgid accept a signed pid_t even when Go int is 64-bit. Reject
 // truncation: e.g. 0xffffffff must never turn into kill(-1, signal).
 func validSignalPID(pid int) bool { return pid > 0 && uint64(pid) < 1<<31 }
+
+// groupAlive reports whether any process still belongs to the group. A group is
+// named by its leader's pid but outlives it: members keep the leader's pid as
+// their pgid after it exits, so pid liveness cannot answer for the group.
+func groupAlive(pgid int) bool {
+	if !validSignalPID(pgid) {
+		return false
+	}
+	sendErr := syscall.Kill(-pgid, 0)
+	return sendErr == nil || errors.Is(sendErr, syscall.EPERM)
+}

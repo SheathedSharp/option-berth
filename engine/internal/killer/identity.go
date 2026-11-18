@@ -1,6 +1,7 @@
 package killer
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
@@ -94,6 +95,24 @@ func (e *engine) guard(u *unit, pid int) error {
 		}
 		before, known := u.observed[p]
 		if known && (!ok || at.IsZero()) {
+			// A subject that is no longer there took its birth evidence with it.
+			// That is a different fact from "still there, but unreadable": there
+			// is nothing left to signal, and the stop already holds the end state
+			// the caller asked for. Only present-but-unverifiable is the
+			// recycled-pid danger this refusal exists for. Reporting the two as
+			// one turned a stop that worked into "1 of 1 targets failed".
+			if e.subjectGone(u, p) {
+				return codedf(CodeNotFound, "", "%s is already gone", subjectName(u, p))
+			}
+			// The leader of a live group is a different case again. The signal
+			// goes to the group, and a pgid cannot be recycled while the group
+			// still has a member, so "the group is alive" is itself the evidence
+			// that this is the group we planned to stop. The leader's own pid is
+			// only the handle that named it, and a leader that exited on the
+			// SIGTERM we just sent is the ordinary success case.
+			if e.liveGroupCovers(u, p) {
+				return nil
+			}
 			return codedf(CodePermissionDenied, "refresh process identity",
 				"cannot revalidate the recorded identity of PID %d; not signalling it", p)
 		}
@@ -134,9 +153,48 @@ func (e *engine) guard(u *unit, pid int) error {
 	}
 	if u.pgid != 0 {
 		group, ok := e.groupOf(u.root)
-		if !ok || group != u.pgid {
+		switch {
+		case ok && group == u.pgid:
+			// The leader still leads the group we planned.
+		case !ok && e.groupAlive(u.pgid):
+			// The leader that named the group is gone, and the members that keep
+			// the group alive are exactly what the stop is for. A process group
+			// id is not reused while the group has a member, so the live group is
+			// still the one this request planned.
+		default:
+			// The leader is alive but now leads a different group, or the group
+			// itself is gone. Either way this is not the group we planned.
 			return codedf(CodeNotFound, "", "process group ownership changed; not signalling it")
 		}
 	}
 	return e.ownerError()
+}
+
+// subjectGone reports whether the process this check is about has ceased to
+// exist. A group is its own subject and it outlives its leader: asking about the
+// leader alone would call a live group gone and skip the members that are the
+// reason the group was selected.
+func (e *engine) subjectGone(u *unit, p int) bool {
+	if u.pgid != 0 && p == u.root {
+		return !e.groupAlive(u.pgid)
+	}
+	return !e.alive(p)
+}
+
+// subjectName spells the subject in the vocabulary its caller selected it by, so
+// "already gone" names the thing that is gone.
+func subjectName(u *unit, p int) string {
+	if u.pgid != 0 && p == u.root {
+		return fmt.Sprintf("process group %d", u.pgid)
+	}
+	return fmt.Sprintf("PID %d", p)
+}
+
+// liveGroupCovers reports whether the pid being checked is only the leader that
+// named a group, and that group is still alive. The signal goes to the group, and
+// a pgid cannot be recycled while any member remains, so a live group is proof
+// that this is the group the request planned to stop — the leader's own birth
+// evidence is not the group's identity.
+func (e *engine) liveGroupCovers(u *unit, p int) bool {
+	return u.pgid != 0 && p == u.root && e.groupAlive(u.pgid)
 }
