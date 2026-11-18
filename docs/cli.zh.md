@@ -55,6 +55,17 @@
   硬失败什么都不贡献，所以失败的一级永远不能把没读到的端口变成“没有监听”。合并表一律是窄表：
   表里的行是事实，缺失的端口是未知而不是空闲，`machine[].listening_known` 与有名字的 source
   同一规则，`detail` 写明这轮由哪些采集器合并而来。
+- `runtime_service.observe_primary_failures`（默认 3）与
+  `runtime_service.observe_primary_cooldown`（默认 60s）决定 Runtime Service 为一个永远用不了的
+  主采集器付费多久。连续失败这么多次后，主采集器在一个冷却期内不再运行，每轮扫描都由备选
+  采集器答话；冷却结束时只做一次真实读取，这次探测成功即关闭熔断，失败则重新开始计时；
+  被调用方撤回的探测什么都没学到，也不会关闭熔断。
+  跳过主采集器不改变任何事实：`observation.source` 或 `observation.sources` 仍写明谁答的话，
+  `observation.degraded_since` 不动，表里的缺失依旧未知，和有名字的 source 同一规则。它的
+  `detail` 会多出一句话，说明主采集器本轮没有运行、已连续失败几次、何时重试，读者据此能区分
+  “这轮跳过了”与“它恢复了所以答话”。只有一级的采集链永远不会被跳过——没有别的采集器可读；
+  `observe_primary_failures: 0` 关闭熔断，于是每轮扫描照旧为主采集器付费。熔断是进程内状态：
+  它不写进数据库，也不写进 `oberth.yaml`，重启后的 Runtime Service 会重新尝试主采集器。
 - `observation.degraded_since` 与 `observation.recovered_at` 是由 Runtime Service 维护的
   RFC 3339 时间。前者是已发布的观察不再由主采集器整表读出的起始时刻；后者是这样的降级之后
   重新开始健康运行的时刻，并一直保留到下一次降级。`checked_at` 只是最近一次检查的时刻，不是
