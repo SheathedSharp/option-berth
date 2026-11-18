@@ -5,7 +5,8 @@ Documents under `docs/` are written for people and are maintained in English
 (`foo.md`) and Simplified Chinese (`foo.zh.md`). This check enforces the parts
 of that contract a machine can judge: both sides exist, their Markdown
 structure mirrors one to one, code blocks are byte-identical, each side carries
-its language switcher, and every relative link resolves.
+its language switcher, every relative link resolves, and no page still carries
+a leftover merge conflict marker.
 
 It cannot judge whether the two sides say the same thing, or whether the
 wording is accurate. That stays a reviewer's job — see docs/AGENTS.md.
@@ -30,6 +31,10 @@ SWITCHER_EN = "English | [中文]({stem}.zh.md)"
 SWITCHER_ZH = "[English]({stem}.md) | 中文"
 
 FENCE = re.compile(r"^(`{3,}|~{3,})")
+# Only the seven-character marker lines are checked: a bare `=======` line is
+# also a legitimate setext H1 underline, so it cannot be judged without the
+# surrounding document.
+CONFLICT_MARKER = re.compile(r"^(?:<{7}|>{7}) ")
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 LIST_ITEM = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+")
 TABLE_ROW = re.compile(r"^\s*\|")
@@ -262,6 +267,34 @@ def check_orphans(docs: Path) -> list[str]:
     return problems
 
 
+def conflict_markers(path: Path) -> list[int]:
+    """Line numbers of leftover merge conflict markers in a document.
+
+    Fenced blocks are skipped: a document may quote a marker while explaining
+    one, and that quote is not a leftover.
+    """
+    numbers: list[int] = []
+    in_code = False
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if FENCE.match(line):
+            in_code = not in_code
+        elif not in_code and CONFLICT_MARKER.match(line):
+            numbers.append(number)
+    return numbers
+
+
+def check_conflict_markers(docs: Path) -> list[str]:
+    """Every Markdown page under docs/ that still carries a merge conflict marker."""
+    problems: list[str] = []
+    for path in sorted(docs.rglob("*.md")):
+        for number in conflict_markers(path):
+            relative = path.relative_to(docs)
+            problems.append(
+                f"{relative}: leftover merge conflict marker at line {number}"
+            )
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docs", type=Path, default=DOCS)
@@ -276,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
     for english in documents:
         problems.extend(check_pair(english))
     problems.extend(check_orphans(args.docs))
+    problems.extend(check_conflict_markers(args.docs))
 
     if problems:
         print(f"documentation check failed: {len(problems)} problem(s)", file=sys.stderr)
