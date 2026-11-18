@@ -24,7 +24,7 @@ sent, so ordinary `up` is unaffected. When a service has `prepare:`, that prereq
 directly in the same cwd first, and only on success is the long-running `cmd:` started; the
 prerequisite's output goes into that service's log, and on failure the service is not started. When a
 service has `env_file:`, both prepare and the long-running command read the variables from the file
-first (see "Shared environment files"). `prepare_inputs:` declares the input files that command reads
+first (see [Shared environment files](declaration.md#shared-environment-files)). `prepare_inputs:` declares the input files that command reads
 (relative to the service cwd, for example `[package.json, package-lock.json]`); when the previous
 prepare succeeded and those files' contents are unchanged, this `up` skips prepare outright and does
 not reinstall dependencies. The fingerprint is recorded only after the previous success, and a

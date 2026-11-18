@@ -18,7 +18,7 @@
 会直接报错并提示重启 runtime service 或传 `--no-deps`；没有 `--only`（或 `--no-deps`）时不发送，普通 `up` 不受影响。
 服务有 `prepare:` 时，先在同一 cwd 直接执行这个前置命令，
 成功后才启动长驻的 `cmd:`；前置命令的输出写入该服务日志，失败时服务不会启动。
-服务有 `env_file:` 时，prepare 与长驻命令都会先读到文件里的变量（见「共享环境文件」）。
+服务有 `env_file:` 时，prepare 与长驻命令都会先读到文件里的变量（见[共享环境文件](declaration.zh.md#共享环境文件)）。
 `prepare_inputs:` 声明该命令读取的输入文件（相对服务 cwd，例如 `[package.json, package-lock.json]`）；
 上次 prepare 成功且这些文件内容未变时，本次 `up` 直接跳过 prepare，不再重复安装依赖。指纹只在上次
 成功之后记录，输入缺失或读不到时一律重跑；缓存位于 `$BERTH_HOME/prepare`，删除它只会让下次启动更慢。
