@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
+	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -82,5 +84,38 @@ func TestSilentGroupStopRejectsAnUnknownRunIDBeforeSignals(t *testing.T) {
 	if err == nil || !errors.As(err, &re) || re.Code != rpc.CodeNotFound ||
 		!strings.Contains(re.Data.Detail, "gone") {
 		t.Fatalf("err = %v, want not_found for the unknown run", err)
+	}
+}
+
+// TestGroupsKillDryRunPlansTheRunsThatHoldNoPort: a plan has to name what would
+// be stopped, and a run with no listener of its own is exactly the case
+// `kill <name>` exists for. A dry run that skipped the silent pass answered
+// "nothing to stop" for a run that is running, which is the one thing a plan
+// must never say.
+func TestGroupsKillDryRunPlansTheRunsThatHoldNoPort(t *testing.T) {
+	harness, cl := killHarness(t)
+	root := 424241
+	birth := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg := &capturedStopFixture{capture: GroupStopCapture{Runs: []GroupStopRun{
+		{Owner: state.Run{ID: "worker", Group: "demo", Name: "worker", RootPID: root}, StartedAt: birth},
+	}}}
+	harness.srv.host.SetRuns(reg)
+	// The run holds no listener: the row below belongs to no group and carries no
+	// run attribution, so it only makes the root pid resolvable to the planner.
+	harness.setRows(ports.ListeningPort{Port: 4321, BindAddress: "127.0.0.1", PID: root})
+	if _, err := harness.loop.Snapshot(scanner.Include{}); err != nil {
+		t.Fatalf("priming the scanner: %v", err)
+	}
+
+	var envelope rpc.KillEnvelope
+	params := rpc.GroupsKillParams{Name: "demo", Runs: []string{"worker"}, DryRun: true}
+	if rpcErr := cl.call("groups.kill", params, &envelope); rpcErr != nil {
+		t.Fatalf("groups.kill: %v", rpcErr)
+	}
+	if len(envelope.Results) != 1 || envelope.Results[0].PID != root {
+		t.Fatalf("results = %+v, want the planned stop of the run that holds no port", envelope.Results)
+	}
+	if envelope.Results[0].Method == state.MethodNone {
+		t.Fatalf("row = %+v, want a planned method, not a refusal", envelope.Results[0])
 	}
 }

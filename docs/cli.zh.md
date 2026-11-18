@@ -774,7 +774,14 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
   自动带着最后的 `seq` 重连；workspace 成员变化仍要以新快照为准，队列窗口过期时也会回到完整快照；
   成员变化会以 `changed: ["workspace_changed"]` 提醒现有订阅者。若连接到旧 runtime service，先执行
   `oberth runtime service restart` 以取得 `state.scope` 能力。
-- oberth kill <port|pid>...：点名停止监听者；--all 是明确的整批操作，仍会确认。
+- oberth kill <port|pid|run>...：点名停止监听者和运行；--all 是明确的整批操作，仍会确认。
+  位置参数先按端口读、再按 pid 读，其余按运行名或 run id 读——也就是 `status` 在 `worktree.ad_hoc_runs` 里公布的
+  那个名字。名字按 `restart --run` 同一条规则在运行账本里解析（精确 run id 总是优先；名字必须唯一指向一个在跑
+  运行），并限定在命令所在的 worktree。命名运行按整棵树停止——它根进程之下的进程就是这个运行——包括没有监听的
+  运行；名字指向的代际已经结束就是「没有可停的东西」，而不是一个目标。有 runtime service 应答时，走的是
+  `restart --run` 同一条精确运行停止，由持有账本的一方钉住代际；没有时，CLI 自己用记录里的根 pid 与开始时间钉住
+  代际，并拒绝一个从未记录过开始时间的运行。`--no-escalate` 不能与运行名组合：运行总是整棵停。两种词表不混在
+  同一次请求里：要么给运行名，要么给端口/pid。
   人读的结果行用读者词汇：`stopped (SIGTERM)` / `stopped (SIGKILL)` / `stopped container`，
   不直接打印信号名；`down` 停无端口 run 时显示服务名（清单里的名字），不是进程表里的解释器名。
   被释放的地址行写作 `released <url>`。`--json` 的 `method` 字段仍是 wire 枚举
