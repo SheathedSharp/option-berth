@@ -138,7 +138,9 @@ or a particular installed version; a provider failure remains a provider failure
 
 ## Native Claude project hooks
 
-`agent claude-hook` handles Claude Code's official `UserPromptSubmit`, `Stop`, `StopFailure` and `SessionEnd` JSON envelopes. The adapter is verified with Claude Code **2.1.322 on macOS**; earlier versions and native Windows execution are not verified/supported by this adapter. It is not a transparent attachment to arbitrary running `claude`/`cld` processes. A wrapper must preserve project hooks.
+`agent claude-hook` handles Claude Code's official `UserPromptSubmit`, `Stop`, `StopFailure` and `SessionEnd` JSON envelopes. The adapter has native non-interactive (`-p`) end-to-end evidence with Claude Code **2.1.322 on macOS** and local fake providers; earlier versions and native Windows execution are not verified/supported by this adapter. It is not a transparent attachment to arbitrary running `claude`/`cld` processes. A wrapper must preserve project hooks.
+
+Interactive TTY and the user’s private `cld` wrapper are not verified. A clean-HOME interactive PTY attempt exited before task execution: Claude’s first-run connectivity check still targeted `api.anthropic.com` despite a local provider base URL and failed through the deliberately refusing proxy. No task or hook feedback ran in that attempt; do not infer interactive coverage from `-p` evidence or bypass project trust/onboarding to claim it.
 
 Enable once per project, only after reviewing its selected scope and read-only evaluation options:
 

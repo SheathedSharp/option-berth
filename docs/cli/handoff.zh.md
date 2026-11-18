@@ -115,7 +115,9 @@ or a particular installed version; a provider failure remains a provider failure
 
 ## 原生 Claude 项目 hooks
 
-`agent claude-hook` 处理 Claude Code 官方 `UserPromptSubmit`、`Stop`、`StopFailure` 和 `SessionEnd` JSON 输入。适配器以 **macOS 上的 Claude Code 2.1.322** 验证；不将更早版本或 Windows 原生执行视为已验证/支持。它不能透明附着任意已经运行的 `claude`/`cld`；包装命令必须保留项目 hooks。
+`agent claude-hook` 处理 Claude Code 官方 `UserPromptSubmit`、`Stop`、`StopFailure` 和 `SessionEnd` JSON 输入。适配器以 **macOS 上的 Claude Code 2.1.322** 和本地假 provider，完成原生非交互（`-p`）端到端验证；不将更早版本或 Windows 原生执行视为已验证/支持。它不能透明附着任意已经运行的 `claude`/`cld`；包装命令必须保留项目 hooks。
+
+交互 TTY 和用户私有 `cld` 包装命令尚未验证。干净 HOME 的交互 PTY 尝试在任务执行前退出：即使 provider base URL 指向本地，Claude 首次启动的连通性检查仍访问 `api.anthropic.com`，被刻意拒绝外网的代理阻止。该尝试没有执行任务或 hook 反馈；不能从 `-p` 证据推导交互覆盖，也不能绕过项目 trust/首次设置来宣称通过。
 
 每个项目只需启用一次，但应先审阅目标范围和只读评估选项：
 
