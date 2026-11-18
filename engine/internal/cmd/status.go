@@ -475,6 +475,14 @@ func publishAttention(doc *statusDocument) string {
 			Service: run.Name, Reason: run.Reason, RunID: run.ID, At: at,
 		})
 	}
+	for _, run := range append(append([]rpc.RunRecord(nil), doc.Runs...), doc.Exits...) {
+		item := attn.Service{Name: run.Name, RunID: run.ID, RunOnly: true, StartedAt: run.StartedAt, Running: run.Status == "running" || run.Status == "starting"}
+		if run.Status == "exited" && run.ExitCode != nil {
+			at, _ := time.Parse(time.RFC3339Nano, run.ExitedAt)
+			item.LastExit = &attn.Exit{RunID: run.ID, Code: *run.ExitCode, Reason: run.Reason, At: at}
+		}
+		facts.Runs = append(facts.Runs, item)
+	}
 	facts.StateRevision = attn.Revision(facts)
 	facts.ObservedAt = time.Now().UTC()
 	artifact, ok := attn.Derive(facts, facts.ObservedAt, attn.DefaultTTL)
