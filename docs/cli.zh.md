@@ -51,10 +51,22 @@
   由 `observation.source` 写明答话的那一级；大于 1 的 N 会被裁到本平台采集链的长度（macOS 和
   Linux 为 2，Windows 为 1），并发布 `observation.sources`——按链顺序列出参与合并的采集器，
   此时 `observation.source` 为空。只有一级的链无论 N 多大都仍是单源读，两个字段都不出现。
-  读到行的采集器贡献这些行；跑干净却什么都没看到的只贡献名字；
-  硬失败什么都不贡献，所以失败的一级永远不能把没读到的端口变成“没有监听”。合并表一律是窄表：
-  表里的行是事实，缺失的端口是未知而不是空闲，`machine[].listening_known` 与有名字的 source
-  同一规则，`detail` 写明这轮由哪些采集器合并而来。
+  读到行的采集器贡献这些行，并在每一行的 `ports[].source` 上写自己的名字；跑干净却什么都没
+  看到的只贡献名字；硬失败什么都不贡献，所以失败的一级永远不能把没读到的端口变成“没有监听”。
+  行上的采集器决定了这一行能怎么被信任：各级覆盖的 socket 不同，表级的 `observation.sources`
+  本身说不出某一行出自哪张表。合并表一律是窄表：表里的行是事实，缺失的端口是未知而不是空闲，
+  `machine[].listening_known` 与有名字的 source 同一规则，`detail` 写明这轮由哪些采集器合并而来。
+- `runtime_service.observe_primary_failures`（默认 3）与
+  `runtime_service.observe_primary_cooldown`（默认 60s）决定 Runtime Service 为一个永远用不了的
+  主采集器付费多久。连续失败这么多次后，主采集器在一个冷却期内不再运行，每轮扫描都由备选
+  采集器答话；冷却结束时只做一次真实读取，这次探测成功即关闭熔断，失败则重新开始计时；
+  被调用方撤回的探测什么都没学到，也不会关闭熔断。
+  跳过主采集器不改变任何事实：`observation.source` 或 `observation.sources` 仍写明谁答的话，
+  `observation.degraded_since` 不动，表里的缺失依旧未知，和有名字的 source 同一规则。它的
+  `detail` 会多出一句话，说明主采集器本轮没有运行、已连续失败几次、何时重试，读者据此能区分
+  “这轮跳过了”与“它恢复了所以答话”。只有一级的采集链永远不会被跳过——没有别的采集器可读；
+  `observe_primary_failures: 0` 关闭熔断，于是每轮扫描照旧为主采集器付费。熔断是进程内状态：
+  它不写进数据库，也不写进 `oberth.yaml`，重启后的 Runtime Service 会重新尝试主采集器。
 - `observation.degraded_since` 与 `observation.recovered_at` 是由 Runtime Service 维护的
   RFC 3339 时间。前者是已发布的观察不再由主采集器整表读出的起始时刻；后者是这样的降级之后
   重新开始健康运行的时刻，并一直保留到下一次降级。`checked_at` 只是最近一次检查的时刻，不是
@@ -266,17 +278,13 @@ JSON 顶层固定包含：
 }
 ~~~
 
-<<<<<<< HEAD
 `worktree.manifest_missing` 只在没有 `oberth.yaml` 声明这个 worktree 时出现且为 `true`，于是空的
 `services` 表示「没有可读的清单」而不是「没有声明服务」。完整文档用 `config_path` 为 null 说同一件事；
 brief 丢掉了路径，没有这个标志，brief 读者就分不清一个等待 `oberth init` 的 checkout 和一个已经配置
 好、只是空闲的 checkout。清单存在时该键不出现。
 
-`worktree.ad_hoc_runs` 给每个未被运行中服务行命名的监听一个归属。运行按 run id 识别，不按名字：
-=======
 `worktree.ad_hoc_runs` 给每个未被运行中服务行命名的监听一个归属，此外还列出这个 worktree 启动、
 但完全没有监听的在跑运行。运行按 run id 识别，不按名字：
->>>>>>> origin/main
 清单没有声明的 `oberth start` 运行、仍用着声明服务名字的旧代际、以及声明服务的运行额外持有的
 端口都会出现在这里，没有端口的运行同样在内——它是 option-berth 拥有的进程，`down` 会停它、
 `restart --run` 会重放它，漏掉它就只能去翻进程表才找得到。每行带 `name`、`run_id`、`group`、
@@ -433,6 +441,7 @@ worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入�
 | `observation.sources` | `status` | 合并表由哪些采集器按链顺序合成；只在合并读时出现，与 `source` 一样表示缺失的端口是未知，不是空闲。 |
 | `observation.degraded_since` | `status` | 当前这次降级从何时开始；主采集器整表读出时为空。 |
 | `observation.recovered_at` | `status` | 降级之后当前这段健康运行从何时开始；从未降级时为空。 |
+| `ports[].source` | `status` | 产出这一行的采集器；只在合并读时出现，此时每一级各贡献了其中一部分行。 |
 | `machine[].listening_known` | `status` | `listening` 是否是观察到的；false 表示这张表看不到该端口的所有者。 |
 | `attn_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
 | `attn` | `status` | 这份交接现在能否被评估：`enabled`、固定 `reason`、`assessment`（`assessed`、`pending` 或 `unavailable`）。 |
@@ -774,7 +783,14 @@ stderr 也说明一次。这与 `status` 的规则一致：看不见不是没在
   自动带着最后的 `seq` 重连；workspace 成员变化仍要以新快照为准，队列窗口过期时也会回到完整快照；
   成员变化会以 `changed: ["workspace_changed"]` 提醒现有订阅者。若连接到旧 runtime service，先执行
   `oberth runtime service restart` 以取得 `state.scope` 能力。
-- oberth kill <port|pid>...：点名停止监听者；--all 是明确的整批操作，仍会确认。
+- oberth kill <port|pid|run>...：点名停止监听者和运行；--all 是明确的整批操作，仍会确认。
+  位置参数先按端口读、再按 pid 读，其余按运行名或 run id 读——也就是 `status` 在 `worktree.ad_hoc_runs` 里公布的
+  那个名字。名字按 `restart --run` 同一条规则在运行账本里解析（精确 run id 总是优先；名字必须唯一指向一个在跑
+  运行），并限定在命令所在的 worktree。命名运行按整棵树停止——它根进程之下的进程就是这个运行——包括没有监听的
+  运行；名字指向的代际已经结束就是「没有可停的东西」，而不是一个目标。有 runtime service 应答时，走的是
+  `restart --run` 同一条精确运行停止，由持有账本的一方钉住代际；没有时，CLI 自己用记录里的根 pid 与开始时间钉住
+  代际，并拒绝一个从未记录过开始时间的运行。`--no-escalate` 不能与运行名组合：运行总是整棵停。两种词表不混在
+  同一次请求里：要么给运行名，要么给端口/pid。
   人读的结果行用读者词汇：`stopped (SIGTERM)` / `stopped (SIGKILL)` / `stopped container`，
   不直接打印信号名；`down` 停无端口 run 时显示服务名（清单里的名字），不是进程表里的解释器名。
   被释放的地址行写作 `released <url>`。`--json` 的 `method` 字段仍是 wire 枚举

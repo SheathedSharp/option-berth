@@ -141,6 +141,15 @@ type Port struct {
 	Host        string `json:"host"`
 	Port        int    `json:"port"`
 	BindAddress string `json:"bind_address"`
+
+	// Source names the collector that produced this row, set only when the
+	// listener table was merged from several collectors
+	// (`runtime_service.observe_sources` > 1). Absent for a single-collector
+	// read, whose one collector is published in observation.source instead.
+	// The rungs of a chain cover different sockets, so a row of a merged table
+	// means less without the name of the table it came from.
+	Source string `json:"source,omitempty"`
+
 	// BindAddresses lists the rest of the addresses this one listener holds,
 	// present only when there is more than one: one service on one port is one
 	// row, and the other address family rides along instead of becoming a row

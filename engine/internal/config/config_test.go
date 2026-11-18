@@ -138,7 +138,8 @@ func TestWriteTemplateWillNotClobberWithoutForce(t *testing.T) {
 func TestTemplateMentionsRuntimeServiceAndEnvironment(t *testing.T) {
 	anchors := []string{
 		"# runtime_service:", "idle_timeout: 30m", "log_level: info",
-		"stats_interval: 1s", "scan_interval: 2s",
+		"stats_interval: 1s", "scan_interval: 2s", "observe_sources: 1",
+		"observe_primary_failures: 3", "observe_primary_cooldown: 60s",
 		"BERTH_DB", "BERTH_RUNTIME_SERVICE_SOCKET", "BERTH_STRICT_MANIFEST",
 	}
 	for _, anchor := range anchors {

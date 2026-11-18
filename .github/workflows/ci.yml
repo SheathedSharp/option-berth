@@ -5,6 +5,7 @@ name: CI
 # so `gate` is the required check and it fails only when a job that had to run
 # did not pass. `main` accepts pull requests only, so the merge commit carries
 # the tree that just passed here and nothing runs a second time after merge.
+# A second attempt is not decided here: see flake-retry.yml.
 on:
   pull_request:
   workflow_dispatch:
@@ -101,3 +102,7 @@ jobs:
         run: |
           echo "::error::a check that had to run did not pass; see the job results above"
           exit 1
+
+  # No retry job here: `gh run rerun` only accepts a completed run, and this run
+  # is not complete while one of its own jobs is deciding. flake-retry.yml makes
+  # that decision from outside, after this run ends.

@@ -1,0 +1,66 @@
+name: Flake retry
+
+# The one place allowed to spend a second attempt on a failed verification run.
+#
+# It cannot be a job inside the run it would re-run: `gh run rerun` only accepts
+# a completed run, and a job of that run is by definition still going. This
+# workflow starts after the run has completed, classifies the attempt that
+# failed and asks the API to re-run only its failed jobs.
+#
+# `scripts/ci_failures.py` decides and `scripts/retry-ci.sh` acts. The record
+# lands on the pull request the run belongs to, or in the single deduplicated
+# issue per workflow when the run has none. A run that only went green on a
+# later attempt comes back through this file too, and says so.
+#
+# A `workflow_run` trigger is registered from the default branch only, so this
+# file starts working once it is merged into `main`. Until then a failed run is
+# retried by hand.
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Nightly full verification
+      - Windows build verification
+      - Reused service readiness
+      - Git read verification
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  retry:
+    name: Classify the completed run and re-run it only when the policy allows
+    # A failure is the case this exists for. A success on a later attempt is the
+    # attempt the re-run produced, and it has to say what the earlier attempt
+    # was instead of going silently green. Everything else — a run a person
+    # cancelled, a timeout, a skipped run — changes nothing.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure'
+      || (github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.run_attempt > 1)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Classify the completed attempt, then re-run it or record it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The run that just completed, never `github.run_id`: that names this
+          # run, which is in progress and cannot be re-run.
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_HTML_URL: ${{ github.event.workflow_run.html_url }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          # Empty for a run that belongs to no pull request: a nightly run, a
+          # workflow_dispatch, or a pull request from a fork, which GitHub does
+          # not report here.
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          MAX_ATTEMPTS: '3'
+        run: bash scripts/retry-ci.sh

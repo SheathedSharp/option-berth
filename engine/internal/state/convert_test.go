@@ -56,6 +56,57 @@ func TestFromListeningCarriesTheContractFields(t *testing.T) {
 	}
 }
 
+// A merged read's provenance is a fact about the row, so it has to reach the
+// published row and come back: status turns a runtime service snapshot into
+// scanner rows again, and a dropped source would leave every row of a merged
+// table looking like the platform's own answer.
+func TestFromListeningCarriesTheRowCollector(t *testing.T) {
+	row := FromListening(ports.ListeningPort{
+		Port: 18201, PID: 4242, Process: "node", BindAddress: "127.0.0.1",
+		Source: "netstat",
+	})
+	if row.Source != "netstat" {
+		t.Fatalf("published source = %q, want the collector that read the row", row.Source)
+	}
+	if back := ToListening(row); back.Source != "netstat" {
+		t.Fatalf("source after the round trip = %q, want %q", back.Source, "netstat")
+	}
+	// A single-collector read leaves the field empty: the collector of the whole
+	// round travels in observation.source, and a null keeps the row's shape
+	// unchanged for every reader that predates this field.
+	if got := FromListening(ports.ListeningPort{Port: 18202, PID: 77}); got.Source != "" {
+		t.Fatalf("single-collector row source = %q, want none", got.Source)
+	}
+}
+
+// The collector name is on the wire only for a merged read: a row from a
+// single-collector read must marshal exactly as it did before the field
+// existed, so no client sees a "source": "" that means nothing.
+func TestRowCollectorMarshalsOnlyWhenSet(t *testing.T) {
+	merged, err := json.Marshal(FromListening(ports.ListeningPort{Port: 18201, PID: 4242, Source: "netstat"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(merged, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["source"] != "netstat" {
+		t.Fatalf("source = %v, want the collector name", fields["source"])
+	}
+	single, err := json.Marshal(FromListening(ports.ListeningPort{Port: 18202, PID: 77}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields = nil
+	if err := json.Unmarshal(single, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if value, present := fields["source"]; present {
+		t.Fatalf("source = %v, want the key absent for a single-collector read", value)
+	}
+}
+
 func TestFromListeningRecognisesATrashedWorkingDirectory(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {

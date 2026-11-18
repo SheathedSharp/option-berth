@@ -51,11 +51,28 @@ Use the [documentation index](index.md) to select a task. Below are common rules
   N is clamped to the platform's chain length (two on macOS and Linux, one on Windows) and publishes
   `observation.sources`, the collectors that contributed, in chain order, while `observation.source`
   stays empty. A one-rung chain stays a single read however large N is: neither field is set. A
-  collector that read rows contributes them; one that ran clean and saw nothing
-  contributes its name alone; one that failed contributes nothing, so a failing rung can never turn
-  an unread port into an absent one. A merged table is always narrow — its rows are facts, a port
-  missing from it is unknown rather than free, `machine[].listening_known` follows the same rule as
-  for a named source, and its `detail` names the collectors it came from.
+  collector that read rows contributes them and names itself on each one in `ports[].source`; one
+  that ran clean and saw nothing contributes its name alone; one that failed contributes nothing, so
+  a failing rung can never turn an unread port into an absent one. A row's collector is what makes
+  the row weighable: the rungs cover different sockets, so the table-level `observation.sources`
+  alone cannot say which table a given row came from. A merged table is always narrow — its rows are
+  facts, a port missing from it is unknown rather than free, `machine[].listening_known` follows the
+  same rule as for a named source, and its `detail` names the collectors it came from.
+- `runtime_service.observe_primary_failures` (default 3) and
+  `runtime_service.observe_primary_cooldown` (default 60s) bound how long the Runtime Service keeps
+  paying for a primary collector that never works. After that many failures in a row the primary is
+  not run for one cooldown and the alternatives answer every scan; when the cooldown ends exactly one
+  real read of the primary is made, and that probe closes the breaker on success or reopens it on
+  failure; a probe the caller withdrew learned nothing and closes nothing. A skipped primary changes
+  no fact: `observation.source` or `observation.sources` still name who answered,
+  `observation.degraded_since` does not move, and absence from that table stays unknown, exactly as
+  it is for a named source. Its `detail` gains one sentence saying the primary did not run, how many
+  failures in a row it has and when it is retried, so a reader can tell a skipped attempt from a
+  collector that answered because it had recovered. A chain with a single collector is never
+  skipped — there is no alternative to read instead — and
+  `observe_primary_failures: 0` turns the breaker off, so every scan pays for the primary again. The
+  breaker is per-process state: nothing about it is written to the database or to `oberth.yaml`, and
+  a restarted Runtime Service tries the primary again.
 - `observation.degraded_since` and `observation.recovered_at` are RFC 3339 times maintained by the
   Runtime Service. The first is when the published observation stopped being a whole read of the
   primary table; the second is when a healthy run began again after such a degradation, and it stays
@@ -306,20 +323,12 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
 }
 ~~~
 
-<<<<<<< HEAD
 `worktree.manifest_missing` is present and `true` only when no `oberth.yaml` declares this worktree, so
 an empty `services` means "nothing to read" rather than "nothing declared". The full document says the
 same thing as a null `config_path`; the brief drops the path, and without the flag a brief reader
 cannot tell a checkout waiting for `oberth init` from a configured, idle one. The key is absent when a
 manifest exists.
 
-`worktree.ad_hoc_runs` attributes every listener that no running service row already names. The run is
-identified by its run id, not by its name: an `oberth start` run the manifest does not declare, a stale
-generation that still uses a declared service's name, and a declared service's run holding an extra
-port all appear here. Each row carries `name`, `run_id`, `group`, `pid`, the recorded `cmd`, `cwd` and
-`started_at` when the run mirror still has them (absent means unknown), and the sorted `ports` it
-holds. `worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
-=======
 `worktree.ad_hoc_runs` attributes every listener that no running service row already names, plus every
 live run this worktree started that holds no listener at all. The run is identified by its run id, not
 by its name: an `oberth start` run the manifest does not declare, a stale generation that still uses a
@@ -330,7 +339,6 @@ so leaving it out would make it reachable only by scanning the process table. Ea
 (absent means unknown), and the sorted `ports` it holds, which is an empty array for a run holding
 none. A run a running service row already names is not repeated here: the service row is its home.
 `worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
->>>>>>> origin/main
 and `pid` and `command` when the process table supplied them. `ports` stays the flat listener list;
 together, a running service's `port_actual`, `ad_hoc_runs` and `unowned_ports` cover every entry in it.
 A declared service's listener that another process owns is named by that service's `port_holder`; an
@@ -512,6 +520,7 @@ or renaming one.
 | `observation.sources` | `status` | Every collector a merged table came from, in chain order; present only for a merged read, and like `source` it means a missing port is unknown, not free. |
 | `observation.degraded_since` | `status` | When the current degradation began; empty while the primary collector reads the whole table. |
 | `observation.recovered_at` | `status` | When the current healthy run began after a degradation; empty when nothing was degraded. |
+| `ports[].source` | `status` | The collector that produced this row; present only for a merged read, where each rung contributed some of the rows. |
 | `machine[].listening_known` | `status` | Whether `listening` was observed; false means the table cannot see that port's owner. |
 | `attn_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
 | `attn` | `status` | Whether that handoff can be assessed now: `enabled`, fixed `reason`, `assessment` (`assessed`, `pending` or `unavailable`). |
@@ -933,7 +942,16 @@ Commands outside the core loop are listed here by layer, and this document is th
   workspace membership changes still go by the new snapshot, and an expired queue window also falls back to a full snapshot;
   membership changes notify existing subscribers with `changed: ["workspace_changed"]`. If you connect to an old runtime service, run
   `oberth runtime service restart` first to obtain the `state.scope` capability.
-- oberth kill <port|pid>...: stops listeners by name; --all is an explicit batch operation and still confirms.
+- oberth kill <port|pid|run>...: stops listeners and runs by name; --all is an explicit batch operation and still confirms.
+  A positional argument is read as a port, then as a pid, and otherwise as a run name or run id — the name `status`
+  publishes in `worktree.ad_hoc_runs`. A name is resolved against the run ledger with the same rule `restart --run`
+  uses (an exact run id always wins; a name must identify one live run), and it is scoped to the worktree the command
+  runs in. A named run is stopped as a whole tree — the processes under its root are the run — including one that holds
+  no listener, and a name whose generation already ended is nothing to stop rather than a target. Where a runtime service
+  answers, the stop is the same exact-run stop `restart --run` uses, so the host pins the generation from the ledger that
+  owns it; without one, the CLI pins the recorded root pid and start time itself and refuses a run whose start was never
+  recorded. `--no-escalate` cannot be combined with a run name: a run is always stopped whole. The two vocabularies are
+  not mixed in one request: give either run names or ports/pids.
   Human-readable result lines use the reader's vocabulary: `stopped (SIGTERM)` / `stopped (SIGKILL)` / `stopped container`,
   never printing the signal name directly; when `down` stops a portless run it shows the service name (the name in the manifest), not the interpreter name from the process table.
   A released address line reads `released <url>`. `--json`'s `method` field is still the wire enum
