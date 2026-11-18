@@ -419,7 +419,9 @@ func publishAttention(doc *statusDocument) string {
 	}
 	for _, service := range doc.Worktree.Services {
 		// Listener absence is not evidence of a stopped service under degraded observation.
-		if runtimeObservationUnknown(*doc) && !service.Running && service.RunID == nil {
+		// An owner-recorded exit is positive evidence: preserve its declared
+		// service identity even when listeners cannot currently be observed.
+		if runtimeObservationUnknown(*doc) && !service.Running && service.RunID == nil && service.LastExit == nil {
 			continue
 		}
 		item := attn.Service{
