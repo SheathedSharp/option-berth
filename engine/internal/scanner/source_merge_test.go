@@ -26,9 +26,11 @@ machine:
 	l := New(Options{
 		RuntimeServiceVersion: "test",
 		Store:                 st,
-		ScanSources: func(context.Context, Include) ([]ports.ListeningPort, []string, error) {
-			return []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3", Cwd: dir}},
-				[]string{"ss", "netstat"}, nil
+		ScanSources: func(context.Context, Include) (ports.Read, error) {
+			return ports.Read{
+				Rows:    []ports.ListeningPort{{Port: 8123, PID: 42, Process: "python3", Cwd: dir}},
+				Sources: []string{"ss", "netstat"},
+			}, nil
 		},
 	})
 
@@ -70,11 +72,14 @@ machine:
 func TestMergedScanPublishesTheCollectorOnEachRow(t *testing.T) {
 	l := New(Options{
 		RuntimeServiceVersion: "test",
-		ScanSources: func(context.Context, Include) ([]ports.ListeningPort, []string, error) {
-			return []ports.ListeningPort{
-				{Port: 18121, PID: 41, BindAddress: "127.0.0.1", IPVersion: "IPv4", Source: "ss"},
-				{Port: 18122, PID: 42, BindAddress: "127.0.0.1", IPVersion: "IPv4", Source: "netstat"},
-			}, []string{"ss", "netstat"}, nil
+		ScanSources: func(context.Context, Include) (ports.Read, error) {
+			return ports.Read{
+				Rows: []ports.ListeningPort{
+					{Port: 18121, PID: 41, BindAddress: "127.0.0.1", IPVersion: "IPv4", Source: "ss"},
+					{Port: 18122, PID: 42, BindAddress: "127.0.0.1", IPVersion: "IPv4", Source: "netstat"},
+				},
+				Sources: []string{"ss", "netstat"},
+			}, nil
 		},
 	})
 
@@ -95,13 +100,15 @@ func TestMergedScanPublishesTheCollectorOnEachRow(t *testing.T) {
 // several collectors cannot silently publish one table as if it were the merge.
 func TestScanSourcesTakesPrecedenceOverScanSource(t *testing.T) {
 	l := New(Options{
-		ScanSource: func(context.Context, Include) ([]ports.ListeningPort, string, error) {
+		ScanSource: func(context.Context, Include) (ports.Read, error) {
 			t.Error("the single-source seam answered a merge-configured loop")
-			return nil, "netstat", nil
+			return ports.Read{Source: "netstat"}, nil
 		},
-		ScanSources: func(context.Context, Include) ([]ports.ListeningPort, []string, error) {
-			return []ports.ListeningPort{{Port: 8123, PID: 42, BindAddress: "127.0.0.1"}},
-				[]string{"ss", "netstat"}, nil
+		ScanSources: func(context.Context, Include) (ports.Read, error) {
+			return ports.Read{
+				Rows:    []ports.ListeningPort{{Port: 8123, PID: 42, BindAddress: "127.0.0.1"}},
+				Sources: []string{"ss", "netstat"},
+			}, nil
 		},
 	})
 	snap, err := l.Snapshot(Include{})
@@ -139,11 +146,11 @@ func TestDegradationTimesFollowThePublishedVerdict(t *testing.T) {
 	merged := true
 	l := New(Options{
 		Now: func() time.Time { return now },
-		ScanSources: func(context.Context, Include) ([]ports.ListeningPort, []string, error) {
+		ScanSources: func(context.Context, Include) (ports.Read, error) {
 			if merged {
-				return rows, []string{"ss", "netstat"}, nil
+				return ports.Read{Rows: rows, Sources: []string{"ss", "netstat"}}, nil
 			}
-			return rows, nil, nil
+			return ports.Read{Rows: rows}, nil
 		},
 	})
 
@@ -189,14 +196,14 @@ func TestFailedScanKeepsTheDegradationClock(t *testing.T) {
 	rows := []ports.ListeningPort{{Port: 18001, PID: 123, BindAddress: "127.0.0.1"}}
 	failing := false
 	l := New(Options{
-		ScanSource: func(context.Context, Include) ([]ports.ListeningPort, string, error) {
+		ScanSource: func(context.Context, Include) (ports.Read, error) {
 			if failing {
-				return nil, "lsof", &ports.ObservationError{
+				return ports.Read{Source: "lsof"}, &ports.ObservationError{
 					Code: ports.CodeObservationIncomplete, Detail: "lsof: permission denied",
 					Hint: "run doctor",
 				}
 			}
-			return rows, "lsof", nil
+			return ports.Read{Rows: rows, Source: "lsof"}, nil
 		},
 	})
 
@@ -226,8 +233,8 @@ func TestMergedPartialReadPublishesThePartialVerdict(t *testing.T) {
 	l := New(Options{
 		RuntimeServiceVersion: "test",
 		SourceLimit:           2,
-		ScanSources: func(context.Context, Include) ([]ports.ListeningPort, []string, error) {
-			return partial.Rows, []string{"netstat", "lsof"}, partial
+		ScanSources: func(context.Context, Include) (ports.Read, error) {
+			return ports.Read{Rows: partial.Rows, Sources: []string{"netstat", "lsof"}}, partial
 		},
 	})
 
