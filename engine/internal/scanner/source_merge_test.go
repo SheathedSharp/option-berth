@@ -66,6 +66,36 @@ machine:
 	}
 }
 
+// The runtime service is where a merge happens, so it is where a row's
+// collector has to reach the wire: a merged row published without its rung
+// arrives at every client anonymous, and no reader below can recover it.
+func TestMergedScanPublishesTheCollectorOnEachRow(t *testing.T) {
+	l := New(Options{
+		RuntimeServiceVersion: "test",
+		ScanSources: func(context.Context, Include) (ports.Read, error) {
+			return ports.Read{
+				Rows: []ports.ListeningPort{
+					{Port: 18121, PID: 41, BindAddress: "127.0.0.1", IPVersion: "IPv4", Source: "ss"},
+					{Port: 18122, PID: 42, BindAddress: "127.0.0.1", IPVersion: "IPv4", Source: "netstat"},
+				},
+				Sources: []string{"ss", "netstat"},
+			}, nil
+		},
+	})
+
+	snap, err := l.Snapshot(Include{})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	got := map[int]string{}
+	for _, row := range snap.Ports {
+		got[row.Port] = row.Source
+	}
+	if want := map[int]string{18121: "ss", 18122: "netstat"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("published row sources = %v, want %v", got, want)
+	}
+}
+
 // The merged seam wins over the single-source one, so a loop configured for
 // several collectors cannot silently publish one table as if it were the merge.
 func TestScanSourcesTakesPrecedenceOverScanSource(t *testing.T) {
