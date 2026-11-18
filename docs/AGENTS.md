@@ -24,14 +24,14 @@ A contract lives in exactly one place. Everything else links to it.
 | Attention consent and user controls | `docs/attention.md` | Engineering adapter detail |
 | Third-party source scope / fixed-version records | `docs/third-party.md` / human-maintained `third_party/README.md` | Root README beyond a pointer |
 | Product definition, what the product refuses to do | `docs/product.md` | `docs/agent/` |
-| CLI surface, error codes, JSON fields, manifest references | `docs/cli.md` | `docs/agent/`, the skill repository |
-| Work records and handoff | `docs/workplace.md` | `docs/cli.md` beyond a pointer |
+| CLI surface, error codes, JSON fields, manifest references | `docs/cli.md` and the topic pages under `docs/cli/` | `docs/agent/`, the skill repository |
+| Work records and handoff | `docs/workplace.md` | `docs/cli/` beyond a pointer |
 | Installation, upgrade, uninstall | `docs/install.md` | `README.md` beyond a summary |
 | Orchestrator and dev-server recipes | `docs/integrations.md` | `docs/agent/` |
 | Implementation boundaries and the chain of facts | `docs/agent/architecture.md` | `docs/product.md` |
 | Build commands and what to run after a change | `docs/agent/develop.md` | `README.md` |
 | Check-selection guide / exact per-check promises and platform scope | `docs/agent/validation.md` / `docs/agent/validation-reference.md` (guide links to matrix, not a second copy) | `docs/agent/develop.md` |
-| Scenario library, arms, metrics and the comparison report | `docs/agent/agent-eval.md` | `docs/cli.md` |
+| Scenario library, arms, metrics and the comparison report | `docs/agent/agent-eval.md` | `docs/cli/` |
 | What agents still ask the shell, and why | `docs/agent/trace-analysis.md` | `docs/agent/agent-eval.md` |
 | Version, tag and release rules | `docs/agent/releasing.md` | `AGENTS.md` |
 | Standing orders an agent needs in every session | root `AGENTS.md` | any document below it |
