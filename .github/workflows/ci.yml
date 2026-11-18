@@ -5,6 +5,8 @@ name: CI
 # so `gate` is the required check and it fails only when a job that had to run
 # did not pass. `main` accepts pull requests only, so the merge commit carries
 # the tree that just passed here and nothing runs a second time after merge.
+# `retry` is the only job allowed to spend a second attempt, and only on a
+# failure it can classify as outside this change's control.
 on:
   pull_request:
   workflow_dispatch:
@@ -101,3 +103,36 @@ jobs:
         run: |
           echo "::error::a check that had to run did not pass; see the job results above"
           exit 1
+
+  retry:
+    # Advisory, never required. A workflow cannot re-run itself, so this job
+    # classifies the failure and asks the API to re-run the failed jobs. The
+    # gate above keeps its meaning: it fails on this attempt and turns green on
+    # the attempt the re-run produces, because it depends on the area jobs and
+    # is re-run with them. scripts/ci_failures.py decides and
+    # scripts/retry-ci.sh acts; a deterministic failure is never re-run. Keep
+    # this job out of .github/quality-gate-checks.json and the `main` ruleset.
+    name: Retry / classify the failure
+    needs: [engine, windows, git-read, examples, readiness, ci-config]
+    # `github.run_attempt > 1` is what brings this job back on the attempt the
+    # re-run produces: that is where a flake is announced instead of silently
+    # green. On a first attempt that passed, nothing here runs.
+    if: >-
+      always() && (contains(needs.*.result, 'failure')
+      || contains(needs.*.result, 'cancelled')
+      || github.run_attempt > 1)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Classify the failure, record it, re-run only what the policy allows
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AREAS_FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: bash scripts/retry-ci.sh
