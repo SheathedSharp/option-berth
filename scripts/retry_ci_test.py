@@ -1,8 +1,10 @@
-"""Exercise scripts/retry-ci.sh against a stub `gh`: when it re-runs, when it refuses.
+"""Exercise scripts/retry-ci.sh against a stub `gh`: what it re-runs, what it records.
 
-The re-run itself cannot be tested here. These tests pin which branch calls the
-command, what it is called with, and what the run summary and the annotations
-say afterwards.
+Neither half of the real thing can be tested here. The re-run is an API call,
+and the `workflow_run` trigger only starts firing once
+.github/workflows/flake-retry.yml is on the default branch. These tests pin the
+decision the script makes from the completed run it is handed, the commands it
+runs, and the record it leaves on the pull request.
 """
 import json
 import os
@@ -15,6 +17,8 @@ import unittest
 
 SCRIPTS = Path(__file__).parent
 PACKAGE = "github.com/SheathedSharp/option-berth/engine/internal/foo"
+WORKFLOW = "CI"
+RUN_URL = "https://github.com/owner/repo/actions/runs/1"
 
 STUB = textwrap.dedent("""\
     #!/usr/bin/env bash
@@ -28,6 +32,13 @@ STUB = textwrap.dedent("""\
         exit 0
     fi
     if [ "$1 $2" = "run rerun" ]; then exit "${RERUN_STATUS:-0}"; fi
+    if [ "$1 $2" = "pr comment" ]; then
+        printf '%s\\n---\\n' "$7" >> "$COMMENTS"
+        exit "${COMMENT_STATUS:-0}"
+    fi
+    # scripts/reconcile_repo.py --failure: no open issue yet, so it creates one.
+    if [ "$1 $2" = "issue list" ]; then echo '[]'; exit 0; fi
+    if [ "$1 $2" = "issue create" ]; then exit "${ISSUE_STATUS:-0}"; fi
     echo "stub: unexpected command $*" >&2
     exit 1
 """)
@@ -53,11 +64,12 @@ class RetryCiTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        # The script finds the classifier and the allowlist next to itself, so
-        # the test copies the real layout instead of patching the paths.
+        # The script finds the classifier, the allowlist and the escalation tool
+        # next to itself, so the test copies the real layout instead of patching
+        # the paths.
         self.scripts = self.root / "scripts"
         self.scripts.mkdir()
-        for name in ("retry-ci.sh", "ci_failures.py"):
+        for name in ("retry-ci.sh", "ci_failures.py", "reconcile_repo.py", "check_ci_gate.py"):
             shutil.copy(SCRIPTS / name, self.scripts / name)
         self.allowlist = self.scripts / "flaky-tests.txt"
         self.allowlist.write_text("# nothing allowlisted\n")
@@ -72,8 +84,8 @@ class RetryCiTests(unittest.TestCase):
 
         self.calls = self.root / "calls"
         self.calls.write_text("")
-        self.summary = self.root / "summary.md"
-        self.summary.write_text("")
+        self.comments = self.root / "comments"
+        self.comments.write_text("")
         self.jobs = self.root / "jobs.json"
         self.log = self.root / "1.log"
 
@@ -81,17 +93,23 @@ class RetryCiTests(unittest.TestCase):
         self.jobs.write_text(json.dumps({"total_count": len(jobs), "jobs": list(jobs)}))
         self.log.write_text(log)
 
-    def run_script(self, attempt, areas_failed, extra_env=None):
+    def run_script(self, *, attempt=1, conclusion="failure", pr="7", extra_env=None):
         environment = dict(
             os.environ,
             PATH=f"{self.bin_dir}{os.pathsep}{os.environ['PATH']}",
             GH_TOKEN="stub-token",
             GITHUB_REPOSITORY="owner/repo",
-            GITHUB_RUN_ID="1",
-            GITHUB_RUN_ATTEMPT=str(attempt),
-            AREAS_FAILED=areas_failed,
-            GITHUB_STEP_SUMMARY=str(self.summary),
+            RUN_ID="1",
+            RUN_ATTEMPT=str(attempt),
+            RUN_CONCLUSION=conclusion,
+            RUN_HTML_URL=RUN_URL,
+            WORKFLOW_NAME=WORKFLOW,
+            PR_NUMBER=pr,
+            # The id of the flake-retry run itself. The script must never re-run
+            # it: that run is in progress, and `gh run rerun` rejects it.
+            GITHUB_RUN_ID="999",
             CALLS=str(self.calls),
+            COMMENTS=str(self.comments),
             JOBS=str(self.jobs),
             LOG=str(self.log),
         )
@@ -101,93 +119,146 @@ class RetryCiTests(unittest.TestCase):
             capture_output=True, text=True, errors="replace", timeout=60, env=environment,
         )
 
-    def rerun_called(self):
-        return "run rerun 1 --repo owner/repo --failed" in self.calls.read_text()
+    def command_line(self):
+        return " ".join(self.calls.read_text().split())
 
-    def test_a_flaky_candidate_is_re_run_with_a_visible_record(self):
+    def comment_body(self):
+        return self.comments.read_text()
+
+    def test_a_retryable_failure_is_recorded_and_re_run(self):
         self.allowlist.write_text(f"{PACKAGE}/TestBar\n")
         self.prepare(job("verify", steps=[("Full engine tests", "failure")]))
-        result = self.run_script(1, "true")
+        result = self.run_script(attempt=1)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue(self.rerun_called(), self.calls.read_text())
-        summary = self.summary.read_text()
-        self.assertIn("## 重跑记录", summary)
-        self.assertIn("| 1/3 | flaky-candidate |", summary)
-        self.assertIn(f"{PACKAGE}/TestBar", summary)
-        self.assertIn("重跑失败任务", summary)
+        # The completed run from the payload, never this workflow's own run.
+        self.assertIn("run rerun 1 --repo owner/repo --failed", self.command_line())
+        self.assertNotIn("999", self.command_line())
+        body = self.comment_body()
+        self.assertIn("flake: attempt 1/3", body)
+        self.assertIn("flaky-candidate", body)
+        self.assertIn(f"{PACKAGE}/TestBar", body)
+        self.assertIn(RUN_URL, body)
         self.assertIn("::warning title=CI 重跑::flaky-candidate", result.stdout)
 
-    def test_a_deterministic_failure_is_never_re_run(self):
+    def test_a_deterministic_failure_is_recorded_and_not_re_run(self):
         self.prepare(job("verify", steps=[("Native build", "failure")]))
-        result = self.run_script(1, "true")
+        result = self.run_script(attempt=1)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertFalse(self.rerun_called())
-        self.assertIn("## 重跑记录", self.summary.read_text())
-        self.assertIn("确定性失败，不重跑", self.summary.read_text())
+        self.assertNotIn("run rerun", self.command_line())
+        body = self.comment_body()
+        self.assertIn("deterministic", body)
+        self.assertIn("Native build", body)
         self.assertIn("::error title=确定性失败，不重跑::", result.stdout)
 
-    def test_a_job_that_never_ran_a_step_is_re_run(self):
+    def test_the_last_attempt_keeps_the_failure(self):
         self.prepare(job("verify", "cancelled"))
-        result = self.run_script(1, "true")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue(self.rerun_called())
-        self.assertIn("| 1/3 | infrastructure |", self.summary.read_text())
-
-    def test_the_third_attempt_keeps_the_original_failure(self):
-        self.prepare(job("verify", "cancelled"))
-        result = self.run_script(3, "true")
+        result = self.run_script(attempt=3)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertFalse(self.rerun_called())
-        self.assertIn("重试次数用尽，保留原失败", self.summary.read_text())
-        self.assertIn("::error title=重试次数用尽::", result.stdout)
+        self.assertNotIn("run rerun", self.command_line())
+        body = self.comment_body()
+        self.assertIn("flake: attempt 3/3", body)
+        self.assertIn("infrastructure", body)
+        self.assertIn("::error title=重试次数用尽，保留原失败::", result.stdout)
 
-    def test_a_green_re_run_after_a_flake_is_announced(self):
+    def test_the_budget_comes_from_max_attempts(self):
         self.prepare(job("verify", "cancelled"))
-        result = self.run_script(2, "false")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.rerun_called())
-        self.assertIn("| 2/3 | infrastructure |", self.summary.read_text())
-        self.assertIn("重跑后通过", self.summary.read_text())
-        self.assertIn("::warning title=CI 重跑后通过::第 2 次尝试通过", result.stdout)
+        result = self.run_script(attempt=2, extra_env={"MAX_ATTEMPTS": "2"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("run rerun", self.command_line())
+        self.assertIn("flake: attempt 2/2", self.comment_body())
 
-    def test_a_first_attempt_with_nothing_failed_does_nothing(self):
-        self.prepare(job("verify", "success"))
-        result = self.run_script(1, "false")
+    def test_a_pass_after_a_retry_names_the_flake_on_the_pull_request(self):
+        self.prepare(job("verify", "cancelled"))
+        result = self.run_script(attempt=2, conclusion="success")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.rerun_called())
-        self.assertEqual(self.summary.read_text(), "")
-        self.assertNotIn("::warning", result.stdout)
+        self.assertNotIn("run rerun", self.command_line())
+        # Attempt 2 is green, so the attempt that has to be explained is 1.
+        self.assertIn("attempts/1/jobs", self.command_line())
+        self.assertIn("flake: passed on attempt 2 after infrastructure: ", self.comment_body())
 
-    def test_the_previous_attempt_is_explained_when_this_one_passed(self):
+    def test_a_pass_after_a_failure_nothing_retried_is_still_recorded(self):
         # Nothing re-runs a deterministic failure, so a pass after one came from
-        # a human. It is still announced, never silently green.
+        # a person. It is announced, never silently green.
         self.prepare(job("verify", steps=[("Native build", "failure")]))
-        result = self.run_script(2, "false")
+        result = self.run_script(attempt=2, conclusion="success")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("| 2/3 | deterministic |", self.summary.read_text())
-        self.assertIn("重跑后通过，前一分类不可重跑", self.summary.read_text())
-        self.assertIn("::warning title=CI 重跑后通过::", result.stdout)
+        body = self.comment_body()
+        self.assertIn("flake: passed on attempt 2", body)
+        self.assertIn("deterministic", body)
 
-    def test_a_re_run_of_an_already_green_run_says_nothing(self):
+    def test_a_pass_on_the_first_attempt_says_nothing(self):
         self.prepare(job("verify", "success"))
-        result = self.run_script(2, "false")
+        result = self.run_script(attempt=1, conclusion="success")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.rerun_called())
-        self.assertEqual(self.summary.read_text(), "")
-        self.assertNotIn("::warning", result.stdout)
+        self.assertEqual(self.calls.read_text(), "")
+        self.assertEqual(self.comment_body(), "")
+
+    def test_a_cancelled_run_is_not_retried(self):
+        # A person cancelled it; that is not a failure to explain.
+        self.prepare(job("verify", "cancelled"))
+        for conclusion in ("cancelled", "timed_out", "skipped", "startup_failure"):
+            with self.subTest(conclusion=conclusion):
+                self.calls.write_text("")
+                self.comments.write_text("")
+                result = self.run_script(attempt=2, conclusion=conclusion)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls.read_text(), "")
+                self.assertEqual(self.comment_body(), "")
+
+    def test_a_failure_without_a_pull_request_escalates_instead_of_commenting(self):
+        self.prepare(job("verify", steps=[("Native build", "failure")]))
+        result = self.run_script(attempt=1, pr="")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("pr comment", self.command_line())
+        self.assertIn("issue create", self.command_line())
+        self.assertIn("[automation] CI 失败", self.command_line())
+
+    def test_a_retryable_failure_without_a_pull_request_is_re_run_without_an_issue(self):
+        # The re-run may still go green; opening an issue for an attempt that is
+        # about to be spent would page for a flake. The attempt that ends the
+        # story is the one that escalates.
+        self.prepare(job("verify", "cancelled"))
+        result = self.run_script(attempt=1, pr="")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("run rerun 1 --repo owner/repo --failed", self.command_line())
+        self.assertNotIn("issue create", self.command_line())
+
+    def test_a_pass_after_a_retry_without_a_pull_request_escalates(self):
+        self.prepare(job("verify", "cancelled"))
+        result = self.run_script(attempt=2, conclusion="success", pr="")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # reconcile_repo.py routes `success` to a recovery comment, not an issue.
+        self.assertIn("issue list", self.command_line())
+        self.assertNotIn("issue create", self.command_line())
 
     def test_a_classifier_error_never_re_runs(self):
         self.jobs.write_text("{not json")
-        result = self.run_script(1, "true")
+        result = self.run_script(attempt=1)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertFalse(self.rerun_called())
-        self.assertIn("无法分类，不重跑", self.summary.read_text())
+        self.assertNotIn("run rerun", self.command_line())
+        self.assertIn("::error title=无法分类，不重跑::", result.stdout)
+
+    def test_a_failed_comment_never_re_runs(self):
+        # The record is the point: a re-run nobody can see would hide the flake.
+        self.allowlist.write_text(f"{PACKAGE}/TestBar\n")
+        self.prepare(job("verify", steps=[("Full engine tests", "failure")]))
+        result = self.run_script(attempt=1, extra_env={"COMMENT_STATUS": "1"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("run rerun", self.command_line())
+        self.assertIn("::error title=无法写入 PR 评论::", result.stdout)
 
     def test_a_failed_rerun_call_keeps_the_run_red(self):
         self.prepare(job("verify", "cancelled"))
-        result = self.run_script(1, "true", {"RERUN_STATUS": "1"})
+        result = self.run_script(attempt=1, extra_env={"RERUN_STATUS": "1"})
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("::error title=无法重跑::", result.stdout)
+
+    def test_a_missing_input_is_a_usage_error(self):
+        self.prepare(job("verify", "cancelled"))
+        result = self.run_script(attempt=1, extra_env={"RUN_ID": ""})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("RUN_ID", result.stderr)
+        self.assertEqual(self.calls.read_text(), "")
 
 
 if __name__ == "__main__":

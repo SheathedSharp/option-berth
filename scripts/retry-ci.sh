@@ -1,87 +1,130 @@
 #!/usr/bin/env bash
-# Re-run a failed CI run only when the failure is outside this change's control.
+# Say what a completed verification run means, and re-run it only for a failure
+# this change cannot fix.
 #
-# Called by the `retry` job in .github/workflows/ci.yml, which needs every area
-# job. It runs when an area failed or was cancelled, and again on every attempt
-# the re-run produces, so a flake leaves a record instead of turning green.
+# Called by .github/workflows/flake-retry.yml, which starts when a verification
+# workflow completes. It has to be a separate workflow: `gh run rerun` only
+# accepts a completed run, and a job inside the run it would re-run is by
+# definition still going.
 #
-# The policy has two halves. `scripts/ci_failures.py` classifies the failing
-# attempt and decides whether another attempt is allowed; this script owns the
-# visible outcome:
+# The policy has two halves. `scripts/ci_failures.py` classifies one attempt and
+# decides whether another attempt is allowed; this script owns the visible
+# outcome:
 #
-#   retry=true    `gh run rerun <id> --failed`: only the failed jobs and the
-#                 jobs that depend on them run again, at most twice.
-#   retry=false   the job fails with the classification and the evidence line.
-#                 A deterministic failure never reaches the re-run branch, and
-#                 neither does a third attempt.
+#   failure                The attempt is classified. `infrastructure` and
+#                          `flaky-candidate` below MAX_ATTEMPTS re-run the
+#                          failed jobs; a deterministic failure, a shape the
+#                          classifier does not recognise, and an attempt with
+#                          none left all stand and fail this job.
+#   success, attempt > 1   The re-run went green. The attempt before it is
+#                          classified and reported, so a flake is never
+#                          silently green.
+#   anything else          A person cancelled the run, or it timed out, or it
+#                          never started. Nothing is retried and nothing is
+#                          written.
 #
-# Every attempt appends a `## 重跑记录` section to the run summary. A run that
-# only went green on a later attempt still gets a warning annotation: a flake is
-# never silently green.
+# Everything is fail-closed: an unreadable job list, an unparsable verdict and a
+# record that could not be written all end the same way — no re-run.
 #
-# `Gate / required checks` keeps its meaning. It fails on the attempt that
-# failed and turns green on the attempt the re-run produces, because the gate
-# job depends on the area jobs and is re-run with them.
+# Where the record goes: the pull request the run belongs to. Without one (a
+# nightly run, a workflow_dispatch, a pull request from a fork, whose
+# `workflow_run.pull_requests` is empty) a failure that stands is escalated
+# through `scripts/reconcile_repo.py --failure`, the single deduplicated issue
+# per workflow. A retryable failure is re-run without opening that issue: the
+# attempt that ends the story is the one that escalates.
 #
-# Inputs, all set by the workflow:
-#   AREAS_FAILED          "true" when an area job did not pass on this attempt
-#   GITHUB_REPOSITORY     owner/repo
-#   GITHUB_RUN_ID         the run to re-run
-#   GITHUB_RUN_ATTEMPT    1-based attempt number of this job
-#   GH_TOKEN              token with `actions: write`
-#   GITHUB_STEP_SUMMARY   where the record goes
+# Inputs, all set by the workflow from the `workflow_run` payload:
+#   RUN_ID             the completed run to classify and re-run. Never
+#                      GITHUB_RUN_ID: that names the flake-retry run itself.
+#   RUN_ATTEMPT        1-based attempt number of that run
+#   RUN_CONCLUSION     failure | success | cancelled | ...
+#   RUN_HTML_URL       the run's page, quoted in every record
+#   WORKFLOW_NAME      the workflow that completed
+#   PR_NUMBER          pull request number, may be empty
+#   MAX_ATTEMPTS       attempts a run may spend in total; defaults to 3
+#   GH_TOKEN           token with `actions: write` and `pull-requests: write`
+#   GITHUB_REPOSITORY  owner/repo
 set -euo pipefail
 
 root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 classifier="$root/scripts/ci_failures.py"
+reconcile="$root/scripts/reconcile_repo.py"
 allowlist="$root/scripts/flaky-tests.txt"
 
-: "${GH_TOKEN:?GH_TOKEN is required: reading jobs and re-running needs the actions API}"
-: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
-: "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
-: "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}"
-: "${AREAS_FAILED:?AREAS_FAILED is required}"
+required() {  # name value why
+    if [ -z "$2" ]; then
+        echo "retry-ci: $1 is required: $3" >&2
+        exit 2
+    fi
+}
+
+required GH_TOKEN "${GH_TOKEN:-}" "reading jobs, recording the outcome and re-running need it"
+required GITHUB_REPOSITORY "${GITHUB_REPOSITORY:-}" "owner/repo"
+required RUN_ID "${RUN_ID:-}" "the completed run to classify"
+required RUN_ATTEMPT "${RUN_ATTEMPT:-}" "1-based attempt number of that run"
+required RUN_CONCLUSION "${RUN_CONCLUSION:-}" "failure, success or another GitHub conclusion"
+required RUN_HTML_URL "${RUN_HTML_URL:-}" "the record quotes it"
+required WORKFLOW_NAME "${WORKFLOW_NAME:-}" "the record names it"
+pr_number=${PR_NUMBER:-}
+max_attempts=${MAX_ATTEMPTS:-3}
 
 repo=$GITHUB_REPOSITORY
-run_id=$GITHUB_RUN_ID
-attempt=$GITHUB_RUN_ATTEMPT
 
-case $attempt in
-    '' | *[!0-9]*)
-        echo "retry-ci: GITHUB_RUN_ATTEMPT must be a positive integer, got '$attempt'" >&2
+positive_integer() {  # value name
+    case $1 in
+        '' | *[!0-9]*)
+            echo "retry-ci: $2 must be a positive integer, got '$1'" >&2
+            exit 2
+            ;;
+    esac
+    if [ "$1" -eq 0 ]; then
+        echo "retry-ci: $2 must be 1 or greater, got '$1'" >&2
         exit 2
+    fi
+}
+
+positive_integer "$RUN_ATTEMPT" RUN_ATTEMPT
+positive_integer "$max_attempts" MAX_ATTEMPTS
+if [ -n "$pr_number" ]; then
+    positive_integer "$pr_number" PR_NUMBER
+fi
+
+attempt=$RUN_ATTEMPT
+
+# The attempt that has to be explained: the failed one, or the one before a
+# passing re-run.
+target=$attempt
+case $RUN_CONCLUSION in
+    failure) ;;
+    success)
+        if [ "$attempt" -le 1 ]; then
+            echo "retry-ci: $WORKFLOW_NAME run $RUN_ID passed on its first attempt; nothing to explain"
+            exit 0
+        fi
+        target=$((attempt - 1))
+        ;;
+    *)
+        echo "retry-ci: $WORKFLOW_NAME run $RUN_ID concluded '$RUN_CONCLUSION'; not a failure to explain, nothing retried"
+        exit 0
         ;;
 esac
-
-# The attempt that has to be explained. On an attempt that already fixed the
-# failure this job still runs (see the job's `if`), and the answer comes from
-# the attempt before it.
-target=$attempt
-if [ "$AREAS_FAILED" != "true" ]; then
-    if [ "$attempt" -le 1 ]; then
-        echo "retry-ci: no area failed and this is the first attempt; nothing to do"
-        exit 0
-    fi
-    target=$((attempt - 1))
-fi
 
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
-# --- classify the failing attempt -------------------------------------------
+# --- classify the attempt that has to be explained ---------------------------
 
 # Display-only fallbacks for the case where the classifier cannot answer at all.
 # ci_failures.py owns the policy value it overwrites below.
 kind=unclassified
 retry=false
-max_attempts=3
 evidence="第 $target 次尝试没有被分类"
 
 classify_attempt() {
     # 0: classified, 2: nothing failed in that attempt, 1: every other reason,
     # and the caller must not re-run anything.
     local failed_ids id
-    if ! gh api "repos/$repo/actions/runs/$run_id/attempts/$target/jobs?per_page=100" > "$work/jobs.json"; then
+    if ! gh api "repos/$repo/actions/runs/$RUN_ID/attempts/$target/jobs?per_page=100" > "$work/jobs.json"; then
         evidence="读取第 $target 次尝试的任务列表失败，见本步骤日志"
         return 1
     fi
@@ -102,80 +145,112 @@ classify_attempt() {
         fi
     done
     if ! python3 "$classifier" --jobs "$work/jobs.json" --log-dir "$work/logs" \
-        --allowlist "$allowlist" --attempt "$attempt" --output "$work/verdict"; then
+        --allowlist "$allowlist" --attempt "$target" --max-attempts "$max_attempts" \
+        --output "$work/verdict"; then
         evidence="第 $target 次尝试的失败无法分类"
         return 1
     fi
     kind=$(sed -n 's/^kind=//p' "$work/verdict")
     retry=$(sed -n 's/^retry=//p' "$work/verdict")
-    max_attempts=$(sed -n 's/^max_attempts=//p' "$work/verdict")
     evidence=$(sed -n 's/^evidence=//p' "$work/verdict")
     return 0
 }
 
 status=0
 classify_attempt || status=$?
-echo "retry-ci: attempt $target is $kind: $evidence"
+echo "retry-ci: $WORKFLOW_NAME run $RUN_ID attempt $target is $kind: $evidence"
 
-if [ "$status" -eq 2 ] && [ "$AREAS_FAILED" != "true" ]; then
-    echo "retry-ci: attempt $target has no failed job; nothing to explain"
-    exit 0
+if [ "$status" -eq 2 ]; then
+    if [ "$RUN_CONCLUSION" = success ]; then
+        echo "retry-ci: attempt $target has no failed job; there is nothing to explain"
+        exit 0
+    fi
+    # A run can be marked failed with no failed job (a `startup_failure` never
+    # creates one). The fallback kind already says it cannot be classified, and
+    # an unclassified failure is never re-run.
+    echo "retry-ci: attempt $target failed without a failed job; treating it as unclassified"
 fi
 
 # --- record it ---------------------------------------------------------------
 
-record() {  # attempt kind evidence action
-    [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
-    {
-        echo "## 重跑记录"
-        echo
-        echo "| 尝试 | 分类 | 证据 | 处理 |"
-        echo "|---|---|---|---|"
-        printf '| %s/%s | %s | %s | %s |\n' "$1" "$max_attempts" "$2" "${3//|/\\|}" "$4"
-        echo
-    } >> "$GITHUB_STEP_SUMMARY"
+comment_pr() {  # headline
+    local headline=$1 body
+    body=$(printf '%s\n\n- workflow: %s\n- run: %s\n- classification: %s\n- evidence: %s' \
+        "$headline" "$WORKFLOW_NAME" "$RUN_HTML_URL" "$kind" "$evidence")
+    if ! gh pr comment "$pr_number" --repo "$repo" --body "$body"; then
+        echo "::error title=无法写入 PR 评论::gh pr comment $pr_number 失败；没有记录的重跑会掩盖失败，因此本次不重跑"
+        return 1
+    fi
+}
+
+escalate() {
+    # The tool routes `success` to a recovery comment on the open issue and any
+    # other conclusion to the issue itself; `cancelled` writes nothing, and this
+    # script never gets that far with a cancellation.
+    if ! python3 "$reconcile" --failure --repo "$repo" \
+        --workflow-name "$WORKFLOW_NAME" --run-url "$RUN_HTML_URL" \
+        --conclusion "$RUN_CONCLUSION"; then
+        echo "::error title=无法写入 issue::scripts/reconcile_repo.py --failure 失败；没有记录的重跑会掩盖失败，因此本次不重跑"
+        return 1
+    fi
+}
+
+record() {  # headline
+    if [ -n "$pr_number" ]; then
+        comment_pr "$1" || exit 1
+    else
+        escalate || exit 1
+    fi
 }
 
 # --- decide ------------------------------------------------------------------
 
-if [ "$AREAS_FAILED" != "true" ]; then
+if [ "$RUN_CONCLUSION" = success ]; then
     # This attempt passed. Say what the failing attempt was, so the green result
     # is never mistaken for a clean one.
-    if [ "$kind" = infrastructure ] || [ "$kind" = flaky-candidate ]; then
-        record "$attempt" "$kind" "$evidence" "重跑后通过"
-        echo "::warning title=CI 重跑后通过::第 $attempt 次尝试通过；第 $target 次尝试是 ${kind}：${evidence}"
-    else
-        record "$attempt" "$kind" "$evidence" "重跑后通过，前一分类不可重跑"
-        echo "::warning title=CI 重跑后通过::第 $attempt 次尝试通过，但第 $target 次尝试的分类是 ${kind}（不重跑）：${evidence}。这次通过来自手工重跑或无法分类的失败，请确认它不是被掩盖的真实失败"
-    fi
+    case $kind in
+        infrastructure | flaky-candidate)
+            record "flake: passed on attempt $attempt after $kind: $evidence"
+            ;;
+        *)
+            record "flake: passed on attempt $attempt, but attempt $target was $kind and nothing here retries that: $evidence. This pass came from a manual re-run; confirm it is not a real failure being hidden"
+            ;;
+    esac
+    echo "retry-ci: attempt $attempt passed; attempt $target was $kind"
     exit 0
 fi
 
-if [ "$retry" != "true" ]; then
-    case $kind in
-        deterministic)
-            record "$attempt" "$kind" "$evidence" "确定性失败，不重跑"
-            echo "::error title=确定性失败，不重跑::${evidence}"
-            ;;
-        infrastructure | flaky-candidate)
-            record "$attempt" "$kind" "$evidence" "重试次数用尽，保留原失败"
-            echo "::error title=重试次数用尽::${kind} 已重跑 $((max_attempts - 1)) 次仍未通过：${evidence}"
-            ;;
-        *)
-            record "$attempt" "$kind" "$evidence" "无法分类，不重跑"
-            echo "::error title=无法分类，不重跑::${evidence}"
-            ;;
-    esac
-    exit 1
+if [ "$retry" = true ]; then
+    # A pull request gets the record first, so the flake is visible before the
+    # green attempt exists. Without one the re-run is still spent: the attempt
+    # that ends the story is the one that escalates.
+    if [ -n "$pr_number" ]; then
+        comment_pr "flake: attempt $attempt/$max_attempts concluded failure as $kind; re-running the failed jobs" || exit 1
+    fi
+    echo "::warning title=CI 重跑::${kind}，第 $attempt/$max_attempts 次尝试，重跑失败任务：${evidence}"
+    if ! gh run rerun "$RUN_ID" --repo "$repo" --failed; then
+        state=$(gh api "repos/$repo/actions/runs/$RUN_ID" --jq .status 2> /dev/null || echo unknown)
+        echo "::error title=无法重跑::gh run rerun $RUN_ID --failed 失败，重跑时运行状态为 ${state}；本次运行保持失败，没有任务被重跑。只读令牌（来自 fork 的 PR）、缺少 actions: write、或运行尚未结束都会走到这里"
+        exit 1
+    fi
+    echo "retry-ci: re-ran the failed jobs of $WORKFLOW_NAME run $RUN_ID (attempt $attempt/$max_attempts, $kind)"
+    exit 0
 fi
 
-record "$attempt" "$kind" "$evidence" "重跑失败任务"
-echo "::warning title=CI 重跑::${kind}，第 $attempt 次尝试，重跑失败任务：${evidence}"
-if ! gh run rerun "$run_id" --repo "$repo" --failed; then
-    # Name the state the call found, so the first real failure diagnoses itself:
-    # a run this job is part of is still `in_progress` until this job ends.
-    state=$(gh api "repos/$repo/actions/runs/$run_id" --jq .status 2> /dev/null || echo unknown)
-    echo "::error title=无法重跑::gh run rerun $run_id --failed 失败，重跑时运行状态为 ${state}；本次运行保持失败，没有任务被重跑。只读令牌（来自 fork 的 PR）、缺少 actions: write、或运行尚未完成都会走到这里"
-    exit 1
-fi
-echo "retry-ci: re-ran the failed jobs of run $run_id"
+case $kind in
+    deterministic)
+        reason="确定性失败，不重跑"
+        headline="flake: attempt $attempt/$max_attempts concluded failure as deterministic; not re-running"
+        ;;
+    unclassified)
+        reason="无法分类，不重跑"
+        headline="flake: attempt $attempt/$max_attempts failed and could not be classified; not re-running"
+        ;;
+    *)
+        reason="重试次数用尽，保留原失败"
+        headline="flake: attempt $attempt/$max_attempts concluded failure as $kind and no attempt is left; the failure stands"
+        ;;
+esac
+record "$headline"
+echo "::error title=$reason::$evidence"
+exit 1
