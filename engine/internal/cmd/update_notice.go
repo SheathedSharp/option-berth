@@ -53,7 +53,7 @@ func startUpdateProbe(cmd *cobra.Command) {
 // The welcome screen prints the fuller upgrade block itself, and an explicit
 // `version --check` has already answered the question.
 func noticeEligible(cmd *cobra.Command) bool {
-	if versionFlag || jsonMode {
+	if versionFlag || jsonMode || cmd.Name() == "claude-hook" || cmd.Name() == "claude-observe" {
 		return false
 	}
 	if cmd == rootCmd || (cmd == versionCmd && versionCheckFlag) {

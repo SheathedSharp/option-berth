@@ -30,7 +30,7 @@ oberth workplace record --kind shell|agent [flags] [--worktree PATH] [--json]
 
 - `list` 按创建顺序列出，`●` 标出当前 workplace；没有 workplace 不是错误，是空列表。
 - `new` 建一个并设为当前；同名返回 conflict。
-- `use` 切换当前 workplace —— 之后 `oberth start` 和 `oberth agent stream` 记录到它。
+- `use` 切换当前 workplace —— 之后 `oberth start` 记录到它。
 - `show` 不带参数读当前 workplace；`--limit N` 只取最新 N 条，`truncated` 标明记录还有更多。
 - `delete` 删除一个 workplace 及其全部 block；删掉当前那个时，剩余里最新的接任，没有剩余就
   没有当前 workplace。
@@ -58,8 +58,7 @@ oberth workplace record --kind shell|agent [flags] [--worktree PATH] [--json]
 记录不需要手动操作：
 
 - `oberth start` 把这次运行写进当前 workplace；分离运行（`-d`）由 runtime service 在记录它的退出时收尾。
-- `oberth agent stream` 每一轮写一条：`turn.started` 开，`turn.completed` 按 provider 给的
-  outcome 收尾（completed / interrupted / failed）。
+
 - 引擎看不见的工作用 `oberth workplace record` 写进来：agent 自己的尝试（「我改了 X，测试仍然
   失败」）、前端自己的交互式 Shell、原生 agent。同一个 `--id` 再报一次是更新同一条而不是新增，
   所以一次工作的开始与结束可以任意顺序到达；重复的 `running` 不会覆盖已经记下的结果。
@@ -68,7 +67,7 @@ oberth workplace record --kind shell|agent [flags] [--worktree PATH] [--json]
 
 `show` 读回的是做过什么，不是把当时的进程叫回来。runtime service 不在时读命令仍从数据库直接读；
 `new` / `use` / `delete` / `record` 需要一个 runtime service（按既有规则自启动），而 `oberth start` 与
-`oberth agent stream` 的记录不会为你去起一个 runtime service —— 没有 runtime service 就没有记录，在 stderr 说明一次。
+`oberth start` 的记录不会为你去起一个 runtime service —— 没有 runtime service 就没有记录，在 stderr 说明一次。
 清单里的服务起停（`up` / `down`）不写工作记录：那是声明的生命周期，不是临时的工作条目。
 
 实现在 `internal/workplace`（规则、选择器与 RPC）、`internal/store/workplaces.go`（行与迁移 009）

@@ -15,7 +15,7 @@
 | [运行事实](cli/facts.zh.md) | `status`、`logs`、`events`、`worktrees` |
 | [运行操作](cli/operations.zh.md) | `up`、`restart`、`down`、`start`、`kill` |
 | [代码与声明](cli/declaration.zh.md) | `git`、`init`、清单边界与引用 |
-| [交接](cli/handoff.zh.md) | `workplace`、`attn`、`agent`、agent stream、原生续接 |
+| [交接](cli/handoff.zh.md) | `workplace`、`attn`、`agent`、原生 Claude hooks、原生续接 |
 | [基础设施](cli/infrastructure.zh.md) | `doctor`、`runtime service`、`version`、协议 3、`feedback`、首屏 |
 | [agent 读取的 JSON 字段](cli/json.zh.md) | `status`、`up`、`restart` 输出里 agent 据此判断的字段 |
 

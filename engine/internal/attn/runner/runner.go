@@ -182,6 +182,10 @@ func Auto(ctx context.Context, binary, project string, client model.Client, task
 	if err != nil {
 		return StaleOutput(s), nil
 	}
+	a, selected := attn.Select(a, task.Services, task.RunIDs)
+	if !selected {
+		return Output{Status: "clear", WorktreeID: model.WorktreeID(s.Scope.Root), WorktreeRoot: s.Scope.Root}, nil
+	}
 	// Candidate options published by the fact layer are not permission. The
 	// agent must supply an explicit allow-list for this task.
 	if len(task.AuthorizedOptions) == 0 {

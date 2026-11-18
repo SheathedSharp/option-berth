@@ -59,12 +59,14 @@ type Facts struct {
 	Services       []Service
 	Machine        []Machine
 	Listeners      []Listener
+	Runs           []Service
 	History        []ExitHistory
 	CrashWindow    time.Duration
 	CrashThreshold int
 }
 
 type Service struct {
+	RunOnly       bool
 	Name          string
 	Running       bool
 	LogPath       string
@@ -119,9 +121,16 @@ func Revision(f Facts) string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s", filepath.Clean(f.WorktreeRoot), f.Branch, f.StateRevision)
 	services := append([]Service(nil), f.Services...)
-	sort.SliceStable(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+	services = append(services, f.Runs...)
+	sort.SliceStable(services, func(i, j int) bool {
+		if services[i].Name != services[j].Name {
+			return services[i].Name < services[j].Name
+		}
+		return services[i].RunID < services[j].RunID
+	})
 	for _, service := range services {
 		_, _ = fmt.Fprintf(h, "\x00service\x00%s\x00%t\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s", service.Name, service.Running, service.RunID, service.StartedAt, service.LogPath, service.HealthStatus, service.HealthCode, service.HealthReason)
+		_, _ = fmt.Fprintf(h, "\x00run_only\x00%t", service.RunOnly)
 		if service.DeclaredPort != nil {
 			_, _ = fmt.Fprintf(h, "\x00declared_port\x00%d", *service.DeclaredPort)
 		}
@@ -172,6 +181,7 @@ func Revision(f Facts) string {
 
 type Event struct {
 	Kind         EventKind `json:"kind"`
+	RunOnly      bool      `json:"run_only,omitempty"`
 	Service      string    `json:"service,omitempty"`
 	RunID        string    `json:"run_id,omitempty"`
 	ExitCode     *int      `json:"exit_code,omitempty"`
@@ -241,9 +251,30 @@ type Artifact struct {
 // miss a second failed service while handling the first one.
 func ClassifyAll(f Facts) []Event {
 	services := append([]Service(nil), f.Services...)
-	sort.SliceStable(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+	declaredRuns := map[string]bool{}
+	for _, s := range services {
+		if s.RunID != "" {
+			declaredRuns[s.RunID] = true
+		}
+		if !s.Running && s.LastExit != nil {
+			declaredRuns[s.LastExit.RunID] = true
+		}
+	}
+	for _, run := range f.Runs {
+		if run.RunID != "" && !declaredRuns[run.RunID] {
+			run.RunOnly = true
+			services = append(services, run)
+		}
+	}
+	sort.SliceStable(services, func(i, j int) bool {
+		if services[i].Name != services[j].Name {
+			return services[i].Name < services[j].Name
+		}
+		return services[i].RunID < services[j].RunID
+	})
 	events := make([]Event, 0, len(services)+len(f.Machine)+len(f.Listeners))
 	for _, service := range services {
+		first := len(events)
 		if service.ReadyTimedOut {
 			events = append(events, Event{Kind: EventReadyTimeout, Service: service.Name, RunID: service.RunID, Reason: "ready_timeout", At: eventTime(f)})
 		} else if service.Running && service.HealthStatus == "fail" {
@@ -258,7 +289,7 @@ func ClassifyAll(f Facts) []Event {
 				kind = EventReadyTimeout
 			case "crashed":
 				kind = EventServiceFailed
-				if n := recentCrashes(f, service.Name, service.LastExit); n >= crashThreshold(f) {
+				if n := recentCrashes(f, service.Name, service.LastExit); !service.RunOnly && n >= crashThreshold(f) {
 					kind = EventRepeatedCrash
 				}
 			case "start_failed":
@@ -294,6 +325,9 @@ func ClassifyAll(f Facts) []Event {
 		} else if service.DeclaredPort != nil && service.ActualPort != nil && service.Running && *service.ActualPort != *service.DeclaredPort {
 			declared, actual := *service.DeclaredPort, *service.ActualPort
 			events = append(events, Event{Kind: EventManifestConflict, Service: service.Name, RunID: service.RunID, DeclaredPort: &declared, ActualPort: &actual, Reason: "declared_port_mismatch", At: eventTime(f)})
+		}
+		for i := first; i < len(events); i++ {
+			events[i].RunOnly = service.RunOnly
 		}
 	}
 	// A declared `machine:` entry that is not listening is not an anomaly. The

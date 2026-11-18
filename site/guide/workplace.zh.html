@@ -13,7 +13,6 @@ oberth workplace show --limit 20</code></pre>
 <h2 id="automatic">什么会被自动记录</h2>
 <ul>
   <li><code>oberth start</code> 把这次运行写进当前 workplace。分离模式（<code>-d</code>）的运行，由 Runtime Service 在记录到退出时关闭。</li>
-  <li><code>oberth agent stream</code> 每轮写一个条目：<code>turn.started</code> 打开它，<code>turn.completed</code> 用提供方报告的结果关闭它。</li>
   <li><code>oberth workplace record</code> 写引擎看不见的工作：agent 自己的尝试、客户端里的交互 shell、原生 agent。重复报告同一个 <code>--id</code> 会更新条目，所以同一件事的开始和结束可以按任意顺序到达。</li>
 </ul>
 

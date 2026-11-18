@@ -15,7 +15,7 @@ Use the [documentation index](index.md) to select a task. Below are the rules ev
 | [Runtime facts](cli/facts.md) | `status`, `logs`, `events`, `worktrees` |
 | [Operations](cli/operations.md) | `up`, `restart`, `down`, `start`, `kill` |
 | [Code and declaration](cli/declaration.md) | `git`, `init`, the manifest boundaries and references |
-| [Handoff](cli/handoff.md) | `workplace`, `attn`, `agent`, agent stream, native continuation |
+| [Handoff](cli/handoff.md) | `workplace`, `attn`, `agent`, native Claude hooks, native continuation |
 | [Infrastructure](cli/infrastructure.md) | `doctor`, `runtime service`, `version`, protocol 3, `feedback`, the first screen |
 | [Agent-facing JSON fields](cli/json.md) | The fields an agent branches on in `status`, `up` and `restart` output |
 
