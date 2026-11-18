@@ -19,6 +19,7 @@ func ToListening(p Port) ports.ListeningPort {
 	lp := ports.ListeningPort{
 		Host:          p.Host,
 		Port:          p.Port,
+		Source:        p.Source,
 		PID:           p.PID,
 		PPID:          p.PPID,
 		Process:       p.Process,
