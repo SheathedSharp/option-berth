@@ -75,6 +75,7 @@ func newAgentCommand() *cobra.Command {
 		sub.Flags().BoolVar(&jsonOutput, "json", false, "Print the exact launch plan as JSON (may contain prompt text)")
 		command.AddCommand(sub)
 	}
+	addClaudeHooks(command)
 	return command
 }
 
