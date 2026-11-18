@@ -285,11 +285,11 @@ func TestSuccessfulStatsEnrichmentKeepsTheListeners(t *testing.T) {
 	}
 	defer ln.Close()
 	l := New(Options{})
-	rows, _, err := l.osScanSourceContext(context.Background(), Include{Stats: true})
+	read, err := l.osScanSourceContext(context.Background(), Include{Stats: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) == 0 {
+	if len(read.Rows) == 0 {
 		t.Fatal("a listener this process opened was dropped after stats enrichment")
 	}
 }

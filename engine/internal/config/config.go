@@ -49,6 +49,12 @@ const (
 	// publishes every contributor, which is narrower, never wider, than the
 	// primary table.
 	DefaultObserveSources = 1
+
+	// The breaker that stops a runtime service from paying for a primary
+	// collector that never works. Both mirror the scanner's own defaults, for the
+	// same reason the cadences above do.
+	DefaultObservePrimaryFailures = 3
+	DefaultObservePrimaryCooldown = 60 * time.Second
 )
 
 // RuntimeServiceConfig holds `oberth runtime service run` settings.
@@ -84,13 +90,28 @@ type RuntimeServiceConfig struct {
 	// and a merged table is always published as narrow — its rows are facts and
 	// its absences are unknown.
 	ObserveSources int `yaml:"observe_sources"`
+
+	// ObservePrimaryFailures is how many failures in a row of the platform's
+	// primary listener collector open the breaker that skips it. Zero turns the
+	// breaker off, so every scan pays for the primary exactly as it did before
+	// the breaker existed.
+	ObservePrimaryFailures int `yaml:"observe_primary_failures"`
+
+	// ObservePrimaryCooldown is how long an open breaker skips the primary before
+	// one real probe, as a Go duration ("60s", "5m"). Empty means
+	// DefaultObservePrimaryCooldown.
+	ObservePrimaryCooldown string `yaml:"observe_primary_cooldown"`
 }
 
 // newConfig is a Config carrying its non-zero defaults, which a file that omits
 // a key must keep. Decoding over it is what tells an absent `observe_sources`
-// (the default of one) apart from a file that states an unusable number.
+// (the default of one), or an absent `observe_primary_failures` (the default of
+// three, and zero meaning "off"), apart from a file that states a number.
 func newConfig() *Config {
-	return &Config{RuntimeService: RuntimeServiceConfig{ObserveSources: DefaultObserveSources}}
+	return &Config{RuntimeService: RuntimeServiceConfig{
+		ObserveSources:         DefaultObserveSources,
+		ObservePrimaryFailures: DefaultObservePrimaryFailures,
+	}}
 }
 
 // ResolvedIdleTimeout returns the parsed idle timeout, falling back to
@@ -147,6 +168,33 @@ func (d RuntimeServiceConfig) ResolvedObserveSources() int {
 		return DefaultObserveSources
 	}
 	return d.ObserveSources
+}
+
+// ResolvedObservePrimaryFailures returns how many failures in a row of the
+// platform's primary collector open the breaker that skips it. Zero is a
+// decision, not a missing value: it turns the breaker off. That is why an absent
+// key is carried by newConfig rather than resolved here, and why a negative
+// number — which the file should not have carried — resolves to the default; the
+// warning about it is validate's job.
+func (d RuntimeServiceConfig) ResolvedObservePrimaryFailures() int {
+	if d.ObservePrimaryFailures < 0 {
+		return DefaultObservePrimaryFailures
+	}
+	return d.ObservePrimaryFailures
+}
+
+// ResolvedObservePrimaryCooldown returns how long an open breaker skips the
+// primary before one real probe, defaulting to DefaultObservePrimaryCooldown.
+func (d RuntimeServiceConfig) ResolvedObservePrimaryCooldown() time.Duration {
+	value, ok := positiveDuration(d.ObservePrimaryCooldown)
+	if !ok {
+		// Including the unset case. There is no "off" here: turning the breaker
+		// off is observe_primary_failures: 0, and a zero cooldown would only mean
+		// probing on every scan, which is the behaviour the breaker exists to
+		// avoid.
+		return DefaultObservePrimaryCooldown
+	}
+	return value
 }
 
 // ResolvedLogLevel returns the configured level, defaulting to "info".
@@ -233,6 +281,14 @@ const template = `# option-berth configuration
 #   # contributor in observation.sources. A merged table is always narrow: its
 #   # rows are facts, a port missing from it is unknown rather than free.
 #   observe_sources: 1
+#   # How many failures in a row of the primary collector open the breaker that
+#   # stops running it. While it is open the alternatives answer every scan and
+#   # the observation says the primary did not run; after one cooldown the
+#   # primary is probed once for real, and that probe closes or reopens the
+#   # breaker. 0 turns the breaker off.
+#   observe_primary_failures: 3
+#   # How long an open breaker skips the primary before that one probe.
+#   observe_primary_cooldown: 60s
 
 # color: true       # false turns off colored output
 
@@ -345,6 +401,9 @@ func validate(cfg *Config) []string {
 	repairDuration(&cfg.RuntimeService.ScanInterval, durationRule{
 		key: "runtime_service.scan_interval", fallback: DefaultScanInterval, floor: MinScanInterval,
 	}, &warnings)
+	repairDuration(&cfg.RuntimeService.ObservePrimaryCooldown, durationRule{
+		key: "runtime_service.observe_primary_cooldown", fallback: DefaultObservePrimaryCooldown,
+	}, &warnings)
 	repairDuration(&cfg.Agent.Timeout, durationRule{
 		key: "agent.timeout", fallback: DefaultAgentTimeout,
 	}, &warnings)
@@ -358,6 +417,12 @@ func validate(cfg *Config) []string {
 		warnings = append(warnings, fmt.Sprintf("config: invalid runtime_service.observe_sources %d — using %d",
 			cfg.RuntimeService.ObserveSources, DefaultObserveSources))
 		cfg.RuntimeService.ObserveSources = DefaultObserveSources
+	}
+
+	if cfg.RuntimeService.ObservePrimaryFailures < 0 {
+		warnings = append(warnings, fmt.Sprintf("config: invalid runtime_service.observe_primary_failures %d — using %d",
+			cfg.RuntimeService.ObservePrimaryFailures, DefaultObservePrimaryFailures))
+		cfg.RuntimeService.ObservePrimaryFailures = DefaultObservePrimaryFailures
 	}
 
 	for port := range cfg.Services {
