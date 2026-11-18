@@ -15,7 +15,7 @@ oberth runtime service log
 oberth runtime service stop
 ```
 
-`status --json` reports a nonzero exit when no host is running. `doctor` diagnoses the installation and observation permissions; `doctor --fix` may change state and should only be used after reading the proposed repair. The [reference](cli.md) owns all flags and response fields.
+`status --json` reports a nonzero exit when no host is running. `doctor` diagnoses the installation and observation permissions; `doctor --fix` may change state and should only be used after reading the proposed repair. The [reference](cli/infrastructure.md) owns all flags and response fields.
 
 ## The user-level service
 
@@ -46,4 +46,4 @@ A project operation may autostart the matching host only when its observation pr
 
 Only one host may own a database, even with different sockets or `BERTH_HOME` values pointing to the same file. Online history and doctor database reads go through that owner. `--no-runtime-service` does not secretly connect: an occupied database yields `runtime_service_busy`; offline reads remain read-only.
 
-Protocol 3 deliberately removed the old host command and endpoint names. Before replacing an older installation, stop its host normally using the matching old CLI. Do not clear lock files, delete sockets, reset the database or kill an unknown process. The exact migration names and settings belong to the [switch contract](cli.md#runtime-service-protocol-3-switch).
+Protocol 3 deliberately removed the old host command and endpoint names. Before replacing an older installation, stop its host normally using the matching old CLI. Do not clear lock files, delete sockets, reset the database or kill an unknown process. The exact migration names and settings belong to the [switch contract](cli/infrastructure.md#runtime-service-protocol-3-switch).
