@@ -79,8 +79,30 @@ func TestMergeLimitClampsToTheChainLength(t *testing.T) {
 	}
 }
 
+// Every row a merged table publishes names the collector that produced it.
+// Which rung said this is the first thing a reader needs: the rungs cover
+// different sets of sockets, so a row without its collector cannot be weighed
+// against the absence of another port.
+func TestMergeStampsEachRowWithItsCollector(t *testing.T) {
+	rows, _, err := mergedScan(t, "linux", 2, map[string]collectorAnswer{
+		"ss":      {out: ssHeader + ssRow},
+		"netstat": {out: linuxHeader + netstatRow("18202", "77")},
+	})
+	if err != nil {
+		t.Fatalf("merge failed: %v", err)
+	}
+	got := map[int]string{}
+	for _, row := range rows {
+		got[row.Port] = row.Source
+	}
+	if want := map[int]string{18201: "ss", 18202: "netstat"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("row sources = %v, want %v", got, want)
+	}
+}
+
 // The merge learns what the first table could not say: a socket both collectors
-// saw keeps the row that names its owner.
+// saw keeps the row that names its owner — and that row's rung, not the rung
+// whose rows it replaced.
 func TestMergePrefersTheRowThatNamesItsOwner(t *testing.T) {
 	rows, sources, err := mergedScan(t, "linux", 2, map[string]collectorAnswer{
 		"ss":      {out: ssHeader + "LISTEN 0      128    127.0.0.1:18201    0.0.0.0:*\n"},
@@ -91,6 +113,9 @@ func TestMergePrefersTheRowThatNamesItsOwner(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].PID != 4242 {
 		t.Fatalf("rows = %+v, want the owner the second collector reported", rows)
+	}
+	if rows[0].Source != "netstat" {
+		t.Fatalf("row source = %q, want the collector whose row was kept", rows[0].Source)
 	}
 	if want := []string{"ss", "netstat"}; !reflect.DeepEqual(sources, want) {
 		t.Fatalf("sources = %v, want %v", sources, want)
@@ -109,6 +134,51 @@ func TestMergeKeepsTheFirstOwnerOnADuplicate(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].PID != 4242 {
 		t.Fatalf("rows = %+v, want the first rung's owner", rows)
+	}
+	if rows[0].Source != "ss" {
+		t.Fatalf("row source = %q, want the rung whose row survived", rows[0].Source)
+	}
+}
+
+// The address fold is not a second merge: two families one process holds on one
+// port are one row, and it keeps the name of the row it kept.
+func TestMergeFoldKeepsTheSurvivingRowsCollector(t *testing.T) {
+	rows, _, err := mergedScan(t, "linux", 2, map[string]collectorAnswer{
+		"ss":      {out: ssHeader + "LISTEN 0      128    0.0.0.0:18201    0.0.0.0:*    users:((\"node\",pid=4242,fd=20))\n"},
+		"netstat": {out: linuxHeader + netstatRow("18201", "4242")},
+	})
+	if err != nil {
+		t.Fatalf("merge failed: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Source != "ss" {
+		t.Fatalf("rows = %+v, want one row named by the rung it kept", rows)
+	}
+}
+
+// A single-collector read leaves its rows unnamed, however it answers. The one
+// collector of the round is published once in observation.source; stamping it
+// on every row would say the same thing N times and make a single read look
+// like a merge.
+func TestSingleCollectorReadLeavesRowsUnnamed(t *testing.T) {
+	run := &fakeCollectors{answers: map[string]collectorAnswer{
+		"ss":      {err: exec.ErrNotFound},
+		"netstat": {out: linuxHeader + netstatRow("18202", "77")},
+	}}
+	rows, source, err := collectListenersSource("linux", run.run)
+	if err != nil || source != "netstat" || len(rows) != 1 {
+		t.Fatalf("rows=%+v source=%q err=%v, want the alternative's table", rows, source, err)
+	}
+	if rows[0].Source != "" {
+		t.Fatalf("row source = %q, want none for a single-collector read", rows[0].Source)
+	}
+	// A one-rung platform is single however large the merge limit is, so its
+	// rows stay unnamed for the same reason.
+	single := &fakeCollectors{answers: map[string]collectorAnswer{
+		"netstat": {out: "  TCP    127.0.0.1:18202        0.0.0.0:0              LISTENING       77\n"},
+	}}
+	rows, sources, err := collectListenersSources("windows", single.run, 4)
+	if err != nil || sources != nil || len(rows) != 1 || rows[0].Source != "" {
+		t.Fatalf("rows=%+v sources=%v err=%v, want the unnamed single table", rows, sources, err)
 	}
 }
 

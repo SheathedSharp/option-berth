@@ -27,6 +27,7 @@ func completeScanRow() ports.ListeningPort {
 		User:        "dev",
 		BindAddress: "127.0.0.1",
 		IPVersion:   "IPv4",
+		Source:      "netstat",
 		Type:        ports.PortTypeUser,
 
 		// The run and its manifest placement.
