@@ -84,8 +84,8 @@ transcripts, not marketing, not a teaching sequence. A reader arrives looking up
 ## Checks
 
 `python3 scripts/check_docs.py` verifies pair completeness, matching structure, byte-identical code
-blocks, the language switcher and that every relative link target exists. It runs as part of
-`python3 -m unittest discover -s scripts -p '*_test.py'`.
+blocks, the language switcher, that every relative link target exists and that no page still carries a
+merge conflict marker. It runs as part of `python3 -m unittest discover -s scripts -p '*_test.py'`.
 
 
 The check proves the pair was consistent at these exact contents; it cannot judge whether the two sides

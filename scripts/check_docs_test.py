@@ -192,6 +192,29 @@ class LinkTests(unittest.TestCase):
             self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md"), [])
 
 
+class ConflictMarkerTests(unittest.TestCase):
+    def test_leftover_marker_is_reported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "docs/demo.md", GOOD_EN + "\n<<<<<<< HEAD\nstale paragraph\n=======\n>>>>>>> origin/main\n")
+            problems = docs_check.check_conflict_markers(root / "docs")
+            self.assertTrue(any("leftover merge conflict marker" in p for p in problems))
+
+    def test_marker_quoted_inside_a_code_block_is_not_reported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "docs/demo.md", GOOD_EN + "\n```text\n<<<<<<< HEAD\n>>>>>>> origin/main\n```\n")
+            self.assertEqual(docs_check.check_conflict_markers(root / "docs"), [])
+
+    def test_a_setext_underline_is_not_a_conflict_marker(self):
+        # `=======` under a line is a legitimate H1 underline; only the seven
+        # `<` and `>` marker lines are unambiguous leftovers.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "docs/demo.md", GOOD_EN + "\nHeading\n=======\n")
+            self.assertEqual(docs_check.check_conflict_markers(root / "docs"), [])
+
+
 class LiveCorpusTests(unittest.TestCase):
     def test_every_paired_document_is_consistent(self):
         documents = docs_check.paired_documents(docs_check.DOCS)
@@ -200,6 +223,7 @@ class LiveCorpusTests(unittest.TestCase):
         for english in documents:
             problems.extend(docs_check.check_pair(english))
         problems.extend(docs_check.check_orphans(docs_check.DOCS))
+        problems.extend(docs_check.check_conflict_markers(docs_check.DOCS))
         self.assertEqual(problems, [])
 
     def test_agent_documents_are_english_only(self):
