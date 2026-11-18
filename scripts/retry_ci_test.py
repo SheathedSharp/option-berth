@@ -186,6 +186,16 @@ class RetryCiTests(unittest.TestCase):
         self.assertIn("flake: passed on attempt 2", body)
         self.assertIn("deterministic", body)
 
+    def test_a_re_run_of_an_already_green_run_says_nothing(self):
+        # Every job of attempt 1 passed, so there is no failure to explain and
+        # nothing to write on the pull request.
+        self.prepare(job("verify", "success"))
+        result = self.run_script(attempt=2, conclusion="success")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("run rerun", self.command_line())
+        self.assertEqual(self.comment_body(), "")
+        self.assertEqual(self.calls.read_text().count("\n"), 1, self.command_line())
+
     def test_a_pass_on_the_first_attempt_says_nothing(self):
         self.prepare(job("verify", "success"))
         result = self.run_script(attempt=1, conclusion="success")
