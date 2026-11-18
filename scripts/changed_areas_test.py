@@ -46,6 +46,13 @@ class AreasTests(unittest.TestCase):
     def test_ci_change_runs_every_area(self):
         self.assertEqual(needed(areas.areas_for([".github/workflows/ci.yml"])), set(areas.AREAS))
 
+    def test_retry_policy_change_runs_every_area(self):
+        # What CI re-runs is a pipeline decision, so a change to it is proved by
+        # running the whole pipeline, not by the engine area alone.
+        for path in ("scripts/ci_failures.py", "scripts/flaky-tests.txt", "scripts/retry-ci.sh"):
+            with self.subTest(path=path):
+                self.assertEqual(needed(areas.areas_for([path])), set(areas.AREAS))
+
     def test_skill_pin_change_runs_the_engine_check_that_reads_it(self):
         # The pin lives in engine.yml. A workflow change already runs every
         # area, so bumping it cannot skip `Skill covers the agent contract`.

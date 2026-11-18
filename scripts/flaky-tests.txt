@@ -1,0 +1,24 @@
+# Tests the CI may re-run after a failure.
+#
+# Nothing is a candidate by default: a failure that is not listed here is
+# deterministic and is never re-run, because a re-run of a real failure only
+# hides it behind a slower red run. Adding a line is a claim that this exact
+# test can fail on unchanged code; write down the run that proved it.
+#
+# One entry per line, `#` starts a comment:
+#
+#   <package>              any failure of that package: a panic, a test binary
+#                          timeout, or a test inside it
+#   <package>/<TestName>   only that test, including any subtest of it
+#
+# Write the package exactly as `go test` prints it on the `FAIL` line, for
+# example:
+#
+#   github.com/SheathedSharp/option-berth/engine/internal/groups
+#   github.com/SheathedSharp/option-berth/engine/internal/runtimecore/TestScanRetriesOnce
+#
+# A build failure is never a candidate, whatever it lists: a package that
+# stopped compiling is a result about this change.
+#
+# Read by scripts/ci_failures.py from the completed run that
+# .github/workflows/flake-retry.yml is handed.
