@@ -174,7 +174,7 @@ jobs:
           path: option-berth-skill
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: source/engine/go.mod
           cache-dependency-path: source/engine/go.sum
@@ -370,7 +370,7 @@ jobs:
           path: option-berth-skill
           persist-credentials: false
       - name: Download the engine under test
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: agent-eval-binary
           path: source/bin
@@ -674,7 +674,7 @@ jobs:
         # A missing shard is a coverage fact the merge reports; it must not stop
         # the merge from publishing the shards that did finish.
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: agent-eval-shard-*
           path: shards
