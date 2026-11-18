@@ -2,7 +2,7 @@
 
 [English](declaration.md) | 中文
 
-读取代码、生成本 worktree 的清单，以及所有读取清单的命令共同遵守的边界。`git` 只读；`init` 只产出草稿，只有 `init adopt` 会写入 `oberth.yaml`。
+读取代码、写入本 worktree 的清单，以及所有读取清单的命令共同遵守的边界。`git` 只读；`init` 写出一份供审阅的起始清单，`init draft` 只产出草稿，`init adopt` 才把它采用。
 
 ## oberth git [path]
 

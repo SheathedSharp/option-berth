@@ -2,7 +2,7 @@
 
 English | [中文](declaration.zh.md)
 
-Read the code, generate this worktree's manifest, and the boundaries every command obeys when it reads a declaration. `git` only reads; `init` only produces a draft, and only `init adopt` writes `oberth.yaml`.
+Read the code, write this worktree's manifest, and the boundaries every command obeys when it reads a declaration. `git` only reads; `init` writes a starter manifest for review, `init draft` only produces a draft, and `init adopt` is what adopts one.
 
 ## oberth git [path]
 
