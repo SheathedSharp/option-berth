@@ -48,7 +48,9 @@ machine:
 	}
 	chdir(t, dir)
 	mergedDirectScan(t,
-		[]ports.ListeningPort{{Port: 8123, PID: os.Getpid(), BindAddress: "127.0.0.1", Cwd: dir}},
+		[]ports.ListeningPort{{
+			Port: 8123, PID: os.Getpid(), BindAddress: "127.0.0.1", Cwd: dir, Source: "ss",
+		}},
 		[]string{"ss", "netstat"})
 
 	got, gg, obs, err := scanGroupsObserved(context.Background())
@@ -57,6 +59,11 @@ machine:
 	}
 	if len(got) != 1 || got[0].Port != 8123 {
 		t.Fatalf("rows = %+v, want the merged row", got)
+	}
+	// Enrichment and attribution run between the merge and the published row;
+	// neither may cost a merged row the name of the collector that read it.
+	if got[0].Source != "ss" {
+		t.Fatalf("row source = %q, want the collector that contributed it", got[0].Source)
 	}
 	if obs == nil || obs.State != state.ObservationObservable {
 		t.Fatalf("observation = %+v, want an observable merged read", obs)
