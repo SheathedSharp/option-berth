@@ -105,6 +105,8 @@ func runForegroundRuntimeService(ctx context.Context, persistent bool) error {
 		StatsInterval:           loadedConfig.RuntimeService.ResolvedStatsInterval(),
 		ScanInterval:            loadedConfig.RuntimeService.ResolvedScanInterval(),
 		ObserveSources:          loadedConfig.RuntimeService.ResolvedObserveSources(),
+		PrimaryFailures:         loadedConfig.RuntimeService.ResolvedObservePrimaryFailures(),
+		PrimaryCooldown:         loadedConfig.RuntimeService.ResolvedObservePrimaryCooldown(),
 		Logger:                  logger,
 	})
 
