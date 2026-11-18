@@ -15,6 +15,8 @@ oberth attn assess --dry-run
 
 `status` reports the effective configuration and consent state, never the key. `assess --dry-run` shows the redacted request. Review that request before deciding whether to send runtime information outside the machine; redaction is not a substitute for checking your task text.
 
+For a structured coding task, the existing agent stream can attach observation automatically from explicit runtime scope and return relevant evidence through a bounded native continuation. The caller supplies scope once, rather than asking the person to maintain a long `assess --follow` command. Directly launched agents remain separate: `on` and a matching installed skill do not prove they attached. See the [stream task contract](cli.md#oberth-agent-stream) for metadata, completion and delivery boundaries.
+
 ## Configure and consent separately
 
 Run the following only after deciding to configure a provider. `config` asks for provider, model and hidden key input, then makes one synthetic network probe before saving an owner-only settings file. The probe contains no worktree facts, but still contacts the provider and may incur its charges. If it fails, the existing settings are not replaced. Configuration alone does not enable real assessments.

@@ -1259,6 +1259,20 @@ Production requires the corresponding CLI to be installed; automated tests may s
 `LookPath` pointing at the `engine/internal/agentstream/testdata/fake*` stand-ins for `go test`.
 This build includes live bridges for Codex `app-server`, Claude `stream-json`, OpenCode `acp` and Pi `--mode rpc`; when the CLI is not installed, the first `turn.start` returns `unsupported`.
 
+A stream client can bind a runtime task by adding `runtime` to `turn.start`. The client supplies a short redacted summary and explicit declared service names or exact recorded run IDs in the selected worktree; it must not copy the conversation into the summary. These are evaluation targets, not permission to start services. The bridge supplies their current Runtime facts to the native prompt, reuses existing healthy runs, and never creates a manifest or starts/stops a service. Unknown targets fail before the native turn starts. Without `runtime`, coding continues without observation and emits `runtime.status` with `not_attached` / `scope_required`.
+
+```json
+{"v":1,"type":"turn.start","id":"test-api","text":"Run the integration test","runtime":{"task":"keep API and worker healthy during this test","services":["api"],"run_ids":["run-worker-1"]}}
+```
+
+With existing Attention consent and valid configuration, the bridge attaches one scoped observer for this task, with a fixed read-only evaluation allow-list. Service targets follow the declared service; run IDs never adopt a replacement generation or a same-named foreign run. An explicitly selected registered worker can be observed without a manifest or listening port. No eligible event means no model request. `runtime.status` reports observation, missing consent/configuration, and delivery outcomes separately from a native turn's outcome.
+
+A relevant handoff is rechecked against consent and current facts at the original turn's successful completion, then sent through the existing native structured prompt channel in **at most one continuation turn**. It is not terminal keystroke injection, an in-flight interruption, or action approval. Keep consuming events until this task's `runtime.status` has `terminal: true` (`stopped`, `completed`, or delivery `unavailable`); the original `turn.completed` may precede that continuation. `native_continuation_completed` means the native continuation completed, not that the agent obeyed the advice or fixed the service. A stale handoff is discarded. Interrupt, session close, EOF, SIGINT and SIGTERM cancel/join observation; shared services remain running. Output-write failures also close the owned session.
+
+This attachment is a structured-stream capability, not automatic support for agents launched directly or through `agent run`. Native TTY handoff, permissions and exit semantics there are unchanged. Existing stream clients must supply the scope metadata; installing a skill or turning Attention on alone cannot create it. The bridge does not monitor the continuation itself and never loops through automatic advice turns.
+
+Task-context JSON also accepts `services` and `run_ids` evaluation filters. A service filter follows only that declared service; an ad-hoc failure requires an exact `run_ids` association and is marked `run_only` in the local event. Targets enter the assessment cache identity. Omitting both filters preserves the declared-service scope; it does not authorize arbitrary ad-hoc runs. Runtime task scope is fixed at entry: an ad-hoc run created later must be explicitly associated in a subsequent task, not guessed from its name.
+
 ### Explicit native continuation
 
 `oberth agent plan <provider> --worktree /workspace/project --resume-file /absolute/session-file --json`

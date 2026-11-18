@@ -18,6 +18,8 @@ option-berth does not install hooks, does not register an MCP, does not modify a
 configuration, and does not distribute integration code; the interface is still only the CLI and
 `--json`.
 
+A client that already uses the built-in structured agent stream can attach a bounded runtime task through its existing task protocol instead of maintaining a separate observer script. It must supply explicit scope and consume the runtime task's terminal status; direct/native launches are not silently converted. See the [stream contract](cli.md#oberth-agent-stream).
+
 ## Version prerequisite
 
 The cleanup steps on this page use `down --worktree`, `down --identity`, and `worktrees`, available
