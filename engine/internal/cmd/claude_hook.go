@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/pbkdf2"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -131,11 +132,20 @@ func addClaudeHooks(parent *cobra.Command) {
 func claudeAdapter(root string) claudehook.Adapter {
 	resolved := attnResolvedConsent()
 	client, clientErr := resolved.Client()
-	// Only an opaque configuration identity is kept in the short-lived cursor.
-	hash := sha256.Sum256([]byte(client.Endpoint + "\x00" + client.Model + "\x00" + client.APIKey))
-	identity := hex.EncodeToString(hash[:])
+	// Keep only a slow, worktree/domain-separated configuration identity, never
+	// a fast credential hash. The fixed scope salt is public; this cursor is not
+	// a password verifier. Cost is bounded once per hook/observer startup.
+	var hash []byte
+	var identityErr error
+	if clientErr == nil {
+		hash, identityErr = pbkdf2.Key(sha256.New, client.Endpoint+"\x00"+client.Model+"\x00"+client.APIKey, []byte("oberth/claude-config/v1\x00"+root), 600000, 32)
+	}
+	identity := hex.EncodeToString(hash)
 	a := claudehook.Adapter{Home: paths.Dir(), Root: root, Identity: identity}
 	a.Consent = func() error {
+		if identityErr != nil {
+			return errors.New("configuration_identity_unavailable")
+		}
 		consent := attnResolvedConsent()
 		_, err := consent.Client()
 		if err != nil {

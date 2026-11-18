@@ -99,3 +99,37 @@ func TestClaudeDeclaredExitSurvivesObservationDegradation(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeConfigurationIdentityUsesSlowScopedDerivation(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", filepath.Join(base, "home"))
+	t.Setenv("BERTH_HOME", filepath.Join(base, "state"))
+	t.Setenv("BERTH_ATTN", "1")
+	t.Setenv("BERTH_ATTN_ENDPOINT", "http://127.0.0.1:1/decisions")
+	t.Setenv("BERTH_ATTN_MODEL", "synthetic")
+	t.Setenv("BERTH_ATTN_KEY", "synthetic-local-only")
+	a := claudeAdapter("/synthetic/worktree")
+	if err := a.Consent(); err != nil {
+		t.Fatal(err)
+	}
+	// Fixed synthetic vector independently derived with PBKDF2-HMAC-SHA256,
+	// 600000 rounds and a worktree/domain-separated salt. Never a real key.
+	if a.Identity != "eb60a3a1a20ff7e9ff204f4739c67d42257949fe79a9bd65c2d780fd86eb4cc4" {
+		t.Fatal("configuration identity is not the bounded slow scoped derivation")
+	}
+	if claudeAdapter("/synthetic/worktree").Identity != a.Identity {
+		t.Fatal("same configuration is not stable across hook invocations")
+	}
+	if claudeAdapter("/synthetic/other-worktree").Identity == a.Identity {
+		t.Fatal("configuration identity crossed worktrees")
+	}
+	for _, field := range []string{"BERTH_ATTN_KEY", "BERTH_ATTN_MODEL", "BERTH_ATTN_ENDPOINT"} {
+		t.Run(field, func(t *testing.T) {
+			value := os.Getenv(field)
+			t.Setenv(field, value+"-rotated")
+			if claudeAdapter("/synthetic/worktree").Identity == a.Identity {
+				t.Fatal("configuration change did not revoke old identity")
+			}
+		})
+	}
+}
