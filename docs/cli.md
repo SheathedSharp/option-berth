@@ -306,20 +306,12 @@ truncation, and `files_truncated` being true means the list is only a prefix. Us
 }
 ~~~
 
-<<<<<<< HEAD
 `worktree.manifest_missing` is present and `true` only when no `oberth.yaml` declares this worktree, so
 an empty `services` means "nothing to read" rather than "nothing declared". The full document says the
 same thing as a null `config_path`; the brief drops the path, and without the flag a brief reader
 cannot tell a checkout waiting for `oberth init` from a configured, idle one. The key is absent when a
 manifest exists.
 
-`worktree.ad_hoc_runs` attributes every listener that no running service row already names. The run is
-identified by its run id, not by its name: an `oberth start` run the manifest does not declare, a stale
-generation that still uses a declared service's name, and a declared service's run holding an extra
-port all appear here. Each row carries `name`, `run_id`, `group`, `pid`, the recorded `cmd`, `cwd` and
-`started_at` when the run mirror still has them (absent means unknown), and the sorted `ports` it
-holds. `worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
-=======
 `worktree.ad_hoc_runs` attributes every listener that no running service row already names, plus every
 live run this worktree started that holds no listener at all. The run is identified by its run id, not
 by its name: an `oberth start` run the manifest does not declare, a stale generation that still uses a
@@ -330,7 +322,6 @@ so leaving it out would make it reachable only by scanning the process table. Ea
 (absent means unknown), and the sorted `ports` it holds, which is an empty array for a run holding
 none. A run a running service row already names is not repeated here: the service row is its home.
 `worktree.unowned_ports` is the rest: listeners with no option-berth run, each carrying `port`,
->>>>>>> origin/main
 and `pid` and `command` when the process table supplied them. `ports` stays the flat listener list;
 together, a running service's `port_actual`, `ad_hoc_runs` and `unowned_ports` cover every entry in it.
 A declared service's listener that another process owns is named by that service's `port_holder`; an
