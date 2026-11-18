@@ -19,6 +19,9 @@ class AreasTests(unittest.TestCase):
     def test_cli_contract_docs_still_run_engine(self):
         self.assertEqual(needed(areas.areas_for(["docs/cli.zh.md"])), {"engine"})
 
+    def test_cli_contract_topic_pages_still_run_engine(self):
+        self.assertEqual(needed(areas.areas_for(["docs/cli/facts.md"])), {"engine"})
+
     def test_engine_change_needs_every_engine_area(self):
         self.assertEqual(
             needed(areas.areas_for(["engine/internal/ports/listen.go"])),

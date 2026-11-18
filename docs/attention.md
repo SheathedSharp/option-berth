@@ -16,7 +16,7 @@ oberth attn assess --dry-run
 `status` reports the effective configuration and consent state, never the key. `assess --dry-run` shows the redacted request. Review that request before deciding whether to send runtime information outside the machine; redaction is not a substitute for checking your task text.
 
 
-For native Claude/cld, explicit project hooks can attach the existing runner and return a fresh finding through the official Stop channel. Enable the project once; `on` or a skill alone cannot attach an arbitrary running agent. See the [native hook contract](cli.md#native-claude-project-hooks).
+For native Claude/cld, explicit project hooks can attach the existing runner and return a fresh finding through the official Stop channel. Enable the project once; `on` or a skill alone cannot attach an arbitrary running agent. See the [native hook contract](cli/handoff.md#native-claude-project-hooks).
 
 ## Configure and consent separately
 

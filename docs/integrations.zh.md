@@ -14,7 +14,7 @@ option-berth 不安装 hooks、不注册 MCP、不修改任何工具的配置，
 CLI 与 `--json`。
 
 
-Claude Code 还可通过审阅后的项目设置启用内建 CLI 生命周期处理器，不需要包装脚本，原生终端、权限和答复仍由 Claude 负责。见[项目 hook 合同](cli.zh.md#原生-claude-项目-hooks)；它与下方服务销毁流程不同，不会在任务结束时停共享服务。
+Claude Code 还可通过审阅后的项目设置启用内建 CLI 生命周期处理器，不需要包装脚本，原生终端、权限和答复仍由 Claude 负责。见[项目 hook 合同](cli/handoff.zh.md#原生-claude-项目-hooks)；它与下方服务销毁流程不同，不会在任务结束时停共享服务。
 
 ## 版本前提
 

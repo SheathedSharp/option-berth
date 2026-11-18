@@ -10,13 +10,13 @@ temporary debugging or research tasks as standing requirements.
 
 ## Runtime responsibilities
 
-**Oberth Runtime** is the worktree runtime engine; **Runtime Service** is its local background host (`internal/runtimesvc`). These are responsibility names, not a new product or Go runtime wrapper. Public host names follow the [protocol-3 switch](../cli.md#runtime-service-protocol-3-switch); the product name, public module, home, database schema and origin/license history are not renamed.
+**Oberth Runtime** is the worktree runtime engine; **Runtime Service** is its local background host (`internal/runtimesvc`). These are responsibility names, not a new product or Go runtime wrapper. Public host names follow the [protocol-3 switch](../cli/infrastructure.md#runtime-service-protocol-3-switch); the product name, public module, home, database schema and origin/license history are not renamed.
 
 The internal Go layout follows these responsibilities: `internal/runtimecore` owns pure readiness/generation/projection policy, and `internal/runtimesvc` owns the background host with its `client`, `rpc`, `runsreg` and `groupstart` adapters.
 
 Neither uses the name `runtime`, avoiding confusion with Go's standard library.
 
-The public Go module path is unchanged; the wire/CLI contract is owned by [cli.md](../cli.md#runtime-service-protocol-3-switch).
+The public Go module path is unchanged; the wire/CLI contract is owned by [cli.md](../cli/infrastructure.md#runtime-service-protocol-3-switch).
 
 `runsreg` is the live run authority. `servicefacts` reduces a captured registry/exit set; `groups.ApplyServiceFacts` adapts it and `runtimecore.Project` refreshes the same published declaration rows. `ports` is the system-observation adapter: it contributes listeners and ownership evidence, never a second service lifecycle. `groupstart`, `killer` and existing claims transactions retain execution authority.
 
@@ -34,7 +34,7 @@ The filesystem metadata gate runs before storage sidecars are created.
 
 `Serve` installs only that claimed Store. Bad/future databases fail admission without reset. Producers and hooks finish before `closeStore`, storage leases release next, and the endpoint releases last. Early listen/recovery failure follows the same release boundary.
 
-`runtime.storage.read` reads this same Store through context-aware queries. `cmd.storedRead` uses an existing owner online and the same read-only database offline, with no autostart, copied database or swallowed owner failure. Direct mode never secretly connects. Supported filesystems, cutover and direct-read errors belong to the [CLI contract](../cli.md#runtime-service-protocol-3-switch).
+`runtime.storage.read` reads this same Store through context-aware queries. `cmd.storedRead` uses an existing owner online and the same read-only database offline, with no autostart, copied database or swallowed owner failure. Direct mode never secretly connects. Supported filesystems, cutover and direct-read errors belong to the [CLI contract](../cli/infrastructure.md#runtime-service-protocol-3-switch).
 
 ## Independent lifecycle publication
 
@@ -180,7 +180,7 @@ The command and field contract is [workplace.md](../workplace.md).
 
 ## Native task observation ownership
 
-`claudehook.Adapter` owns only a short-lived delivery lease: worktree/session hash, task generation, selected service/run scope, configuration fingerprint and one pending bounded result. Runtime facts are re-read through the existing owner, never recovered from this cursor. The hook and state locks serialize lifecycle transitions; the observer's separate kernel lock is released only after runner/socket cancellation and join. A dead observer cannot resume a lease. Project enablement, limits and native protocol are defined in the [CLI contract](../cli.md#native-claude-project-hooks).
+`claudehook.Adapter` owns only a short-lived delivery lease: worktree/session hash, task generation, selected service/run scope, configuration fingerprint and one pending bounded result. Runtime facts are re-read through the existing owner, never recovered from this cursor. The hook and state locks serialize lifecycle transitions; the observer's separate kernel lock is released only after runner/socket cancellation and join. A dead observer cannot resume a lease. Project enablement, limits and native protocol are defined in the [CLI contract](../cli/handoff.md#native-claude-project-hooks).
 
 ## Start, stop and port reservations
 
@@ -246,7 +246,7 @@ Lifecycle projection requires no database schema migration or parallel writer.
 
 History-reader and typed live-mirror tests cover persisted record shapes, not host endpoint or wire compatibility.
 
-Protocol 3 changes the public host identifiers and adds database ownership admission; its explicit cutover belongs to the [CLI contract](../cli.md#runtime-service-protocol-3-switch).
+Protocol 3 changes the public host identifiers and adds database ownership admission; its explicit cutover belongs to the [CLI contract](../cli/infrastructure.md#runtime-service-protocol-3-switch).
 
 Never remove a live lock, reset the ledger or restart user services as a recovery shortcut.
 

@@ -19,7 +19,7 @@ configuration, and provides only the explicit CLI handler described below; the i
 `--json`.
 
 
-Claude Code also has a built-in CLI lifecycle handler, enabled only through reviewed project settings. It needs no wrapper scripts and leaves native TTY, permissions and answers with Claude. See the [project hook contract](cli.md#native-claude-project-hooks); it is separate from the service teardown recipes below and never stops shared services at task end.
+Claude Code also has a built-in CLI lifecycle handler, enabled only through reviewed project settings. It needs no wrapper scripts and leaves native TTY, permissions and answers with Claude. See the [project hook contract](cli/handoff.md#native-claude-project-hooks); it is separate from the service teardown recipes below and never stops shared services at task end.
 
 ## Version prerequisite
 

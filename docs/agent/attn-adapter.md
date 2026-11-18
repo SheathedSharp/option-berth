@@ -113,7 +113,7 @@ It reuses scoped redacted summaries, filters their source to the task worktree a
 
 Sequence cursors are relative to the runtime service identity, not the attention artifact revision; disconnect/drop/restart causes a reconnect snapshot wake. `Trigger` retains low-frequency full reconciliation and local configuration checks while connected, and safely falls back to the original polling path when capability or connectivity is absent.
 
-The public timing behavior belongs to [cli.md](../cli.md).
+The public timing behavior belongs to [the CLI contract](../cli/handoff.md).
 
 Do not add a second events process for the same follow session.
 
@@ -291,7 +291,7 @@ use the hashed worktree identity, not the potentially shared basename.
 15–60 second per-poll lease establishes `observing`; historical subscriptions
 remain `recent`. No ledger gives `no_session`; observation failures give `failed`.
 It is present in both documents, because it is the one metric a task-entry read
-acts on. The CLI contract in `docs/cli.md` owns the field meanings. The ledger
+acts on. The CLI contract in `docs/cli/handoff.md` owns the field meanings. The ledger
 never contains raw errors or credentials, and a missing record does not prove no
 external request happened.
 

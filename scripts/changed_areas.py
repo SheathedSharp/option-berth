@@ -21,6 +21,7 @@ AREAS: dict[str, tuple[str, ...]] = {
         "scripts/",
         "docs/cli.md",
         "docs/cli.zh.md",
+        "docs/cli/",
         "install.sh",
         "install.ps1",
         "uninstall.sh",

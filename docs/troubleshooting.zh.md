@@ -4,7 +4,7 @@
 
 ## 先保留证据
 
-在出问题的工作树里运行 `oberth doctor`，再看 `oberth status --json`。保留错误码、选中的工作树和相关服务日志。准备分享前，去掉凭证、环境变量的值和私人路径。`oberth feedback report` 可以准备反馈；收集和提交行为先看[命令参考](cli.zh.md#oberth-feedback)。
+在出问题的工作树里运行 `oberth doctor`，再看 `oberth status --json`。保留错误码、选中的工作树和相关服务日志。准备分享前，去掉凭证、环境变量的值和私人路径。`oberth feedback report` 可以准备反馈；收集和提交行为先看[命令参考](cli/infrastructure.zh.md#oberth-feedback)。
 
 ## 按现象排查
 

@@ -4,7 +4,7 @@ English | [中文](troubleshooting.zh.md)
 
 ## Keep the evidence first
 
-Run `oberth doctor`, then `oberth status --json` in the affected worktree. Keep the error code, selected worktree and relevant service log. Before sharing output, remove credentials, environment values and private paths. `oberth feedback report` can prepare feedback; review its collection and submission behavior in the [reference](cli.md#oberth-feedback).
+Run `oberth doctor`, then `oberth status --json` in the affected worktree. Keep the error code, selected worktree and relevant service log. Before sharing output, remove credentials, environment values and private paths. `oberth feedback report` can prepare feedback; review its collection and submission behavior in the [reference](cli/infrastructure.md#oberth-feedback).
 
 ## Common symptoms
 

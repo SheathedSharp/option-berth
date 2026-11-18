@@ -28,6 +28,6 @@ git worktree remove ../project-feature
 
 ## 先停服务，再删目录
 
-优先在目录仍存在时执行 `down`，再用 Git 移除工作树。如果目录已经删了，用 `oberth worktrees --gone --json` 查保留的身份记录，选准身份后按[命令参考](cli.zh.md)使用 `down --identity`。这里的操作都不会删除应用数据。
+优先在目录仍存在时执行 `down`，再用 Git 移除工作树。如果目录已经删了，用 `oberth worktrees --gone --json` 查保留的身份记录，选准身份后按[命令参考](cli/operations.zh.md)使用 `down --identity`。这里的操作都不会删除应用数据。
 
 多个工作树重名时，不要只凭组名猜目标：选择有歧义会报错，不等于允许停止所有同名项。编程助手应使用[配套 skill](https://github.com/SheathedSharp/option-berth-skill)，并明确指定工作树范围。

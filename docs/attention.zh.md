@@ -15,7 +15,7 @@ oberth attn assess --dry-run
 
 `status` 显示实际生效的配置和同意状态，不显示密钥。`assess --dry-run` 展示脱敏后的请求。请先检查这份内容，再决定是否允许把运行信息发出本机；有脱敏不等于可以不审阅任务文本。
 
-原生 Claude/cld 可在项目明确启用 hooks 后，自动附着现有 runner，并通过官方 Stop 通道交回新鲜发现。项目只需启用一次；单靠 `on` 或 skill 不能附着任意已运行的助手。见[原生 hook 合同](cli.zh.md#原生-claude-项目-hooks)。
+原生 Claude/cld 可在项目明确启用 hooks 后，自动附着现有 runner，并通过官方 Stop 通道交回新鲜发现。项目只需启用一次；单靠 `on` 或 skill 不能附着任意已运行的助手。见[原生 hook 合同](cli/handoff.zh.md#原生-claude-项目-hooks)。
 
 
 ## 配置和同意是两步
