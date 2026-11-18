@@ -1054,29 +1054,6 @@ Windows currently supports plan/list, not native process handoff. Merely finding
 or a particular installed version; a provider failure remains a provider failure, never a silent shell fallback.
 
 
-### oberth agent stream
-
-`oberth agent stream <provider> --worktree <path> [--resume-file <path>]` 启动结构化桥进程：
-stdin 每行一条命令、stdout 每行一个事件，均为带 `"v":1` 的 NDJSON；stderr 只写诊断。
-契约见 `engine/docs/schema/agent-stream.schema.json`。
-`agent list --json` 的 `"stream": true|false` 表示本构建是否包含该 provider 的流式适配器（Codex、Claude Code、OpenCode ACP、Pi RPC）。
-生产环境需已安装对应 CLI；自动化测试可设 `BERTH_AGENT_STREAM_FAKE=<provider>` 使用纯 NDJSON 假驱动，或对
-`go test` 注入 `LookPath` 指向 `engine/internal/agentstream/testdata/fake*` 替身。
-本构建含 Codex `app-server`、Claude `stream-json`、OpenCode `acp` 与 Pi `--mode rpc` live 桥；未安装 CLI 时首轮 `turn.start` 返回 `unsupported`。
-结构化调用方可在 `turn.start` 中加入 `runtime`，把当前任务接到 Runtime。调用方提供简短、脱敏的任务摘要，以及所选工作树中已声明的服务名或已登记的精确运行 ID；不要把整段对话复制成摘要。这些目标只限定评估范围，不授予启动服务的权限。桥接器把目标当前的 Runtime 事实交给原生助手，复用已有健康运行，不创建清单、不启停服务。目标不属于当前工作树或不存在时，在原生轮次开始前拒绝。没有 `runtime` 时照常编码、不启动观察，并输出 `runtime.status`，说明 `not_attached` / `scope_required`。
-
-```json
-{"v":1,"type":"turn.start","id":"test-api","text":"Run the integration test","runtime":{"task":"keep API and worker healthy during this test","services":["api"],"run_ids":["run-worker-1"]}}
-```
-
-已有 Attention 同意且配置可用时，桥接器自动为本任务附着一个限定范围的观察器，使用代码固定的只读评估选项。服务目标跟随该声明服务；运行 ID 不认领新一代运行或其他工作树的同名运行。明确选中的已登记 worker 即使没有清单、没有监听端口，也可观察。无符合条件的异常就不请求模型。`runtime.status` 分开说明观察、缺少同意或配置，以及反馈投递结果，不与原生轮次结果混为一谈。
-
-相关建议会在原始轮次成功结束时，重新核对同意状态与当前事实，再经已有原生结构化提示通道交回助手，**最多追加一轮**。它不向终端注入按键、不打断正在执行的轮次，也不批准任何操作。调用方须继续消费事件，直到本任务的 `runtime.status` 带有 `terminal: true`（`stopped`、`completed` 或投递失败的 `unavailable`）；原始 `turn.completed` 后仍可能有这轮反馈。`native_continuation_completed` 只表示原生反馈轮次完成，不证明助手采纳建议或修好了服务。过期建议直接丢弃。中断、关闭会话、EOF、SIGINT、SIGTERM 会取消并等待观察器退出；共享服务继续运行。输出写入失败也会关闭自有会话。
-
-这种自动附着只适用于结构化 stream，不会自动接管直接运行或通过 `agent run` 打开的助手；后者的原生 TTY、权限与退出语义不变。现有 stream 调用方仍须传入范围元数据，安装 skill 或只打开 Attention 并不能生成它。桥接器不观察追加的反馈轮次，也不会自动循环追加建议。
-
-
-任务上下文 JSON 也接受 `services`、`run_ids` 评估筛选。服务筛选只跟随该声明服务；临时运行的失败必须用精确 `run_ids` 明确关联，本地事件带有 `run_only` 标记。目标集合计入评估缓存身份。两项都省略时，保留声明服务的范围，不意味着允许评估任意临时运行。运行任务的范围在入口固定：之后才创建的临时运行须在后续任务中明确关联，不能按名称猜测归属。
 
 ### Explicit native continuation / 显式原生续接
 

@@ -41,7 +41,7 @@ Cancellation, failure and partial progress remain distinct. A successful stop re
 
 The CLI's human output and JSON describe the same state. Coding assistants learn the operating rules from the [separate skill](https://github.com/SheathedSharp/option-berth-skill); orchestrators call explicit setup/run/cleanup commands as described in [integrations](integrations.md). oberth does not install their hooks, register MCP integrations or edit their settings.
 
-External agent sessions remain the external provider's responsibility: login, model, approvals, tool execution and restoration are not reimplemented here. Messages use exact arguments or native terminal input, not hidden shell interpolation. The structured stream bridge relays approval requests; it never auto-approves, weakens provider permissions or restores another worktree's last session. Available providers are reported by `agent list --json`, not promised from a static marketing list.
+External agent sessions remain the external provider's responsibility: login, model, approvals, tool execution and restoration are not reimplemented here. Messages use exact arguments or native terminal input, not hidden shell interpolation. Oberth never auto-approves, weakens provider permissions or restores another worktree's last session. Available providers are reported by `agent list --json`, not promised from a static marketing list.
 
 ## What this does not promise
 

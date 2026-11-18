@@ -3,12 +3,8 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/agentlaunch"
-	"github.com/sheathedsharp/option-berth/engine/internal/agentstream"
 	"github.com/spf13/cobra"
 )
 
@@ -17,9 +13,6 @@ func newAgentCommand() *cobra.Command {
 	var listJSON bool
 	list := &cobra.Command{Use: "list", Args: cobra.NoArgs, Short: "List supported agents without running them", RunE: func(cmd *cobra.Command, _ []string) error {
 		providers := agentlaunch.Providers(nil)
-		for i := range providers {
-			providers[i].Stream = agentstream.Supported(providers[i].ID)
-		}
 		if listJSON {
 			return printJSON(struct {
 				Providers []agentlaunch.Provider `json:"providers"`
@@ -36,34 +29,6 @@ func newAgentCommand() *cobra.Command {
 	}}
 	list.Flags().BoolVar(&listJSON, "json", false, "Output JSON")
 	command.AddCommand(list)
-	var streamWorktree, streamResume string
-	stream := &cobra.Command{
-		Use:   "stream <provider>",
-		Args:  cobra.ExactArgs(1),
-		Short: "Structured agent bridge: NDJSON commands on stdin, events on stdout",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !agentstream.Supported(args[0]) {
-				return usageError{fmt.Errorf("agent stream is not available for provider %q", args[0])}
-			}
-			// Each turn is recorded into this worktree's active workplace. It
-			// is a side channel: a record that cannot be written never
-			// interrupts the session the client is running.
-			recorder := startRecording(streamWorktree)
-			defer recorder.Close()
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			return agentstream.Run(agentstream.Options{
-				Context:  ctx,
-				Provider: args[0], Worktree: streamWorktree, ResumeFile: streamResume,
-				Observer:       recorder.bridgeEvents(args[0]),
-				RuntimeWatch:   watchAgentRuntime,
-				RuntimePrepare: prepareAgentRuntime,
-			}, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
-	}
-	stream.Flags().StringVar(&streamWorktree, "worktree", "", "Explicit selected checkout directory")
-	stream.Flags().StringVar(&streamResume, "resume-file", "", "Explicit original provider session file/export")
-	command.AddCommand(stream)
 	for _, verb := range []string{"plan", "run"} {
 		verb := verb
 		var worktree, mode, prompt, resumeFile string
@@ -99,9 +64,6 @@ func newAgentCommand() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s mode in %s\nExecutable: %s\nArguments are not printed; use --json to inspect locally.\n", plan.Provider, plan.Mode, plan.Worktree, plan.Executable)
 				return nil
-			}
-			if attnResolvedConsent().Enabled {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Attention is permitted but not attached to a native handoff; task-scoped attachment requires a supported agent stream client with explicit runtime scope.")
 			}
 			return executeAgent(plan)
 		}}

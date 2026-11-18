@@ -1,3 +1,0 @@
-{"v":1,"type":"turn.start","id":"task-1","text":"Run the selected integration test","runtime":{"task":"keep API healthy during test","services":["api"],"run_ids":["run-worker-1"]}}
-{"v":1,"type":"runtime.status","task":"task-1","status":"observing","reason":"no_eligible_event","services":["api"],"run_ids":["run-worker-1"],"terminal":false}
-{"v":1,"type":"runtime.status","task":"task-1","status":"completed","reason":"native_continuation_completed","services":["api"],"run_ids":["run-worker-1"],"terminal":true}

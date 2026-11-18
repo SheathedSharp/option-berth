@@ -13,7 +13,6 @@ oberth workplace show --limit 20</code></pre>
 <h2 id="automatic">What gets recorded</h2>
 <ul>
   <li><code>oberth start</code> writes the run into the current workplace. The Runtime Service closes a detached run when it records that run's exit.</li>
-  <li><code>oberth agent stream</code> writes one entry per round: <code>turn.started</code> opens it, and <code>turn.completed</code> closes it with the outcome the provider reported.</li>
   <li><code>oberth workplace record</code> writes what the engine cannot see: an agent's own attempts, the client's interactive shell, a native agent. Reporting the same <code>--id</code> again updates the entry, so the start and the end of one piece of work may arrive in either order.</li>
 </ul>
 
