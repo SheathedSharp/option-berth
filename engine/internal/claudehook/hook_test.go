@@ -239,3 +239,20 @@ func TestWorkerCancellationDoesNotLeaveConsumableFeedback(t *testing.T) {
 		t.Fatalf("canceled worker delivered a result: %+v %v", r, e)
 	}
 }
+
+func TestObserverCannotRebindLeaseToAnotherWorktree(t *testing.T) {
+	a, _ := fixture(t)
+	key := Key(a.Root, "s1")
+	lease := Lease{WorktreeID: model.WorktreeID(a.Root), Generation: newGeneration(), Expires: time.Now().Add(time.Second), Active: true, Status: "starting", Task: a.Task, Consent: a.Identity}
+	if err := a.save(key, lease); err != nil {
+		t.Fatal(err)
+	}
+	other := *a
+	other.Root = t.TempDir()
+	called := false
+	other.Observe = func(context.Context, model.TaskContext, func(runner.Output) error) error { called = true; return nil }
+	_ = other.Run(context.Background(), key, lease.Generation)
+	if called {
+		t.Fatal("lease rebound to another worktree")
+	}
+}

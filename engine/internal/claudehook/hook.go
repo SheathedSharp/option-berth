@@ -41,6 +41,7 @@ type Context struct {
 }
 type Feedback struct{ EventID, Revision, Until, Body string }
 type Lease struct {
+	WorktreeID string            `json:"worktree_id"`
 	Consent    string            `json:"consent_identity"`
 	Generation string            `json:"generation"`
 	Expires    time.Time         `json:"expires"`
@@ -256,7 +257,7 @@ func (a Adapter) Handle(ctx context.Context, in Input) (Response, error) {
 	return response, nil
 }
 func (a Adapter) submit(ctx context.Context, key string) (Response, error) {
-	s := Lease{Generation: newGeneration(), Consent: a.Identity, Task: a.Task, Status: "not_attached"}
+	s := Lease{Generation: newGeneration(), WorktreeID: model.WorktreeID(a.Root), Consent: a.Identity, Task: a.Task, Status: "not_attached"}
 	s.Task.Task = Summary
 	d := a.Duration
 	if d <= 0 {
@@ -337,6 +338,9 @@ func (a Adapter) submit(ctx context.Context, key string) (Response, error) {
 	}
 }
 func (a Adapter) consume(ctx context.Context, s Lease) Response {
+	if s.WorktreeID != model.WorktreeID(a.Root) {
+		return message("stopped", "worktree_mismatch")
+	}
 	if s.Consumed {
 		return message("stopped", "already_consumed")
 	}
@@ -391,7 +395,7 @@ func (a Adapter) Run(ctx context.Context, key, generation string) error {
 	if e != nil {
 		return e
 	}
-	if s.Generation != generation || !s.Active || s.Status != "starting" || !time.Now().Before(s.Expires) {
+	if s.WorktreeID != model.WorktreeID(a.Root) || s.Generation != generation || !s.Active || s.Status != "starting" || !time.Now().Before(s.Expires) {
 		return errors.New("observer lease unavailable")
 	}
 	started := false
