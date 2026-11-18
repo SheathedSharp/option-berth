@@ -63,6 +63,15 @@ type Options struct {
 	// Ignored when Scanner is set, for the same reason as the two intervals.
 	ObserveSources int
 
+	// PrimaryFailures and PrimaryCooldown are
+	// `runtime_service.observe_primary_failures` and `.observe_primary_cooldown`:
+	// how many failures in a row of the platform's primary collector open the
+	// breaker that stops running it, and how long it then skips it before one
+	// real probe. Zero failures turns the breaker off. Ignored when Scanner is
+	// set.
+	PrimaryFailures int
+	PrimaryCooldown time.Duration
+
 	// Collaborators. Logger is required in production and may be nil in tests,
 	// which get a discard logger.
 	Logger  *slog.Logger
@@ -168,6 +177,8 @@ func (s *Server) scannerFor(opts Options) *scanner.Loop {
 		StatsInterval:         opts.StatsInterval,
 		ScanInterval:          opts.ScanInterval,
 		SourceLimit:           opts.ObserveSources,
+		PrimaryFailures:       opts.PrimaryFailures,
+		PrimaryCooldown:       opts.PrimaryCooldown,
 	})
 }
 

@@ -125,8 +125,8 @@ func TestNarrowPartialRowsKeepTheCoverageVerdict(t *testing.T) {
 	}
 	l := New(Options{
 		RuntimeServiceVersion: "test",
-		ScanSource: func(context.Context, Include) ([]ports.ListeningPort, string, error) {
-			return partial.Rows, "lsof", partial
+		ScanSource: func(context.Context, Include) (ports.Read, error) {
+			return ports.Read{Rows: partial.Rows, Source: "lsof"}, partial
 		},
 	})
 
