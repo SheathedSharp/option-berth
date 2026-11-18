@@ -62,11 +62,13 @@ Use the [documentation index](index.md) to select a task. Below are the rules ev
   N is clamped to the platform's chain length (two on macOS and Linux, one on Windows) and publishes
   `observation.sources`, the collectors that contributed, in chain order, while `observation.source`
   stays empty. A one-rung chain stays a single read however large N is: neither field is set. A
-  collector that read rows contributes them; one that ran clean and saw nothing
-  contributes its name alone; one that failed contributes nothing, so a failing rung can never turn
-  an unread port into an absent one. A merged table is always narrow — its rows are facts, a port
-  missing from it is unknown rather than free, `machine[].listening_known` follows the same rule as
-  for a named source, and its `detail` names the collectors it came from.
+  collector that read rows contributes them and names itself on each one in `ports[].source`; one
+  that ran clean and saw nothing contributes its name alone; one that failed contributes nothing, so
+  a failing rung can never turn an unread port into an absent one. A row's collector is what makes
+  the row weighable: the rungs cover different sockets, so the table-level `observation.sources`
+  alone cannot say which table a given row came from. A merged table is always narrow — its rows are
+  facts, a port missing from it is unknown rather than free, `machine[].listening_known` follows the
+  same rule as for a named source, and its `detail` names the collectors it came from.
 - `observation.degraded_since` and `observation.recovered_at` are RFC 3339 times maintained by the
   Runtime Service. The first is when the published observation stopped being a whole read of the
   primary table; the second is when a healthy run began again after such a degradation, and it stays

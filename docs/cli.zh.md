@@ -62,10 +62,11 @@
   由 `observation.source` 写明答话的那一级；大于 1 的 N 会被裁到本平台采集链的长度（macOS 和
   Linux 为 2，Windows 为 1），并发布 `observation.sources`——按链顺序列出参与合并的采集器，
   此时 `observation.source` 为空。只有一级的链无论 N 多大都仍是单源读，两个字段都不出现。
-  读到行的采集器贡献这些行；跑干净却什么都没看到的只贡献名字；
-  硬失败什么都不贡献，所以失败的一级永远不能把没读到的端口变成“没有监听”。合并表一律是窄表：
-  表里的行是事实，缺失的端口是未知而不是空闲，`machine[].listening_known` 与有名字的 source
-  同一规则，`detail` 写明这轮由哪些采集器合并而来。
+  读到行的采集器贡献这些行，并在每一行的 `ports[].source` 上写自己的名字；跑干净却什么都没
+  看到的只贡献名字；硬失败什么都不贡献，所以失败的一级永远不能把没读到的端口变成“没有监听”。
+  行上的采集器决定了这一行能怎么被信任：各级覆盖的 socket 不同，表级的 `observation.sources`
+  本身说不出某一行出自哪张表。合并表一律是窄表：表里的行是事实，缺失的端口是未知而不是空闲，
+  `machine[].listening_known` 与有名字的 source 同一规则，`detail` 写明这轮由哪些采集器合并而来。
 - `observation.degraded_since` 与 `observation.recovered_at` 是由 Runtime Service 维护的
   RFC 3339 时间。前者是已发布的观察不再由主采集器整表读出的起始时刻；后者是这样的降级之后
   重新开始健康运行的时刻，并一直保留到下一次降级。`checked_at` 只是最近一次检查的时刻，不是

@@ -48,7 +48,9 @@ func ScanContextSources(ctx context.Context, limit int) ([]ListeningPort, []stri
 //   - readable rows contribute the rows and the name, whether the pass was clean
 //     or partial: a row that was read is a fact about this machine, and a
 //     partial pass keeps its verdict so the union is published as partial
-//     rather than as a clean table;
+//     rather than as a clean table. Each of those rows carries the rung's name
+//     in Source, so the table-level contributor list never has to be matched
+//     against rows that do not say where they came from;
 //   - a clean table with no row contributes its name and no rows — the collector
 //     looked and saw nothing, which is not the same as not having looked, and
 //     the self-probe is still what decides what that silence means;
@@ -80,7 +82,7 @@ func collectListenersSources(platform string, run listenerCommand, limit int) ([
 		}
 		switch {
 		case len(rows) > 0:
-			merged.add(rows)
+			merged.add(rows, rung.Name)
 			sources = append(sources, rung.Name)
 			if err != nil {
 				// A partial pass still read rows, but the rest of its table is
@@ -149,16 +151,21 @@ func newRowUnion() *rowUnion {
 	return &rowUnion{bySocket: make(map[socketID]int)}
 }
 
-// add folds one collector's readable rows into the union.
+// add folds one collector's readable rows into the union and names that
+// collector on every row it contributes: in a merged table the provenance of a
+// row is a fact about the row, and only the union knows which rung it came from.
 //
 // A duplicate keeps the row that names its owner: a table without the pid still
 // proves the port is listening but not who holds it, and learning what the
-// other collector missed is the reason to read it. When both rows name an
-// owner, the earlier rung wins — it is the more authoritative table wherever a
-// chain has an order, and two owners for one socket is a contradiction this
-// product does not resolve by guessing.
-func (u *rowUnion) add(rows []ListeningPort) {
+// other collector missed is the reason to read it. The row that replaces
+// another carries its own collector too — the reader must be able to weigh the
+// owner against the table that reported it. When both rows name an owner, the
+// earlier rung wins — it is the more authoritative table wherever a chain has
+// an order, and two owners for one socket is a contradiction this product does
+// not resolve by guessing.
+func (u *rowUnion) add(rows []ListeningPort, source string) {
 	for _, row := range rows {
+		row.Source = source
 		id := socketID{port: row.Port, address: row.BindAddress, ipVersion: row.IPVersion}
 		position, seen := u.bySocket[id]
 		if !seen {

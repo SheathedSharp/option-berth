@@ -23,6 +23,7 @@ or renaming one.
 | `observation.sources` | `status` | Every collector a merged table came from, in chain order; present only for a merged read, and like `source` it means a missing port is unknown, not free. |
 | `observation.degraded_since` | `status` | When the current degradation began; empty while the primary collector reads the whole table. |
 | `observation.recovered_at` | `status` | When the current healthy run began after a degradation; empty when nothing was degraded. |
+| `ports[].source` | `status` | The collector that produced this row; present only for a merged read, where each rung contributed some of the rows. |
 | `machine[].listening_known` | `status` | Whether `listening` was observed; false means the table cannot see that port's owner. |
 | `attn_path` | `status` | The derived handoff file for the current abnormality; absent when there is none. |
 | `attn` | `status` | Whether that handoff can be assessed now: `enabled`, fixed `reason`, `assessment` (`assessed`, `pending` or `unavailable`). |

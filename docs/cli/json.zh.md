@@ -22,6 +22,7 @@
 | `observation.sources` | `status` | 合并表由哪些采集器按链顺序合成；只在合并读时出现，与 `source` 一样表示缺失的端口是未知，不是空闲。 |
 | `observation.degraded_since` | `status` | 当前这次降级从何时开始；主采集器整表读出时为空。 |
 | `observation.recovered_at` | `status` | 降级之后当前这段健康运行从何时开始；从未降级时为空。 |
+| `ports[].source` | `status` | 产出这一行的采集器；只在合并读时出现，此时每一级各贡献了其中一部分行。 |
 | `machine[].listening_known` | `status` | `listening` 是否是观察到的；false 表示这张表看不到该端口的所有者。 |
 | `attn_path` | `status` | 当前异常的派生交接文件；没有异常时缺省。 |
 | `attn` | `status` | 这份交接现在能否被评估：`enabled`、固定 `reason`、`assessment`（`assessed`、`pending` 或 `unavailable`）。 |
