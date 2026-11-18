@@ -256,7 +256,7 @@ func ClassifyAll(f Facts) []Event {
 		if s.RunID != "" {
 			declaredRuns[s.RunID] = true
 		}
-		if s.LastExit != nil {
+		if !s.Running && s.LastExit != nil {
 			declaredRuns[s.LastExit.RunID] = true
 		}
 	}

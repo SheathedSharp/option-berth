@@ -44,3 +44,16 @@ func TestPortlessTaskRunFailureRequiresExactAssociation(t *testing.T) {
 		t.Fatal("normal stop became anomaly")
 	}
 }
+
+func TestExactOldRunIsNotHiddenByHealthyReplacement(t *testing.T) {
+	old := &Exit{RunID: "old-worker", Reason: "crashed", Code: 7}
+	facts := Facts{WorktreeRoot: "/synthetic/worktree", Services: []Service{{Name: "worker", Running: true, RunID: "new-worker", LastExit: old}}, Runs: []Service{{Name: "worker", RunID: "old-worker", LastExit: old}}}
+	events := ClassifyAll(facts)
+	got, ok := Select(Artifact{Events: events}, nil, []string{"old-worker"})
+	if !ok || len(got.Events) != 1 || got.Event.RunID != "old-worker" {
+		t.Fatalf("healthy replacement hid selected old run: %+v", events)
+	}
+	if _, ok := Select(Artifact{Events: events}, []string{"worker"}, nil); ok {
+		t.Fatal("service selector adopted the old generation")
+	}
+}
