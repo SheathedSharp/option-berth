@@ -161,6 +161,9 @@ func TestClaudeNativeLifecycleConsumesReadonlyFinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !bytes.Contains(settings, []byte(`"onFailure": "block"`)) {
+		t.Fatal("task boundary must fail closed")
+	}
 	if err = os.Mkdir(filepath.Join(root, ".claude"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +267,29 @@ func TestClaudeNativeLifecycleConsumesReadonlyFinding(t *testing.T) {
 		if current := load(); current.Active || !current.Consumed || current.Pending != nil {
 			t.Fatalf("real process retained delivery: %+v", current)
 		}
+	}
+
+	// Failed task-boundary hook must not allow a new native request to consume
+	// the previous generation. This is the actual 2.1.322 onFailure protocol.
+	var broken map[string]any
+	if err = json.Unmarshal(settings, &broken); err != nil {
+		t.Fatal(err)
+	}
+	taskHook := broken["hooks"].(map[string]any)["UserPromptSubmit"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	taskHook["command"] = "'" + strings.ReplaceAll(binary, "'", "'\"'\"'") + "' agent claude-hook --invalid-on-purpose"
+	bad, _ := json.Marshal(broken)
+	if err = os.WriteFile(filepath.Join(root, ".claude", "settings.json"), bad, 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := nativeCalls.Load()
+	blockCtx, blockCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer blockCancel()
+	blocked := exec.CommandContext(blockCtx, native, "-p", "SYNTHETIC prompt must not enter native model", "--model", "fake", "--setting-sources", "project", "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
+	blocked.Dir = root
+	blocked.Env = env
+	blockedOut, _ := blocked.CombinedOutput()
+	if blockCtx.Err() != nil || nativeCalls.Load() != before {
+		t.Fatalf("failed boundary did not block prompt: calls=%d->%d %s", before, nativeCalls.Load(), blockedOut)
 	}
 
 	t.Log("real Claude consumed one scoped read-only finding through Stop JSON; visible native answer returned; observer reclaimed; shared fake Runtime retained")

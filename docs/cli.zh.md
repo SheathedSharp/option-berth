@@ -1066,7 +1066,7 @@ oberth agent claude-hook --project "$PWD" --service api \
   --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m --print-config
 ```
 
-该命令只打印 JSON。审阅后把其中 `hooks` 合入所选项目的 `.claude/settings.json`，不要覆盖其他设置；按 Claude 正常的项目信任流程开启新的原生会话。命令不写设置、不安装全局 hook，也不更改 Attention 同意状态。[示例配置](../examples/claude-hooks/settings.example.json) 给出最小结构；可执行文件不在常规 PATH 时优先使用生成结果。已安装的 skill 一致不能证明 hooks 已执行。
+该命令只打印 JSON。审阅后把其中 `hooks` 合入所选项目的 `.claude/settings.json`，不要覆盖其他设置；按 Claude 正常的项目信任流程开启新的原生会话。命令不写设置、不安装全局 hook，也不更改 Attention 同意状态。保留 `UserPromptSubmit` 的 `onFailure: "block"`：若任务入口失败或超时，应阻止该 prompt，而不是让后续 Stop 消费上个任务的租约；该行为依赖已验证版本的官方协议。[示例配置](../examples/claude-hooks/settings.example.json) 给出最小结构；可执行文件不在常规 PATH 时优先使用生成结果。已安装的 skill 一致不能证明 hooks 已执行。
 
 `--project` 必填，必须与 hook 输入解析到同一 worktree。`--service` 选声明服务；`--run` 选已登记的精确运行 ID，包括无端口 worker；两者都接受逗号分隔值。不认领同名陌生进程或替换代际的临时运行。`--authorize` 是固定只读评估选项的明确子集，不是工具或操作许可。范围在租约内固定；后来创建的临时运行需要在后续项目/任务配置中明确关联。不生成清单、不扫描 home、不启动缺失服务。已有 Runtime 必须认识所选项目；服务、项目或上下文不可用时返回 `runtime_context_unavailable`，不会转为全机扫描。hook 不读源码、git diff 或日志正文。任务确实需要服务时仍走已有授权的 `up`/`start`，健康的既有运行作为事实复用。
 

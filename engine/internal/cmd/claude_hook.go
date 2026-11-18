@@ -89,16 +89,21 @@ func addClaudeHooks(parent *cobra.Command) {
 			argv[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 		}
 		type entry struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-			Timeout int    `json:"timeout"`
+			Type      string `json:"type"`
+			Command   string `json:"command"`
+			Timeout   int    `json:"timeout"`
+			OnFailure string `json:"onFailure,omitempty"`
 		}
 		type group struct {
 			Hooks []entry `json:"hooks"`
 		}
 		hooks := map[string][]group{}
 		for _, event := range []string{"UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"} {
-			hooks[event] = []group{{Hooks: []entry{{Type: "command", Command: strings.Join(argv, " "), Timeout: 10}}}}
+			failure := ""
+			if event == "UserPromptSubmit" {
+				failure = "block"
+			}
+			hooks[event] = []group{{Hooks: []entry{{Type: "command", Command: strings.Join(argv, " "), Timeout: 10, OnFailure: failure}}}}
 		}
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
