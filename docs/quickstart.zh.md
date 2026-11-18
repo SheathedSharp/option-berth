@@ -37,6 +37,6 @@ oberth down
 
 ## 换成自己的项目
 
-可先用 `oberth init` 生成起始配置，再逐项检查 `oberth.yaml`：运行目录、命令、依赖、端口和健康检查必须符合项目实际。模型可以起草配置，但不能替你批准采用。字段说明见[配置参考](cli.zh.md#清单和状态的边界)，接入方法见[工具接入](integrations.zh.md)。
+可先用 `oberth init` 生成起始配置，再逐项检查 `oberth.yaml`：运行目录、命令、依赖、端口和健康检查必须符合项目实际。模型可以起草配置，但不能替你批准采用。字段说明见[配置参考](cli/declaration.zh.md#清单和状态的边界)，接入方法见[工具接入](integrations.zh.md)。
 
 仓库里的 [Hello Worktree](../examples/hello-worktree/README.md)还演示了 API 健康检查和没有监听端口的后台任务。要同时运行两个分支，继续读[多工作树使用](worktrees.zh.md)。

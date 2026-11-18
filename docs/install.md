@@ -9,7 +9,7 @@ The script and manual-package methods below are alternatives, not a sequence. Fi
 This page covers installing, upgrading and uninstalling the engine CLI only. The coding-agent skill is an
 independent product distributed from its own repository.
 
-Protocol 3 is a breaking host-interface switch. Before replacing an older installation, use that older host's matching CLI to stop it normally. New commands cannot stop old endpoints; do not delete locks, sockets or data to force a second instance. Persistent data stays in the same home/database. See [the switch contract](cli.md#runtime-service-protocol-3-switch).
+Protocol 3 is a breaking host-interface switch. Before replacing an older installation, use that older host's matching CLI to stop it normally. New commands cannot stop old endpoints; do not delete locks, sockets or data to force a second instance. Persistent data stays in the same home/database. See [the switch contract](cli/infrastructure.md#runtime-service-protocol-3-switch).
 
 ## One-line script (macOS / Linux)
 
