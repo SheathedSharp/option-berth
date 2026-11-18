@@ -69,6 +69,21 @@ Use the [documentation index](index.md) to select a task. Below are the rules ev
   alone cannot say which table a given row came from. A merged table is always narrow — its rows are
   facts, a port missing from it is unknown rather than free, `machine[].listening_known` follows the
   same rule as for a named source, and its `detail` names the collectors it came from.
+- `runtime_service.observe_primary_failures` (default 3) and
+  `runtime_service.observe_primary_cooldown` (default 60s) bound how long the Runtime Service keeps
+  paying for a primary collector that never works. After that many failures in a row the primary is
+  not run for one cooldown and the alternatives answer every scan; when the cooldown ends exactly one
+  real read of the primary is made, and that probe closes the breaker on success or reopens it on
+  failure; a probe the caller withdrew learned nothing and closes nothing. A skipped primary changes
+  no fact: `observation.source` or `observation.sources` still name who answered,
+  `observation.degraded_since` does not move, and absence from that table stays unknown, exactly as
+  it is for a named source. Its `detail` gains one sentence saying the primary did not run, how many
+  failures in a row it has and when it is retried, so a reader can tell a skipped attempt from a
+  collector that answered because it had recovered. A chain with a single collector is never
+  skipped — there is no alternative to read instead — and
+  `observe_primary_failures: 0` turns the breaker off, so every scan pays for the primary again. The
+  breaker is per-process state: nothing about it is written to the database or to `oberth.yaml`, and
+  a restarted Runtime Service tries the primary again.
 - `observation.degraded_since` and `observation.recovered_at` are RFC 3339 times maintained by the
   Runtime Service. The first is when the published observation stopped being a whole read of the
   primary table; the second is when a healthy run began again after such a degradation, and it stays
