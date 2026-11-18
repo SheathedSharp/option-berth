@@ -164,14 +164,19 @@ else
 	"$HOME"/*) expr='$HOME'"${DIR#"$HOME"}" ;;
 	*) expr="$DIR" ;;
 	esac
+	# Two forms: the bare prepend older installs wrote, and the guarded one that
+	# keeps a shell reading several startup files from putting the directory on
+	# PATH twice. Both belong to this project, so both are removed.
 	line="export PATH=\"$expr:\$PATH\""
+	guarded="case \":\$PATH:\" in *\":$expr:\"*) ;; *) export PATH=\"$expr:\$PATH\" ;; esac"
 	comment="# option-berth CLI (installed in $expr)"
 	changed=""
 	for f in .zshrc .zshenv .bashrc .bash_profile .bash_login .profile; do
 		[ -f "$HOME/$f" ] || continue
 		tmp="$HOME/.$f.berth-uninstall.$$"
-		if awk -v line="$line" -v comment="$comment" -v expr="$expr" '
+		if awk -v line="$line" -v guarded="$guarded" -v comment="$comment" -v expr="$expr" '
 			$0 == line { next }
+			$0 == guarded { next }
 			$0 == comment { next }
 			$0 ~ /^# option-berth/ && index($0, expr) { next }
 			{ print }

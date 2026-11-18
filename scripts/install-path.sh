@@ -25,7 +25,12 @@ case "$dir" in
 "$HOME"/*) expr='$HOME'"${dir#"$HOME"}" ;;
 *) expr="$dir" ;;
 esac
-line="export PATH=\"$expr:\$PATH\""
+# 这一行在会话内幂等：目录已经在 PATH 里就不再前置。每个文件各判各的只保证「同一个
+# 文件不会写两次」，挡不住一个 shell 读多个文件 —— 交互式 zsh 先读 .zshenv 再读
+# .zshrc，bash 的登录 shell 读 .bash_profile，两者都可能 source .bashrc。裸前置写进
+# 两个文件，同一个会话就把同一个目录放上 PATH 两遍。加个判断后，第二个文件的那一行
+# 自己变成空操作；已经手工配过的人也不会再多一条。
+line="case \":\$PATH:\" in *\":$expr:\"*) ;; *) export PATH=\"$expr:\$PATH\" ;; esac"
 
 # 看一个文件里有没有真的把目录写进 PATH。注释里提到目录不算：旧安装器留下的
 # 注释（# code-berth ... $HOME/.local/bin）曾让这里误判为已配置，结果只写了注释、

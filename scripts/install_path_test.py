@@ -64,6 +64,30 @@ class InstallPathTests(unittest.TestCase):
             self.assertEqual(rc.read_bytes(), installed)
             self.assertEqual(installed.count(b"export PATH="), 1)
 
+    def test_one_shell_session_never_gets_the_directory_twice(self):
+        # An interactive zsh reads .zshenv and then .zshrc. Writing a bare
+        # prepend into both put the same directory on PATH twice, so the
+        # installer has to leave a line that is a no-op once PATH already has it.
+        pairs = ((".zshenv", ".zshrc"), (".bash_profile", ".bashrc"))
+        for first, second in pairs:
+            with self.subTest(files=(first, second)), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                for name in (first, second):
+                    (home / name).write_text("# user configuration\n")
+                result = self.run_installer(home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                env = {"PATH": "/usr/bin:/bin", "HOME": str(home)}
+                session = subprocess.run(
+                    ["sh", "-c", f'. "$HOME/{first}"; . "$HOME/{second}"; printf %s "$PATH"'],
+                    env=env, capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(session.returncode, 0, session.stderr)
+                entries = session.stdout.split(":")
+                self.assertEqual(
+                    entries.count(str(home / ".local" / "bin")), 1,
+                    f"{first} and {second} both ran in one session: {session.stdout}",
+                )
+
     def test_custom_directory_is_used_for_detection(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

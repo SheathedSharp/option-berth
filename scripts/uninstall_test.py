@@ -134,6 +134,22 @@ class UninstallTests(unittest.TestCase):
         self.assertFalse((self.data / "LICENSE").exists())
         self.assertFalse((self.data / "licenses").exists())
 
+    def test_removes_the_guarded_path_line(self):
+        # The installer now writes a guarded line so the same directory cannot
+        # land on PATH twice in one session; the uninstaller has to know it.
+        rc = self.home / ".zshrc"
+        rc.write_text(
+            "# user configuration\n"
+            "export EDITOR=vi\n"
+            "# option-berth CLI (installed in $HOME/.local/bin)\n"
+            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) '
+            'export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
+        )
+        result = self.run_uninstaller()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(rc.read_text(), "# user configuration\nexport EDITOR=vi\n")
+        self.assertIn("PATH       removed from .zshrc", result.stdout)
+
     def test_no_installer_line_reports_nothing_changed(self):
         rc = self.home / ".zshrc"
         rc.write_text("# user configuration\n")
