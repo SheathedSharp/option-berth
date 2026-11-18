@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 )
 
 func main() {
@@ -94,7 +96,7 @@ func runAppServer(in io.Reader, out io.Writer) error {
 			thread := map[string]any{"id": threadID, "path": sessionPath, "cwd": "/workspace"}
 			if err := write(map[string]any{
 				"jsonrpc": "2.0", "id": id,
-				"result":  map[string]any{"thread": thread},
+				"result": map[string]any{"thread": thread},
 			}); err != nil {
 				return err
 			}
@@ -122,6 +124,14 @@ func runAppServer(in io.Reader, out io.Writer) error {
 					return err
 				}
 				continue
+			}
+			if text == "runtime-hold" {
+				time.Sleep(150 * time.Millisecond)
+			}
+			if strings.HasPrefix(text, "Oberth runtime evidence") {
+				if err := write(map[string]any{"jsonrpc": "2.0", "method": "item/agentMessage/delta", "params": map[string]any{"turnId": turnID, "itemId": "runtime-receipt", "delta": "native-received:" + text}}); err != nil {
+					return err
+				}
 			}
 			if text == "items" {
 				if err := write(map[string]any{

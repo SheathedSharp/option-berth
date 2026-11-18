@@ -20,10 +20,32 @@
     { "$ref": "#/$defs/eventTurnDiff" },
     { "$ref": "#/$defs/eventNotice" },
     { "$ref": "#/$defs/eventTurnCompleted" },
-    { "$ref": "#/$defs/eventSessionEnded" }
+    { "$ref": "#/$defs/eventSessionEnded" },
+    { "$ref": "#/$defs/eventRuntimeStatus" }
   ],
   "$defs": {
     "version": { "type": "integer", "const": 1 },
+    "runtimeTask": {
+      "type": "object",
+      "required": ["task"],
+      "properties": {
+        "task": {"type":"string", "minLength":1, "maxLength":2000},
+        "services": {"type":"array", "maxItems":64, "items":{"type":"string", "minLength":1, "maxLength":256}},
+        "run_ids": {"type":"array", "maxItems":64, "items":{"type":"string", "minLength":1, "maxLength":256}}
+      },
+      "anyOf": [{"required":["services"],"properties":{"services":{"minItems":1}}},{"required":["run_ids"],"properties":{"run_ids":{"minItems":1}}}],
+      "additionalProperties":false
+    },
+    "eventRuntimeStatus": {
+      "type":"object", "required":["v","type","status","reason","terminal"],
+      "properties": {
+        "v":{"$ref":"#/$defs/version"}, "type":{"const":"runtime.status"},
+        "terminal":{"type":"boolean"}, "task":{"type":"string"}, "status":{"type":"string"}, "reason":{"type":"string"},
+        "services":{"type":["array","null"],"items":{"type":"string"}},
+        "run_ids":{"type":["array","null"],"items":{"type":"string"}}
+      },
+      "additionalProperties":false
+    },
     "commandTurnStart": {
       "type": "object",
       "required": ["v", "type", "id", "text"],
@@ -31,7 +53,8 @@
         "v": { "$ref": "#/$defs/version" },
         "type": { "const": "turn.start" },
         "id": { "type": "string" },
-        "text": { "type": "string" }
+        "text": { "type": "string" },
+        "runtime": { "$ref": "#/$defs/runtimeTask" }
       },
       "additionalProperties": false
     },

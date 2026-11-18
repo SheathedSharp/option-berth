@@ -2,6 +2,7 @@ package agentstream
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 // Options configures a structured agent bridge process.
 type Options struct {
+	Context    context.Context
 	Provider   string
 	Worktree   string
 	ResumeFile string
@@ -23,7 +25,9 @@ type Options struct {
 	// written to out. It is for local bookkeeping beside the bridge — the
 	// workplace record is what uses it — and must neither block nor write to
 	// out: the protocol belongs to the caller, and this is a side channel.
-	Observer func(event map[string]any)
+	Observer       func(event map[string]any)
+	RuntimeWatch   RuntimeWatch
+	RuntimePrepare func(context.Context, string, RuntimeTask) (string, error)
 }
 
 // Supported reports whether this build includes a stream adapter for the provider.
@@ -57,10 +61,31 @@ func Run(opts Options, in io.Reader, out io.Writer, errOut io.Writer) error {
 		return err
 	}
 	bridge := &bridge{driver: driver, out: &lineWriter{w: out}, observer: opts.Observer}
+	if closer, ok := in.(io.Closer); ok {
+		bridge.closeInput = func() { _ = closer.Close() }
+	}
+	if opts.RuntimeWatch != nil {
+		bridge.runtime = &taskRuntime{watch: opts.RuntimeWatch, root: abs, prepareContext: opts.RuntimePrepare, parent: opts.Context}
+	}
+	defer bridge.closeSession()
+	stopped := make(chan struct{})
+	defer close(stopped)
+	if opts.Context != nil {
+		go func() {
+			select {
+			case <-opts.Context.Done():
+				if closer, ok := in.(io.Closer); ok {
+					_ = closer.Close()
+				}
+				_ = bridge.closeSession()
+			case <-stopped:
+			}
+		}()
+	}
 	commands := bufio.NewReader(in)
 	for {
 		cmd, err := readCommand(commands)
-		if err == io.EOF {
+		if err == io.EOF || (opts.Context != nil && opts.Context.Err() != nil) {
 			return bridge.closeSession()
 		}
 		if err != nil {
@@ -111,11 +136,16 @@ func resolveWorktree(path string) (string, error) {
 }
 
 type bridge struct {
-	driver   driver
-	out      *lineWriter
-	observer func(event map[string]any)
-	closed   bool
-	emitMu   sync.Mutex
+	driver     driver
+	out        *lineWriter
+	observer   func(event map[string]any)
+	closed     bool
+	emitMu     sync.Mutex
+	closeMu    sync.Mutex
+	taskGate   sync.Mutex
+	failOnce   sync.Once
+	closeInput func()
+	runtime    *taskRuntime
 }
 
 func (b *bridge) handle(cmd map[string]any) error {
@@ -133,9 +163,23 @@ func (b *bridge) handle(cmd map[string]any) error {
 	}
 	switch typ {
 	case "turn.start":
+		b.taskGate.Lock()
+		defer b.taskGate.Unlock()
+		if b.runtime != nil && !b.runtime.prepare(b, cmd) {
+			return nil
+		}
+		b.emitMu.Lock()
+		closed := b.closed
+		b.emitMu.Unlock()
+		if closed {
+			return io.ErrClosedPipe
+		}
 		text, _ := cmd["text"].(string)
 		return b.driver.turnStart(b, id, text)
 	case "turn.interrupt":
+		if b.runtime != nil {
+			b.runtime.stop()
+		}
 		return b.driver.turnInterrupt(b, id)
 	case "request.respond":
 		request, _ := cmd["request"].(string)
@@ -150,6 +194,8 @@ func (b *bridge) handle(cmd map[string]any) error {
 }
 
 func (b *bridge) closeSession() error {
+	b.closeMu.Lock()
+	defer b.closeMu.Unlock()
 	b.emitMu.Lock()
 	if b.closed {
 		err := b.out.err
@@ -158,7 +204,12 @@ func (b *bridge) closeSession() error {
 	}
 	b.closed = true
 	b.emitMu.Unlock()
+	if b.runtime != nil {
+		b.runtime.stop()
+	}
+	b.taskGate.Lock()
 	b.driver.sessionEnd(b)
+	b.taskGate.Unlock()
 	b.emitMu.Lock()
 	err := b.out.err
 	b.emitMu.Unlock()
@@ -173,7 +224,21 @@ func (b *bridge) closeSession() error {
 func (b *bridge) emit(v any) {
 	b.emitMu.Lock()
 	b.out.emit(v)
+	writeErr := b.out.err
 	b.emitMu.Unlock()
+	if writeErr != nil {
+		b.failOnce.Do(func() {
+			go func() {
+				if b.closeInput != nil {
+					b.closeInput()
+				}
+				_ = b.closeSession()
+			}()
+		})
+	}
+	if event, ok := v.(map[string]any); ok && b.runtime != nil {
+		b.runtime.event(event)
+	}
 	if b.observer == nil {
 		return
 	}
