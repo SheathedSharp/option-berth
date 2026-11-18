@@ -256,3 +256,18 @@ func TestObserverCannotRebindLeaseToAnotherWorktree(t *testing.T) {
 		t.Fatal("lease rebound to another worktree")
 	}
 }
+
+func TestFailedTaskBoundaryCannotProceedOnOldGeneration(t *testing.T) {
+	a, _ := fixture(t)
+	submit(t, a)
+	a.Duration = MaxLease + time.Second
+	if _, err := a.Handle(context.Background(), event(a, "UserPromptSubmit")); err == nil {
+		t.Fatal("invalid lease allowed a new prompt without a new generation")
+	}
+	a.Duration = time.Second
+	in := event(a, "UserPromptSubmit")
+	in.Cwd = t.TempDir()
+	if _, err := a.Handle(context.Background(), in); err == nil {
+		t.Fatal("wrong worktree allowed a new prompt")
+	}
+}

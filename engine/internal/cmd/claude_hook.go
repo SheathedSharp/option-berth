@@ -40,6 +40,9 @@ func addClaudeHooks(parent *cobra.Command) {
 		}
 		actual, err := resolveWorktree(in.Cwd)
 		if err != nil || actual != root {
+			if in.Event == "UserPromptSubmit" {
+				return errors.New("hook_worktree_mismatch")
+			}
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(claudehook.Response{Message: "Oberth Runtime: not_attached (worktree_mismatch)."})
 		}
 		in.Cwd = actual
@@ -64,6 +67,9 @@ func addClaudeHooks(parent *cobra.Command) {
 	hook.Flags().BoolVar(&printConfig, "print-config", false, "Print project hook configuration for review, without changing files")
 	run := hook.RunE
 	hook.RunE = func(cmd *cobra.Command, args []string) error {
+		if lease <= 0 || lease > claudehook.MaxLease {
+			return usageError{errors.New("lease must be positive and no longer than 10m")}
+		}
 		if !printConfig {
 			return run(cmd, args)
 		}
@@ -130,9 +136,10 @@ func claudeAdapter(root string) claudehook.Adapter {
 	identity := hex.EncodeToString(hash[:])
 	a := claudehook.Adapter{Home: paths.Dir(), Root: root, Identity: identity}
 	a.Consent = func() error {
-		_, err := attnResolvedConsent().Client()
+		consent := attnResolvedConsent()
+		_, err := consent.Client()
 		if err != nil {
-			return errors.New("attention_permission_or_configuration_required")
+			return errors.New(consent.ReasonOr(err))
 		}
 		return nil
 	}

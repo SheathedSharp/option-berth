@@ -219,6 +219,9 @@ func (a Adapter) Handle(ctx context.Context, in Input) (Response, error) {
 	}
 	// The command boundary resolves both paths to the exact worktree before here.
 	if filepath.Clean(in.Cwd) != a.Root {
+		if in.Event == "UserPromptSubmit" {
+			return Response{}, errors.New("hook_worktree_mismatch")
+		}
 		return message("not_attached", "worktree_mismatch"), nil
 	}
 	key := Key(a.Root, in.Session)
@@ -228,6 +231,9 @@ func (a Adapter) Handle(ctx context.Context, in Input) (Response, error) {
 	}
 	defer lock.Release()
 	if e = a.stop(ctx, key); e != nil {
+		if in.Event == "UserPromptSubmit" {
+			return Response{}, errors.New("previous_observer_stop_unconfirmed")
+		}
 		return message("unavailable", "observer_stop_unconfirmed"), nil
 	}
 	if in.Event == "UserPromptSubmit" {
@@ -260,11 +266,11 @@ func (a Adapter) submit(ctx context.Context, key string) (Response, error) {
 	s := Lease{Generation: newGeneration(), WorktreeID: model.WorktreeID(a.Root), Consent: a.Identity, Task: a.Task, Status: "not_attached"}
 	s.Task.Task = Summary
 	d := a.Duration
-	if d <= 0 {
+	if d == 0 {
 		d = MaxLease
 	}
-	if d > MaxLease {
-		return message("not_attached", "lease_too_long"), nil
+	if d < 0 || d > MaxLease {
+		return Response{}, errors.New("invalid_observer_lease")
 	}
 	s.Expires = time.Now().Add(d)
 	if a.EditOnly || len(a.Task.Services)+len(a.Task.RunIDs) == 0 {
