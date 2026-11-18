@@ -126,6 +126,12 @@ func TestClaudeNativeLifecycleConsumesReadonlyFinding(t *testing.T) {
 		}
 		nativeCalls.Add(1)
 		b, _ := json.Marshal(data["messages"])
+		if bytes.Contains(b, []byte("SYNTHETIC-NATIVE-FAILURE")) {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": "error", "error": map[string]string{"type": "invalid_request_error", "message": "synthetic local provider failure"}})
+			return
+		}
+
 		text := "INITIAL-SYNTHETIC-ANSWER"
 		if bytes.Contains(b, []byte("Oberth Runtime evidence for this task")) {
 			consumed.Add(1)
@@ -266,6 +272,47 @@ func TestClaudeNativeLifecycleConsumesReadonlyFinding(t *testing.T) {
 		}
 		if current := load(); current.Active || !current.Consumed || current.Pending != nil {
 			t.Fatalf("real process retained delivery: %+v", current)
+		}
+	}
+
+	// The native API error path must not be mapped to success or buy a follow-up.
+	beforeError, beforeConsumption := nativeCalls.Load(), consumed.Load()
+	failureCtx, failureCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer failureCancel()
+	failure := exec.CommandContext(failureCtx, native, "-p", "SYNTHETIC-NATIVE-FAILURE", "--model", "fake", "--setting-sources", "project", "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
+	failure.Dir = root
+	failure.Env = env
+	failureOut, failureErr := failure.CombinedOutput()
+
+	var failedResult struct {
+		Type           string `json:"type"`
+		IsError        bool   `json:"is_error"`
+		NumTurns       int    `json:"num_turns"`
+		TerminalReason string `json:"terminal_reason"`
+	}
+	for _, line := range bytes.Split(failureOut, []byte("\n")) {
+		var result struct {
+			Type           string `json:"type"`
+			IsError        bool   `json:"is_error"`
+			NumTurns       int    `json:"num_turns"`
+			TerminalReason string `json:"terminal_reason"`
+		}
+		if json.Unmarshal(line, &result) == nil && result.Type == "result" {
+			failedResult = result
+		}
+	}
+	// Native SDK fallback requests are not extra task turns. Verify its final
+	// result, not a provider HTTP-count assumption, and keep feedback unconsumed.
+	if failureCtx.Err() != nil || failureErr == nil || !failedResult.IsError || failedResult.NumTurns != 1 || failedResult.TerminalReason != "api_error" || nativeCalls.Load() <= beforeError || consumed.Load() != beforeConsumption {
+		t.Fatalf("native failure continued or looked successful: %v calls=%d %s", failureErr, nativeCalls.Load()-beforeError, failureOut)
+	}
+	afterFailure, _ := filepath.Glob(filepath.Join(state, "attention", "claude", "*", "lease.json"))
+	for _, path := range afterFailure {
+		var cursor claudehook.Lease
+		b, _ := os.ReadFile(path)
+		_ = json.Unmarshal(b, &cursor)
+		if cursor.Active || !cursor.Consumed {
+			t.Fatal("native API failure did not reclaim task observation")
 		}
 	}
 
