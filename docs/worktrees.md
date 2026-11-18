@@ -28,6 +28,6 @@ A `machine:` dependency is observed only. A `workspace:` address can read anothe
 
 ## Stop before removing the directory
 
-Prefer `down` while the checkout still exists, then remove the worktree with Git. If the directory is already gone, `oberth worktrees --gone --json` lists retained identities; select the exact identity and use `down --identity` as described in the [command reference](cli.md). No command here deletes application data.
+Prefer `down` while the checkout still exists, then remove the worktree with Git. If the directory is already gone, `oberth worktrees --gone --json` lists retained identities; select the exact identity and use `down --identity` as described in the [command reference](cli/operations.md). No command here deletes application data.
 
 Do not choose by group name when multiple worktrees have the same name: an ambiguous selection is an error, not permission to stop all matches. For agents, use the [skill](https://github.com/SheathedSharp/option-berth-skill) and explicit worktree scopes.

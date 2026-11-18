@@ -34,7 +34,7 @@ checkout nor has a manifest, it returns not_found.
 - `list` lists in creation order and marks the current workplace with `●`; having no workplace is not
   an error, it is an empty list.
 - `new` creates one and makes it current; a duplicate name returns conflict.
-- `use` switches the current workplace — afterwards `oberth start` and `oberth agent stream` record into it.
+- `use` switches the current workplace — afterwards `oberth start` records into it.
 - `show` with no argument reads the current workplace; `--limit N` takes only the newest N entries, and
   `truncated` says the record has more.
 - `delete` removes a workplace and all its blocks; deleting the current one lets the newest remaining
@@ -67,8 +67,7 @@ Records need no manual work:
 
 - `oberth start` writes this run into the current workplace; a detached (`-d`) run is closed by the
   runtime service when it records that run's exit.
-- `oberth agent stream` writes one entry per round: `turn.started` opens it, and `turn.completed`
-  closes it with the outcome the provider reported (completed / interrupted / failed).
+
 - Work the engine cannot see is written in with `oberth workplace record`: an agent's own attempts
   ("I changed X and the test still fails"), the front-end's own interactive shell, a native agent.
   Reporting the same `--id` again updates that entry rather than adding one, so a piece of work's start
@@ -78,7 +77,7 @@ Records need no manual work:
 
 `show` reads back what happened; it does not call the processes of that time back. Read commands still
 read the database directly when the runtime service is absent; `new` / `use` / `delete` / `record` need a runtime service
-(which auto-starts under the usual rules), while records from `oberth start` and `oberth agent stream`
+(which auto-starts under the usual rules), while records from `oberth start`
 never start one for you — no runtime service means no record, stated once on stderr. Service start and stop
 (`up` / `down`) writes no work record: that is a declared lifecycle, not a temporary work entry.
 

@@ -15,7 +15,7 @@ oberth runtime service log
 oberth runtime service stop
 ```
 
-没有后台运行时，`status --json` 会返回非零退出码。`doctor` 检查安装与观察权限；`doctor --fix` 可能修改状态，请先看清准备修什么。[命令参考](cli.zh.md)维护完整参数和返回字段。
+没有后台运行时，`status --json` 会返回非零退出码。`doctor` 检查安装与观察权限；`doctor --fix` 可能修改状态，请先看清准备修什么。[命令参考](cli/infrastructure.zh.md)维护完整参数和返回字段。
 
 ## 用户级常驻服务
 
@@ -35,4 +35,4 @@ oberth runtime service stop
 
 一个数据库同时只能由一个后台拥有；换 socket，或让两个 `BERTH_HOME` 指向同一个文件，都不能绕过。在线历史和 doctor 的数据库查询通过拥有它的后台读取。`--no-runtime-service` 不会暗中连接后台：数据库被占用时明确返回 `runtime_service_busy`，离线读取仍然只读。
 
-协议 3 有意移除了旧的后台命令和端点名。替换旧安装之前，先用匹配旧后台的 CLI 正常停止它。不要清锁、删 socket、重置数据库或终止身份不明的进程。精确的名称与配置对应关系见[切换合同](cli.zh.md#runtime-service-协议-3-切换)。
+协议 3 有意移除了旧的后台命令和端点名。替换旧安装之前，先用匹配旧后台的 CLI 正常停止它。不要清锁、删 socket、重置数据库或终止身份不明的进程。精确的名称与配置对应关系见[切换合同](cli/infrastructure.zh.md#runtime-service-协议-3-切换)。

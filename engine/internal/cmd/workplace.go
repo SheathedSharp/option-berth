@@ -49,8 +49,8 @@ func newWorkplaceCommand() *cobra.Command {
 		Short:   "The record of work done in this worktree",
 		GroupID: commandGroupHandoff,
 		Long: "A workplace is a named scope under one worktree that holds the work done in it: the\n" +
-			"shell commands the engine ran and the agent tasks it bridged. Work is recorded as\n" +
-			"it happens — `oberth start` and `oberth agent stream` both write into the worktree's\n" +
+			"shell commands the engine ran and work explicitly reported to it. Work is recorded as\n" +
+			"it happens — `oberth start` writes into the worktree's\n" +
 			"active workplace — and a front-end that watched work the engine did not start can\n" +
 			"report it with `oberth workplace record`.\n\n" +
 			"The record is facts, not a session: recalling a workplace reads back what was done,\n" +
@@ -443,8 +443,7 @@ func newWorkplaceRecordCommand() *cobra.Command {
 			"This is for work option-berth cannot observe itself — an interactive shell or a\n" +
 			"native agent in a front-end's own terminal. Blocks recorded this way carry\n" +
 			"`source: reported`: the front-end's account, not the engine's evidence, which is\n" +
-			"why there is no flag to claim otherwise. Work the engine starts (`oberth start`,\n" +
-			"`oberth agent stream`) is recorded without asking and is marked `engine`.\n\n" +
+			"why there is no flag to claim otherwise. Work the engine starts (`oberth start`) is recorded without asking and is marked `engine`.\n\n" +
 			"Reporting the same id twice updates one block rather than adding a second, so the\n" +
 			"start and the end of a piece of work can arrive in either order.",
 		Args: cobra.NoArgs,

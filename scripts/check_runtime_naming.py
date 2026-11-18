@@ -31,6 +31,11 @@ HISTORICAL = {"docs/agent/history/validation-through-20261114.md", "docs/agent/h
 SUFFIXES = {".go", ".py", ".md", ".sh", ".ps1", ".yml", ".yaml", ".json", ".sql", ".tmpl", ".html"}
 
 
+def is_cli_contract(name: str) -> bool:
+    """The CLI reference: the hub page and the topic pages beside it."""
+    return name in ("docs/cli.md", "docs/cli.zh.md") or name.startswith("docs/cli/")
+
+
 def audit(root):
     names = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--", "engine", "scripts", "docs", "site", "examples", "magefiles", ".github", ".agents", "AGENTS.md", "CLAUDE.md", "README.md", "README.zh.md", "install.sh", "uninstall.sh", "install.ps1", "uninstall.ps1"], text=True).split("\0")
     checked, allowed, violations = 0, [], []
@@ -52,7 +57,7 @@ def audit(root):
                 elif name in REJECTION: reason = "explicit rejection/input-negative contract fixture"
                 elif name == "scripts/check_runtime_availability.py" and ('"daemon.lock"' in line or 'c.call("daemon.status"' in line): reason = "real released-Store interlock fixture or explicitly rejected old RPC"
                 elif name in GUARDS and '\"daemon.lock\"' in line: reason = "legacy exclusion interlock only; never a socket fallback"
-                elif name in ("docs/cli.md", "docs/cli.zh.md") and migration: reason = "bounded manual migration/rejection table"
+                elif is_cli_contract(name) and migration: reason = "bounded manual migration/rejection table"
                 elif name in MIGRATIONS and line.lstrip().startswith("--"): reason = "historical immutable SQL migration comment"
                 elif name in DOCKER and "docker" in line.lower(): reason = "third-party Docker terminology"
                 elif name in ("site/guide/quickstart.en.html", "site/guide/quickstart.zh.html") and "daemon" in line: reason = "unrelated user background processes, not product host identity"

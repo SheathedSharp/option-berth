@@ -72,62 +72,62 @@ class PairTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN, GOOD_ZH)
-            self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md"), [])
+            self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md", root / "docs"), [])
 
     def test_missing_counterpart_is_reported(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             write(root, "docs/demo.md", GOOD_EN)
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("missing Chinese counterpart" in p for p in problems))
 
     def test_heading_count_mismatch_is_reported(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN, GOOD_ZH.replace("## 用法", "## 用法\n\n### 额外"))
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("heading count differs" in p for p in problems))
 
     def test_heading_depth_mismatch_is_reported(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN, GOOD_ZH.replace("## 用法", "### 用法"))
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("depth differs" in p for p in problems))
 
     def test_code_block_drift_is_reported(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN, GOOD_ZH.replace("oberth status --json", "oberth up"))
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("not byte-identical" in p for p in problems))
 
     def test_list_structure_drift_is_reported(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN, GOOD_ZH.replace("- 二\n", ""))
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("list structure differs" in p for p in problems))
 
     def test_table_shape_drift_is_reported(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN, GOOD_ZH.replace("| 1 | 2 |\n", "| 1 | 2 | 3 |\n"))
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("table shape differs" in p for p in problems))
 
     def test_english_switcher_is_required(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN.replace("English | [中文](demo.zh.md)\n", ""), GOOD_ZH)
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("missing language switcher" in p for p in problems))
 
     def test_chinese_switcher_is_required(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN, GOOD_ZH.replace("[English](demo.md) | 中文\n", ""))
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("missing language switcher" in p for p in problems))
 
     def test_orphan_chinese_file_is_reported(self):
@@ -143,7 +143,7 @@ class LinkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN + "\nSee [gone](missing.md).\n", GOOD_ZH + "\n见 [没了](missing.md)。\n")
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("broken link" in p for p in problems))
 
     def test_existing_relative_link_passes(self):
@@ -157,7 +157,7 @@ class LinkTests(unittest.TestCase):
                 GOOD_EN + "\nSee [target](target.md).\n",
                 GOOD_ZH + "\n见 [目标](target.zh.md)。\n",
             )
-            self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md"), [])
+            self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md", root / "docs"), [])
 
     def test_chinese_side_must_use_the_zh_counterpart(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -170,7 +170,7 @@ class LinkTests(unittest.TestCase):
                 GOOD_EN + "\nSee [target](target.md).\n",
                 GOOD_ZH + "\n见 [目标](target.md)。\n",
             )
-            problems = docs_check.check_pair(root / "docs" / "demo.md")
+            problems = docs_check.check_pair(root / "docs" / "demo.md", root / "docs")
             self.assertTrue(any("should target the .zh.md" in p for p in problems))
 
     def test_links_outside_docs_are_not_locale_checked(self):
@@ -183,13 +183,86 @@ class LinkTests(unittest.TestCase):
                 GOOD_EN + "\nSee [the license](../engine/LICENSE).\n",
                 GOOD_ZH + "\n见 [许可](../engine/LICENSE)。\n",
             )
-            self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md"), [])
+            self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md", root / "docs"), [])
 
     def test_anchor_only_links_are_ignored(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pair(root, "demo", GOOD_EN + "\nSee [above](#title).\n", GOOD_ZH + "\n见 [上面](#标题)。\n")
-            self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md"), [])
+            self.assertEqual(docs_check.check_pair(root / "docs" / "demo.md", root / "docs"), [])
+
+
+class NestedCorpusTests(unittest.TestCase):
+    def pair(self, root: Path, stem: str, en: str, zh: str) -> None:
+        """Write a nested pair whose switcher names its own stem, not demo's."""
+        name = stem.rsplit("/", 1)[-1]
+        pair(
+            root,
+            stem,
+            en.replace("demo.zh.md", f"{name}.zh.md"),
+            zh.replace("(demo.md)", f"({name}.md)"),
+        )
+
+    def test_a_pair_in_a_subdirectory_is_checked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.pair(root, "cli/facts", GOOD_EN, GOOD_ZH)
+            documents = docs_check.paired_documents(root / "docs")
+            self.assertIn((root / "docs" / "cli" / "facts.md").resolve(), documents)
+            self.assertEqual(
+                docs_check.check_pair(root / "docs" / "cli" / "facts.md", root / "docs"), []
+            )
+
+    def test_agent_pages_are_english_only_and_not_paired(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "docs/agent/develop.md", "# Develop\n")
+            write(root, "docs/agent/history/trace.md", "# Trace\n")
+            self.assertEqual(docs_check.paired_documents(root / "docs"), [])
+
+    def test_an_orphan_in_a_subdirectory_is_reported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "docs/cli/facts.zh.md", GOOD_ZH)
+            problems = docs_check.check_orphans(root / "docs")
+            self.assertTrue(any("cli/facts.zh.md: no English counterpart" in p for p in problems))
+
+    def test_a_nested_page_links_to_the_zh_counterpart(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "docs/quickstart.md", "# Quick start\n")
+            write(root, "docs/quickstart.zh.md", "# 快速开始\n")
+            self.pair(
+                root,
+                "cli/facts",
+                GOOD_EN + "\nSee [quick start](../quickstart.md).\n",
+                GOOD_ZH + "\n见[快速开始](../quickstart.zh.md)。\n",
+            )
+            self.assertEqual(
+                docs_check.check_pair(root / "docs" / "cli" / "facts.md", root / "docs"), []
+            )
+            self.pair(
+                root,
+                "cli/facts",
+                GOOD_EN + "\nSee [quick start](../quickstart.md).\n",
+                GOOD_ZH + "\n见[快速开始](../quickstart.md)。\n",
+            )
+            problems = docs_check.check_pair(root / "docs" / "cli" / "facts.md", root / "docs")
+            self.assertTrue(any("should target the .zh.md" in p for p in problems))
+
+    def test_a_link_into_the_agent_subtree_is_not_locale_checked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write(root, "docs/agent/develop.md", "# Develop\n")
+            self.pair(
+                root,
+                "cli/facts",
+                GOOD_EN + "\nSee [development](../agent/develop.md).\n",
+                GOOD_ZH + "\n见[开发](../agent/develop.md)。\n",
+            )
+            self.assertEqual(
+                docs_check.check_pair(root / "docs" / "cli" / "facts.md", root / "docs"), []
+            )
 
 
 class ConflictMarkerTests(unittest.TestCase):
@@ -221,7 +294,7 @@ class LiveCorpusTests(unittest.TestCase):
         self.assertTrue(documents, "no paired documents found")
         problems = []
         for english in documents:
-            problems.extend(docs_check.check_pair(english))
+            problems.extend(docs_check.check_pair(english, docs_check.DOCS))
         problems.extend(docs_check.check_orphans(docs_check.DOCS))
         problems.extend(docs_check.check_conflict_markers(docs_check.DOCS))
         self.assertEqual(problems, [])

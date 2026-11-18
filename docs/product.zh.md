@@ -41,7 +41,7 @@
 
 给人看的 CLI 输出和 JSON 描述同一份状态。编程助手从[独立 skill](https://github.com/SheathedSharp/option-berth-skill)学习操作规则；编排工具按[接入指南](integrations.zh.md)显式调用 setup/run/cleanup 命令。oberth 不替它们安装 hooks、注册 MCP 或修改设置。
 
-外部编程助手的登录、模型、审批、工具执行和会话恢复仍由对方负责。消息通过精确参数或原生终端输入传递，不隐藏拼接 shell 命令。结构化流桥只转交审批请求，不自动批准、不放宽权限，也不恢复另一份工作树的最近会话。当前可用 provider 看 `agent list --json`，不以一份静态宣传名单作保证。
+外部编程助手的登录、模型、审批、工具执行和会话恢复仍由对方负责。消息通过精确参数或原生终端输入传递，不隐藏拼接 shell 命令。Oberth 不自动批准、不放宽权限，也不恢复另一份工作树的最近会话。当前可用 provider 看 `agent list --json`，不以一份静态宣传名单作保证。
 
 ## 不承诺什么
 

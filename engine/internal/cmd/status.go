@@ -115,7 +115,8 @@ type statusDocument struct {
 	// attnEvent is whether the deterministic classifier derived a definite
 	// anomaly. It never reaches the wire: it drives the one-line offer of the
 	// enhancement, which must stay reachable while the assessment is off.
-	attnEvent bool
+	attentionExits []rpc.RunRecord
+	attnEvent      bool
 	// Changed is absent on the first run: there is nothing to compare against,
 	// which is not the same as nothing having changed (`empty` inside says
 	// that).
@@ -334,7 +335,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 		tree = &capped
 	}
 
-	exits, exitErr := statusExits(ctx, name)
+	exits, exitErr := statusExitsAll(ctx, name)
 	if exitErr != nil {
 		return statusDocument{}, storageReadError(exitErr)
 	}
@@ -349,7 +350,8 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 		Ports:           ports,
 		Git:             tree,
 		Drafts:          []draft.Pending{},
-		Exits:           exits,
+		Exits:           statusExitDisplay(exits),
+		attentionExits:  exits,
 		Observation:     publicObservation(obs),
 	}
 	// The direct read (no runtime service) has no snapshot of its own, and the runtime service's
@@ -416,6 +418,12 @@ func publishAttention(doc *statusDocument) string {
 		Machine:      make([]attn.Machine, 0, len(doc.Worktree.Machine)),
 	}
 	for _, service := range doc.Worktree.Services {
+		// Listener absence is not evidence of a stopped service under degraded observation.
+		// An owner-recorded exit is positive evidence: preserve its declared
+		// service identity even when listeners cannot currently be observed.
+		if runtimeObservationUnknown(*doc) && !service.Running && service.RunID == nil && service.LastExit == nil {
+			continue
+		}
 		item := attn.Service{
 			Name:    service.Name,
 			Running: service.Running,
@@ -474,6 +482,14 @@ func publishAttention(doc *statusDocument) string {
 		facts.History = append(facts.History, attn.ExitHistory{
 			Service: run.Name, Reason: run.Reason, RunID: run.ID, At: at,
 		})
+	}
+	for _, run := range runtimeRunFacts(*doc) {
+		item := attn.Service{Name: run.Name, RunID: run.ID, RunOnly: true, StartedAt: run.StartedAt, Running: run.Status == "running" || run.Status == "starting"}
+		if run.Status == "exited" && run.ExitCode != nil {
+			at, _ := time.Parse(time.RFC3339Nano, run.ExitedAt)
+			item.LastExit = &attn.Exit{RunID: run.ID, Code: *run.ExitCode, Reason: run.Reason, At: at}
+		}
+		facts.Runs = append(facts.Runs, item)
 	}
 	facts.StateRevision = attn.Revision(facts)
 	facts.ObservedAt = time.Now().UTC()
@@ -587,6 +603,18 @@ func statusRuns(ctx context.Context, group string) []rpc.RunRecord {
 // statusExits reads durable ended-run evidence through the owning Store online,
 // or the same database read-only offline. Failure is never an empty success.
 func statusExits(ctx context.Context, group string) ([]rpc.RunRecord, error) {
+	rows, err := statusExitsAll(ctx, group)
+	return statusExitDisplay(rows), err
+}
+
+// Display caps never limit task truth: exact run selections use these existing durable rows.
+func statusExitDisplay(rows []rpc.RunRecord) []rpc.RunRecord {
+	if len(rows) > statusExitsShown {
+		return rows[:statusExitsShown]
+	}
+	return rows
+}
+func statusExitsAll(ctx context.Context, group string) ([]rpc.RunRecord, error) {
 	rows, err := storedRunExits(ctx)
 	if err != nil {
 		return nil, err
@@ -605,9 +633,6 @@ func statusExits(ctx context.Context, group string) ([]rpc.RunRecord, error) {
 	// record win when both describe the same run.
 	records = mergeExitRecords(records, unobservedEndings(group))
 	sortStatusExits(records)
-	if len(records) > statusExitsShown {
-		records = records[:statusExitsShown]
-	}
 	applyExitHints(records)
 	return records, nil
 }
