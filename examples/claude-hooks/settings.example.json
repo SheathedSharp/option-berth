@@ -1,0 +1,49 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "oberth agent claude-hook --project \"$CLAUDE_PROJECT_DIR\" --service api --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "oberth agent claude-hook --project \"$CLAUDE_PROJECT_DIR\" --service api --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "oberth agent claude-hook --project \"$CLAUDE_PROJECT_DIR\" --service api --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "oberth agent claude-hook --project \"$CLAUDE_PROJECT_DIR\" --service api --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

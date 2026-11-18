@@ -154,6 +154,15 @@ A genuine failure is never handled by deleting assertions, relaxing timeouts or 
    and only then is the draft promoted. An asset is never overwritten or deleted, and a release that is
    already public is refused rather than modified.
 
+A re-run of the `package` job resumes instead of rebuilding from nothing. It first restores the artifact
+this target uploaded in an earlier attempt, then runs `scripts/package_release.py` and
+`scripts/package_linux.py` with `--resume`: an archive or package already on disk is reused only when
+its `.sha256` matches and the build manifest it carries is this run's version, commit, target and
+protocol. A set that exists but does not verify — a wrong checksum, an identity from another commit, a
+package that installs a different build manifest, a file without its sidecar — fails the job and is
+never overwritten, deleted or repaired in place. Only what is missing is built, and the upload replaces
+this target's earlier artifact.
+
 Windows arm64 and some CLI archives are cross-built; having a downloadable archive is not the same as
 having verified every platform's lifecycle. The tag workflow checks out the triggering commit SHA
 explicitly and fetches full history and tag objects, so that a fallback fetch of ref plus a stripped
@@ -167,6 +176,8 @@ Failure before verification: fix the real problem and start over; no version or 
 Local commit/tag created but the atomic push failed: keep the result, check both sides' refs first, then
 decide how to retry; never rewrite the tag.
 Upload/verification failure: inspect leftover drafts and assets; never promote a draft by hand.
+A `package` job that failed partway resumes the same way: re-running it restores the targets that
+already uploaded, verifies and reuses them, and builds only the rest.
 While the draft holds the same build, re-running the tag's workflow is the recovery path and needs no
 manual cleanup: the publication checks every asset the draft already holds, uploads only the missing
 names, and promotes only after the complete set verifies against this build. Resuming assumes that the

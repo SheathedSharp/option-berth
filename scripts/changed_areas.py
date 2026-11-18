@@ -21,6 +21,7 @@ AREAS: dict[str, tuple[str, ...]] = {
         "scripts/",
         "docs/cli.md",
         "docs/cli.zh.md",
+        "docs/cli/",
         "install.sh",
         "install.ps1",
         "uninstall.sh",
@@ -43,8 +44,13 @@ AREAS: dict[str, tuple[str, ...]] = {
         "scripts/check_ci_gate_test.py",
         "scripts/changed_areas.py",
         "scripts/changed_areas_test.py",
+        "scripts/ci_failures.py",
+        "scripts/ci_failures_test.py",
+        "scripts/flaky-tests.txt",
         "scripts/race-packages.txt",
         "scripts/release.py",
+        "scripts/retry-ci.sh",
+        "scripts/retry_ci_test.py",
     ),
 }
 

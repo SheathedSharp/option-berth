@@ -37,6 +37,6 @@ If startup fails, keep the error and read [troubleshooting](troubleshooting.md).
 
 ## Use your own project
 
-Run `oberth init` for a starter configuration, then review `oberth.yaml`: working directories, commands, dependencies, ports and health checks must match the project. A model can draft a manifest; it cannot approve its adoption. See [manifest reference](cli.md#manifest-and-state-boundaries) and [integrations](integrations.md).
+Run `oberth init` for a starter configuration, then review `oberth.yaml`: working directories, commands, dependencies, ports and health checks must match the project. A model can draft a manifest; it cannot approve its adoption. See [manifest reference](cli/declaration.md#manifest-and-state-boundaries) and [integrations](integrations.md).
 
 The repository's [Hello Worktree](../examples/hello-worktree/README.md) adds an API health check and a worker without a port. For two branches, continue with [multiple worktrees](worktrees.md).

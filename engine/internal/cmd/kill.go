@@ -15,6 +15,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
 	"github.com/sheathedsharp/option-berth/engine/internal/killer"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/client"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -37,24 +39,27 @@ var (
 	killJSONFlag       bool
 )
 
-// killCmd is the one-stop command: port, pid, group or every listener.
+// killCmd is the one-stop command: port, pid, run, group or every listener.
 var killCmd = &cobra.Command{
-	Use:     "kill [port|pid ...]",
-	Short:   "Stop a named listener or process",
+	Use:     "kill [port|pid|run ...]",
+	Short:   "Stop a named listener, process or run",
 	GroupID: commandGroupOperations,
-	Long: `Stop a named listener. Docker-published ports are stopped with docker stop; a
-listener option-berth started is stopped together with its whole process tree.
+	Long: `Stop a named listener or run. Docker-published ports are stopped with docker
+stop; a listener option-berth started is stopped together with its whole process
+tree.
 
 Examples:
   oberth kill 3000                      # SIGTERM the listener on port 3000
   oberth kill 3000 5432 --force         # SIGKILL both
+  oberth kill ai-factory-server         # a run, listener or not, whole tree
   oberth kill --pid 12345 --tree        # a process and everything below it
   oberth kill --all -y                  # every listener, with confirmation
   oberth kill 3000 --ip 127.0.0.1       # disambiguate a multi-bind port
   oberth kill 3000 --tree --dry-run     # show the tree, change nothing
 
 A positional argument is read as a port; a number no one is listening on that
-matches a running process is read as a pid.`,
+matches a running process is read as a pid; anything else is a run name or run
+id, resolved in this worktree the way ` + "`restart --run`" + ` resolves them.`,
 	RunE:              runKill,
 	ValidArgsFunction: completePort,
 }
@@ -93,7 +98,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 
 	if killSessionFlag != "" {
 		if len(args) != 0 || len(killPIDFlag) != 0 {
-			return fmt.Errorf("--session cannot be combined with ports or pids")
+			return fmt.Errorf("--session cannot be combined with ports, pids or run names")
 		}
 		return killSession(cmd.Context())
 	}
@@ -114,16 +119,26 @@ func runKill(cmd *cobra.Command, args []string) error {
 // under --no-runtime-service and whenever the runtime service is down, which is why it stays a
 // complete implementation rather than a degraded one.
 func killDirect(ctx context.Context, args []string, bindIP string) error {
-	rows, targets, confirm, complete, err := killSelection(ctx, args, bindIP, scanForKill)
+	rows, resolved, complete, err := killSelection(ctx, args, bindIP, scanForKill)
 	if err != nil {
 		return err
 	}
 
+	// Without a host the named runs have to become process-local targets here,
+	// which is also the only place the recorded birth time is checked: nothing
+	// below can pin a generation a pid selector does not carry.
+	targets, err := resolved.localTargets()
+	if err != nil {
+		return err
+	}
 	if len(targets) == 0 {
 		return reportKill(os.Stdout, nil, rows, killJSONFlag, killDryRunFlag)
 	}
 
 	opts := killOptions()
+	// A run is a tree: the processes under its root are the run, so a named
+	// subject is always stopped whole rather than only where it listens.
+	opts.Tree = opts.Tree || resolved.tree
 	// Only a complete observation may stand in for the killer's own scan. A
 	// partial table is attribution for the report; publishing it here would
 	// suppress the killer's re-observation and let an unreadable row become a
@@ -137,7 +152,7 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 		targets:  targets,
 		snapshot: rows,
 		opts:     opts,
-		confirm:  confirm && !killYesFlag && !killDryRunFlag,
+		confirm:  resolved.confirm && !killYesFlag && !killDryRunFlag,
 		asJSON:   killJSONFlag,
 	}.execute(ctx)
 }
@@ -162,23 +177,30 @@ func killDirect(ctx context.Context, args []string, bindIP string) error {
 // before it signals, so a blind machine still ends in a failed row rather than
 // a silent success. A partial read keeps the rows it did produce, because those
 // rows are exactly the attribution this function exists to preserve.
-func killSelection(ctx context.Context, args []string, bindIP string, scan func(context.Context) ([]ports.ListeningPort, error)) ([]ports.ListeningPort, []killer.Target, bool, bool, error) {
+func killSelection(ctx context.Context, args []string, bindIP string, scan func(context.Context) ([]ports.ListeningPort, error)) ([]ports.ListeningPort, killResolution, bool, error) {
 	snapshot, err := scan(ctx)
 	complete := err == nil
 	if err != nil {
 		if killRequiresObservation(args) {
-			return nil, nil, false, false, err
+			return nil, killResolution{}, false, err
 		}
 		snapshot, _ = ports.PartialRows(err)
 	}
-	targets, confirm, err := killTargets(args, snapshot, bindIP)
-	return snapshot, targets, confirm, complete, err
+	// The direct path has no host to ask, so the run ledger is read from the
+	// mirror and the store; a nil client is exactly "do not reach a host".
+	resolved, err := resolveKill(ctx, nil, args, snapshot, bindIP)
+	return snapshot, resolved, complete, err
 }
 
 // killRequiresObservation reports whether a failed observation vetoes this
 // selection: positional arguments are read port-first, and the group and all
-// selectors are sweeps. Only --pid alone survives a table it could not read.
+// selectors are sweeps. A run name, like --pid, names its subject without the
+// listener table — the run ledger answers for it.
 func killRequiresObservation(args []string) bool {
+	_, names := splitKillSubjects(args)
+	if len(names) > 0 && len(args) == len(names) {
+		return false
+	}
 	return len(args) > 0 || killGroupFlag != "" || killAllFlag
 }
 
@@ -285,8 +307,84 @@ func observeListenersForKill(ctx context.Context) ([]ports.ListeningPort, error)
 	return found, ctx.Err()
 }
 
-// killTargets turns the command line into killer targets. The bool reports
-// whether the selection is broad enough to confirm before acting.
+// splitKillSubjects separates the positional vocabulary. A number is a port or
+// a pid; anything else is a run name or run id. The two vocabularies name
+// different things, and one request asking about both would have to guess what
+// the reader meant.
+func splitKillSubjects(args []string) (numbers, names []string) {
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		if number, err := strconv.Atoi(arg); err == nil && number > 0 {
+			numbers = append(numbers, arg)
+			continue
+		}
+		names = append(names, arg)
+	}
+	return numbers, names
+}
+
+// namedRuns resolves each name to the run it spells, by the one rule the
+// product has for that question (selectNamedRun, which `restart --run` uses).
+// A name means the same run in both commands, or the two disagree about what a
+// published name refers to.
+func namedRuns(records []rpc.RunRecord, group string, names []string) ([]rpc.RunRecord, error) {
+	out := make([]rpc.RunRecord, 0, len(names))
+	for _, name := range names {
+		rec, err := selectNamedRun(records, group, name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// liveRunRecords drops the generations that have already ended. A stop of a run
+// that is not running asks for the end state the caller already has, so it is
+// nothing to stop rather than a target — and certainly not the process that
+// happens to hold the pid now.
+func liveRunRecords(records []rpc.RunRecord) []rpc.RunRecord {
+	out := make([]rpc.RunRecord, 0, len(records))
+	for _, rec := range records {
+		if rec.Status != "exited" {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// runTargets is the no-host route's reading of a named run: its root pid plus the
+// birth time the host recorded for it. The birth time is what makes a pid-only
+// stop safe against a recycled pid, so a run whose start was never recorded is
+// refused rather than signalled blind — the same rule the runtime service's own
+// exact-run stop applies.
+//
+// It is not how a named run reaches a host. A pid selector has no room for the
+// claim, so a host would receive a bare pid and lose exactly the thing that makes
+// the stop safe; a named run with a host therefore travels as its run id.
+func runTargets(records []rpc.RunRecord) ([]killer.Target, error) {
+	out := make([]killer.Target, 0, len(records))
+	for _, rec := range records {
+		at, err := time.Parse(time.RFC3339, rec.StartedAt)
+		if err != nil || at.IsZero() {
+			return nil, failHint("not_found",
+				fmt.Sprintf("run %s has no recorded start time and cannot be pinned", rec.ID),
+				"restart it once with this version, or stop it by port or pid")
+		}
+		out = append(out, killer.Target{PID: rec.PID, StartedAt: at, Name: rec.Name})
+	}
+	return out, nil
+}
+
+// killTargets turns the numeric positional arguments into killer targets. The
+// bool reports whether the selection is broad enough to confirm before acting.
+//
+// It takes only the numeric half on purpose: a name is resolved against the run
+// ledger, which this function deliberately knows nothing about, so callers use
+// resolveKill. A non-number here is a caller error rather than a silent port 0.
 func killTargets(args []string, snapshot []ports.ListeningPort, bindIP string) ([]killer.Target, bool, error) {
 	targets := make([]killer.Target, 0, len(killPIDFlag)+len(args))
 	for _, pid := range killPIDFlag {
@@ -318,9 +416,98 @@ func killTargets(args []string, snapshot []ports.ListeningPort, bindIP string) (
 	}
 
 	if len(targets) == 0 {
-		return nil, false, fmt.Errorf("nothing to kill: give a port or pid, or use --pid, --group or --all")
+		return nil, false, fmt.Errorf("nothing to kill: give a port, pid or run name, or use --pid, --group or --all")
 	}
 	return targets, false, nil
+}
+
+// killResolution is the command line as a stop request: what to signal, whether
+// to confirm first, and whether the selection is a whole tree. A run is always
+// a tree — the processes below its root are the run — so that fact travels with
+// the selection instead of being re-derived from the flags at each call site.
+type killResolution struct {
+	targets []killer.Target
+	confirm bool
+	tree    bool
+	// runs and group are the subject when names resolved to runs. A run is
+	// stopped by its identity, so a route that has a host sends these to
+	// `groups.kill`'s run selector and leaves targets empty; a route without
+	// one turns them into pinned pid targets first (localTargets).
+	runs  []rpc.RunRecord
+	group string
+}
+
+// empty reports whether the selection named nothing to stop.
+func (r killResolution) empty() bool { return len(r.targets) == 0 && len(r.runs) == 0 }
+
+// localTargets is the resolution as a process-local signal: ports and pids as
+// they are, and each named run as its recorded root pid plus the birth time that
+// pins the generation. It is the only reading of a named run a route without a
+// host can use, because a pid selector is the whole vocabulary such a route has.
+func (r killResolution) localTargets() ([]killer.Target, error) {
+	if len(r.runs) == 0 {
+		return r.targets, nil
+	}
+	return runTargets(r.runs)
+}
+
+// resolveKill turns the positional arguments into a stop request. A number is a
+// port or pid and resolves against the listener table; anything else is a run
+// name or id and resolves against this worktree's run ledger. The two
+// vocabularies are not mixed in one request: a port is stopped as a listener and
+// a run is stopped as a tree, and a request that asked for both would have to
+// guess which reading a reader meant.
+func resolveKill(ctx context.Context, c *client.Client, args []string, snapshot []ports.ListeningPort, bindIP string) (killResolution, error) {
+	numbers, names := splitKillSubjects(args)
+	if len(names) == 0 {
+		targets, confirm, err := killTargets(numbers, snapshot, bindIP)
+		return killResolution{targets: targets, confirm: confirm}, err
+	}
+	if len(numbers) > 0 {
+		return killResolution{}, fmt.Errorf(
+			"a run name cannot be combined with a port or pid (%s); give one kind of subject",
+			strings.Join(names, ", "))
+	}
+	if killGroupFlag != "" || killAllFlag || len(killPIDFlag) > 0 {
+		return killResolution{}, fmt.Errorf("a run name cannot be combined with --group, --all or --pid")
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return killResolution{}, fmt.Errorf("resolving the working directory: %w", err)
+	}
+	group, _ := projectAt(wd)
+	if group == "" {
+		return killResolution{}, failHint("not_found",
+			fmt.Sprintf("no project contains run %q", strings.Join(names, ", ")),
+			"run this command inside a worktree, or give a port or pid instead")
+	}
+	records, err := worktreeRuns(ctx, c, group)
+	if err != nil {
+		return killResolution{}, err
+	}
+	return namedRunResolution(records, group, names, killNoEscalateFlag)
+}
+
+// namedRunResolution turns run names into the stop they spell. The names resolve
+// by the one rule the product has for that question, ended generations drop out
+// because a stop of a run that is not running is nothing to stop, and the result
+// names the runs themselves rather than the pids they held — a host that owns the
+// ledger stops a run by identity, and only a route without one needs the pid.
+//
+// noEscalate is refused rather than ignored: a run is stopped whole, so the flag
+// would promise a politeness this subject cannot express.
+func namedRunResolution(records []rpc.RunRecord, group string, names []string, noEscalate bool) (killResolution, error) {
+	if noEscalate {
+		return killResolution{}, usageError{fmt.Errorf(
+			"--no-escalate cannot be combined with a run (%s): a run is stopped as a whole tree",
+			strings.Join(names, ", "))}
+	}
+	resolved, err := namedRuns(records, group, names)
+	if err != nil {
+		return killResolution{}, err
+	}
+	return killResolution{runs: liveRunRecords(resolved), group: group, tree: true}, nil
 }
 
 // positionalTarget treats a bare number as a port, unless nothing listens on

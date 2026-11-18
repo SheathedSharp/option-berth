@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+
+	"github.com/sheathedsharp/option-berth/engine/internal/ports/breaker"
 )
 
 // Scan collects TCP listening evidence. OS command execution is a thin adapter;
@@ -18,16 +20,81 @@ func Scan() ([]ListeningPort, error) {
 // ScanContext retains Scan's command ceiling and decoding rules. Cancelled
 // command output cannot become a healthy (possibly partial) observation.
 func ScanContext(ctx context.Context) ([]ListeningPort, error) {
-	return scanContext(ctx)
+	read, err := ScanContextRead(ctx, nil)
+	return read.Rows, err
 }
 
 // ScanContextSource is ScanContext plus the collector that answered: empty for
 // the platform's primary collector, otherwise the name of the alternative that
 // did (see chain). A non-empty source means absence from the table is unknown,
-// not evidence that a port is free. ScanContextSources is the same read when a
-// caller wants several collectors merged instead of one that answered.
+// not evidence that a port is free. ScanContextReadSources is the same read when
+// a caller wants several collectors merged instead of one that answered.
 func ScanContextSource(ctx context.Context) ([]ListeningPort, string, error) {
-	return scanContextSource(ctx)
+	read, err := ScanContextRead(ctx, nil)
+	return read.Rows, read.Source, err
+}
+
+// Read is one pass of a platform's collector chain: the rows that are this
+// machine's answer, and the provenance a reader needs before concluding that a
+// port is absent.
+type Read struct {
+	// Rows is the table this read publishes.
+	Rows []ListeningPort
+	// Source is the one collector that answered instead of the platform's
+	// primary one, empty when the primary answered or nothing did. A named source
+	// is narrow: its rows are facts, and a port missing from it is unknown.
+	Source string
+	// Sources is every collector a merged table was assembled from, in chain
+	// order. A merged table is never the primary's own answer, so it is narrow
+	// for the same reason.
+	Sources []string
+	// Skip is why the platform's primary collector did not run in this read, nil
+	// when it did. A skipped primary is one more reason absence is unknown: the
+	// alternatives were read exactly as they would have been, one command
+	// cheaper, and no row of the primary's own table was seen.
+	Skip *breaker.Skip
+}
+
+// Detail is the sentence published with a table that is not the platform's
+// primary collector's own whole read: what the collector that answered cannot
+// promise, and — when a breaker held the primary back — why it did not run.
+// Empty when the primary answered alone.
+func (r Read) Detail() string {
+	detail := NarrowSourceDetail(r.Source)
+	if len(r.Sources) > 0 {
+		detail = MergedSourcesDetail(r.Sources)
+	}
+	clause := r.SkipClause()
+	switch {
+	case clause == "":
+		return detail
+	case detail == "":
+		return clause
+	}
+	return detail + "; " + clause
+}
+
+// SkipClause is the part of that sentence naming why the primary did not run,
+// empty when it did. A verdict that carries its own evidence — a partial pass,
+// whose detail is the collector's own failure — adds this clause rather than
+// replacing it.
+func (r Read) SkipClause() string {
+	if r.Skip == nil {
+		return ""
+	}
+	return skipClause(*r.Skip)
+}
+
+// ScanContextRead is one collector read under a breaker.
+//
+// gate is the runtime service's breaker for the platform's primary collector. It
+// may be nil, which attempts the primary on every read and records nothing: that
+// is what a one-shot CLI wants, because a breaker only means something in a
+// process that keeps scanning.
+func ScanContextRead(ctx context.Context, gate *breaker.Breaker) (Read, error) {
+	return ownedRead(ctx, func(run listenerCommand) (Read, error) {
+		return readChain(runtime.GOOS, run, gate)
+	})
 }
 
 // NarrowSourceDetail is the sentence published with a table read by a collector
@@ -38,34 +105,45 @@ func NarrowSourceDetail(source string) string {
 	return narrowSourceDetail(runtime.GOOS, source)
 }
 
-// scanContext is the one collection path. The self-probe uses it so it tests
-// exactly what a real read does; it must not call the probe itself, or a blind
-// process would recurse instead of reporting the blind spot.
-func scanContext(ctx context.Context) ([]ListeningPort, error) {
-	rows, _, err := scanContextSource(ctx)
-	return rows, err
-}
-
-// scanContextSource also reports which collector answered when it was not the
-// platform's primary one. The rows are the same facts either way; the source is
-// for the reader deciding how far to trust a port being absent.
-func scanContextSource(ctx context.Context) ([]ListeningPort, string, error) {
+// ownedRead is the shape every read shares: refuse at once when the caller is
+// already gone, run the chain under the caller's ownership, and check that
+// ownership again before any row is published. A cancelled command's output is
+// never a healthy table, and a partial verdict still travels with its rows.
+func ownedRead(ctx context.Context, read func(listenerCommand) (Read, error)) (Read, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		return Read{}, err
 	}
-	rows, source, err := collectListenersSource(runtime.GOOS, func(name string, args ...string) ([]byte, []byte, error) {
-		return executeListenerCommandContext(ctx, name, args...)
-	})
-	if err := ctx.Err(); err != nil {
-		return nil, "", err
+	found, err := read(listenerRun(ctx))
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return Read{}, ctxErr
 	}
 	if err != nil {
-		if partial, ok := PartialRows(err); ok {
-			return mergeAddresses(partial), source, err
+		partial, ok := PartialRows(err)
+		if !ok {
+			return Read{Source: found.Source, Skip: found.Skip}, err
 		}
-		return nil, source, err
+		found.Rows = mergeAddresses(partial)
+		return found, err
 	}
-	return mergeAddresses(rows), source, nil
+	found.Rows = mergeAddresses(found.Rows)
+	return found, nil
+}
+
+// listenerRun is the command seam for one context-owned read: every collector
+// command runs under the caller's ownership.
+func listenerRun(ctx context.Context) listenerCommand {
+	return func(name string, args ...string) ([]byte, []byte, error) {
+		return executeListenerCommandContext(ctx, name, args...)
+	}
+}
+
+// scanContextSource is the plain single-table read, without a breaker. The
+// self-probe uses it so it tests exactly what a real read does; it must not call
+// the probe itself, or a blind process would recurse instead of reporting the
+// blind spot.
+func scanContextSource(ctx context.Context) ([]ListeningPort, string, error) {
+	read, err := ScanContextRead(ctx, nil)
+	return read.Rows, read.Source, err
 }
 
 type listenerCommand func(string, ...string) (stdout, stderr []byte, err error)
@@ -108,6 +186,12 @@ func collectListeners(platform string, run listenerCommand) ([]ListeningPort, er
 
 // collectListenersSource walks the platform's collector chain and reports which
 // rung answered.
+func collectListenersSource(platform string, run listenerCommand) ([]ListeningPort, string, error) {
+	read, err := readChain(platform, run, nil)
+	return read.Rows, read.Source, err
+}
+
+// readChain walks the platform's collector chain and reports what it read.
 //
 // The primary is unnamed and its answer is the platform's own: nothing else is
 // tried once it has spoken. An alternative that answers is named, because a
@@ -115,18 +199,30 @@ func collectListeners(platform string, run listenerCommand) ([]ListeningPort, er
 // from. When no rung answers, the primary's failure keeps its code and hint —
 // "this process is not allowed to look" stays distinguishable from "the machine
 // is idle" — and the other rungs' reasons ride in the same sentence.
-func collectListenersSource(platform string, run listenerCommand) ([]ListeningPort, string, error) {
+//
+// gate, when non-nil, decides whether the primary runs at all (see
+// attemptPrimary). Skipping it changes nothing a reader may conclude: the
+// alternatives are read exactly as they would have been, and the read says out
+// loud that the primary did not run.
+func readChain(platform string, run listenerCommand, gate *breaker.Breaker) (Read, error) {
 	rungs := chain(platform)
 	if len(rungs) == 0 {
-		return nil, "", fmt.Errorf("unsupported platform: %s", platform)
+		return Read{}, fmt.Errorf("unsupported platform: %s", platform)
 	}
-	rows, err := rungs[0].collect(run)
-	if err == nil || !retryable(rows, err) {
-		return rows, "", err
+	rows, err, skip := attemptPrimary(rungs, run, gate)
+	if err == nil || (skip == nil && !retryable(rows, err)) {
+		return Read{Rows: rows, Skip: skip}, err
 	}
-	primary := err
+	rows, source, err := readAlternatives(rungs[1:], run, err)
+	return Read{Rows: rows, Source: source, Skip: skip}, err
+}
+
+// readAlternatives reads the rungs after the primary, in order, and reports the
+// first one that produced rows. primary is the reason the primary's own table is
+// not the answer, and it stays the reported failure when none of them answers.
+func readAlternatives(rungs []Collector, run listenerCommand, primary error) ([]ListeningPort, string, error) {
 	var others []error
-	for _, rung := range rungs[1:] {
+	for _, rung := range rungs {
 		rows, err := rung.collect(run)
 		if err == nil && len(rows) > 0 {
 			return rows, rung.Name, nil

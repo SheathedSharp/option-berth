@@ -48,7 +48,8 @@ func (c Capabilities) limits() []string {
 // reaches the OS only through the listenerCommand seam.
 type Collector struct {
 	// Name is what observation.source publishes when this collector answers and
-	// it is not the platform's primary one. For every shipped collector it is
+	// it is not the platform's primary one, and what a merged read stamps on
+	// every row this collector contributed. For every shipped collector it is
 	// the command that answered.
 	Name string
 	// Capabilities is what this collector's table covers.

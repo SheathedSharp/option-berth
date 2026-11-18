@@ -47,6 +47,8 @@ var ErrStale = attn.ErrStale
 type TaskContext struct {
 	Task              string   `json:"task"`
 	AuthorizedOptions []string `json:"authorized_options"`
+	Services          []string `json:"services,omitempty"`
+	RunIDs            []string `json:"run_ids,omitempty"`
 }
 
 // FilterAuthorizedOptions validates the agent's explicit option vocabulary and
@@ -296,6 +298,14 @@ func (c Client) EvaluateObserved(ctx context.Context, artifact attn.Artifact, ta
 func assessmentContextID(task TaskContext, authorized []string) string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%s\x00", strings.TrimSpace(task.Task))
+	for _, targets := range [][]string{task.Services, task.RunIDs} {
+		sorted := append([]string(nil), targets...)
+		sort.Strings(sorted)
+		_, _ = fmt.Fprint(h, "scope\x00")
+		for _, target := range sorted {
+			_, _ = fmt.Fprintf(h, "%s\x00", target)
+		}
+	}
 	for _, option := range authorized {
 		_, _ = fmt.Fprintf(h, "%s\x00", option)
 	}

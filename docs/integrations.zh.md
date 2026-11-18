@@ -10,8 +10,11 @@
 
 接入方式是**用户在自己的脚本里调用 CLI**：工具提供 setup / run / cleanup 槽位的，把 `oberth`
 命令粘进去；没有槽位的，用外层 wrapper 或 `AGENTS.md` 说明。这些脚本和配置都由用户自己创建；
-option-berth 不安装 hooks、不注册 MCP、不修改任何工具的配置，也不分发集成代码；接口仍然只有
+option-berth 不安装 hooks、不注册 MCP、不修改任何工具的配置，只提供下述明确启用的 CLI 处理器；接口仍然是
 CLI 与 `--json`。
+
+
+Claude Code 还可通过审阅后的项目设置启用内建 CLI 生命周期处理器，不需要包装脚本，原生终端、权限和答复仍由 Claude 负责。见[项目 hook 合同](cli/handoff.zh.md#原生-claude-项目-hooks)；它与下方服务销毁流程不同，不会在任务结束时停共享服务。
 
 ## 版本前提
 

@@ -34,21 +34,32 @@ func killThroughRuntimeService(ctx context.Context, conn *client.Client, args []
 	if err != nil {
 		return cliError(err)
 	}
-	targets, confirm, err := killTargets(args, rows, bindIP)
+	resolved, err := resolveKill(ctx, conn, args, rows, bindIP)
 	if err != nil {
 		return err
 	}
-	if len(targets) == 0 {
+	if resolved.empty() {
 		return reportKill(os.Stdout, nil, rows, killJSONFlag, killDryRunFlag)
 	}
 
 	opts := killOptions()
+	// A run is a tree; this is the same rule killDirect applies, so both paths
+	// ask the host for exactly the same stop.
+	opts.Tree = opts.Tree || resolved.tree
+	// A host that predates exact-run stops would answer a named run with
+	// groups.kill's default, which is the whole group. Refuse instead: the
+	// alternative is stopping everything the caller did not name.
+	if len(resolved.runs) > 0 && !hasCapability(conn.Hello(), rpc.CapabilityKillRuns) {
+		return failHint("runtime_service_unavailable",
+			"this runtime service does not know exact-run stops",
+			"restart the runtime service with `oberth runtime service restart`, then retry")
+	}
 	return killRequest{
-		exec:     killInRuntimeService(conn),
-		targets:  targets,
+		exec:     killInRuntimeService(conn, resolved),
+		targets:  resolved.targets,
 		snapshot: rows,
 		opts:     opts,
-		confirm:  confirm && !killYesFlag && !killDryRunFlag,
+		confirm:  resolved.confirm && !killYesFlag && !killDryRunFlag,
 		asJSON:   killJSONFlag,
 	}.execute(ctx)
 }
@@ -56,13 +67,24 @@ func killThroughRuntimeService(ctx context.Context, conn *client.Client, args []
 // killInRuntimeService is the executor that asks the runtime service to signal and then
 // rescan. The method choice is made once per round from the same selection
 // the direct path would use.
-func killInRuntimeService(c *client.Client) killExecutor {
+func killInRuntimeService(c *client.Client, resolved killResolution) killExecutor {
 	return func(ctx context.Context, targets []killer.Target, opts killer.Options, dryRun bool) ([]killer.Result, error) {
 		if err := guardRuntimeServiceKill(c); err != nil {
 			return nil, err
 		}
-		switch killMethodFor(killGroupFlag, opts) {
-		case "groups.kill":
+		switch {
+		case len(resolved.runs) > 0:
+			// A named run stops as a run: `groups.kill`'s run selector captures
+			// each generation from the ledger that owns it, under the group
+			// lock, and records the ending as stopped rather than as a crash. A
+			// pid selector would carry none of that — the wire has no field for
+			// a birth time — so the claim would stop being checked the moment it
+			// left this process.
+			var env rpc.KillEnvelope
+			err := c.Call(ctx, "groups.kill",
+				runStopParams(resolved.group, runIDs(resolved.runs), opts, dryRun), &env)
+			return env.Results, err
+		case killMethodFor(killGroupFlag, opts) == "groups.kill":
 			var env rpc.KillEnvelope
 			err := c.Call(ctx, "groups.kill", rpc.GroupsKillParams{
 				Name:    killGroupFlag,
@@ -96,6 +118,33 @@ func killMethodFor(group string, opts killer.Options) string {
 		return "groups.kill"
 	}
 	return "ports.kill"
+}
+
+// runStopParams is the wire form of a named-run stop: the group the runs belong
+// to and the run ids, plus how to stop them.
+//
+// Every field that widens a stop is left at its zero value on purpose. `only`,
+// `expect_runs` and `release` each select a different set — services, expected
+// generations, or the whole group's runs — and a caller that named two runs must
+// not reach a third.
+func runStopParams(group string, runs []string, opts killer.Options, dryRun bool) rpc.GroupsKillParams {
+	return rpc.GroupsKillParams{
+		Name:    group,
+		Runs:    runs,
+		Force:   opts.Force,
+		GraceMs: graceMs(opts),
+		DryRun:  dryRun,
+	}
+}
+
+// runIDs is the identity list a named-run stop sends: the run ids, in the order
+// the caller named them.
+func runIDs(records []rpc.RunRecord) []string {
+	ids := make([]string, 0, len(records))
+	for _, rec := range records {
+		ids = append(ids, rec.ID)
+	}
+	return ids
 }
 
 // killSelectors turns resolved targets into wire selectors. A selector carries

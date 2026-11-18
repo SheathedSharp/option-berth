@@ -17,10 +17,9 @@ import (
 
 // Recording the work a command started.
 //
-// `oberth start` and `oberth agent stream` are the two places where work
-// happens under this engine's own eyes, so they are where the workplace record
+// `oberth start` runs work under this engine's own eyes, so its workplace record
 // fills itself in. Everything here is best effort by design: the command's job
-// is to run a command or to bridge an agent, and a record that cannot be
+// is to run a command, and a record that cannot be
 // written is a diagnostic, never a failure of that job.
 //
 // Two rules keep the recording honest:
@@ -37,7 +36,7 @@ const (
 	// record is bookkeeping beside work someone is waiting on.
 	recordTimeout = 3 * time.Second
 	// recordQueueDepth is how many events may be waiting to be written. A
-	// bridge emits a handful per turn, so this is far more than a healthy
+	// shell run emits only its start/end, so this is far more than a healthy
 	// runtime service needs and small enough that a wedged one cannot grow it.
 	recordQueueDepth = 64
 )
@@ -45,7 +44,6 @@ const (
 // workplaceRecorder writes work into the active workplace of one worktree.
 type workplaceRecorder struct {
 	root   string
-	prefix string
 	events chan workplace.Record
 	stop   chan struct{}
 	done   chan struct{}
@@ -63,7 +61,6 @@ func startRecording(dir string) *workplaceRecorder {
 	}
 	r := &workplaceRecorder{
 		root:   root,
-		prefix: workplace.NewID(),
 		events: make(chan workplace.Record, recordQueueDepth),
 		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
@@ -206,46 +203,4 @@ func (r *workplaceRecorder) endShell(blockID string, code int, interrupted bool)
 		Status: workplace.StatusForExit(code, interrupted), ExitCode: &exit,
 		EndedAt: time.Now().UTC(),
 	})
-}
-
-// bridgeEvents turns the structured bridge's own events into workplace
-// records: one block per turn, opened when the turn starts and closed when the
-// provider says how it ended.
-//
-// The block id is this bridge process's random prefix plus the turn id. The
-// provider's session id is deliberately not used: resuming a session in a new
-// bridge would then reuse turn ids and merge two runs of work into one block.
-func (r *workplaceRecorder) bridgeEvents(provider string) func(map[string]any) {
-	if r == nil {
-		// No worktree to record into: the bridge runs with no observer at all
-		// rather than with one that drops everything.
-		return nil
-	}
-	return func(event map[string]any) {
-		turn, _ := event["turn"].(string)
-		if turn == "" {
-			return
-		}
-		id := r.prefix + ":" + turn
-		switch event["type"] {
-		case "turn.started":
-			text, _ := event["input"].(string)
-			r.Observe(workplace.Record{
-				ID: id, Kind: workplace.KindAgent, Source: workplace.SourceEngine,
-				Input: text, Status: workplace.StatusRunning, Provider: provider,
-				StartedAt: time.Now().UTC(),
-			})
-		case "turn.completed":
-			outcome, _ := event["outcome"].(string)
-			// The prompt is not repeated here: the bridge knows it, but
-			// re-sending it would be a second copy of the same text to keep in
-			// step. The provider is repeated so an end that arrives on its own
-			// still says which agent ran the turn.
-			r.Observe(workplace.Record{
-				ID: id, Kind: workplace.KindAgent, Source: workplace.SourceEngine,
-				Status: workplace.StatusForOutcome(outcome), Provider: provider,
-				EndedAt: time.Now().UTC(),
-			})
-		}
-	}
 }

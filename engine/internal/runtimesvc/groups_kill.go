@@ -151,7 +151,11 @@ func handleGroupsKill(ctx context.Context, req *Request) (any, error) {
 		opts.OnSignal = stopSignalObserver(req.HostContext, snap, targets, opts.DryRun, p.Reason)
 		rows = killer.KillPorts(ctx, targets, opts)
 	}
-	if (p.Release || len(runs) > 0) && !p.DryRun {
+	// The silent pass runs in a dry run too: a plan that skipped the runs holding
+	// no port would answer "nothing to stop" for a run that is running, and a
+	// named run with no listener is exactly what the run selector is for. opts
+	// carries DryRun, so this plans without signalling either way.
+	if p.Release || len(runs) > 0 {
 		// Reuse the identities and receipt captured before the port pass.
 		// Never fetch a replacement generation by PID between the two passes.
 		if len(pidTargets) > 0 {

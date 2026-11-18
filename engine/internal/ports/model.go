@@ -52,6 +52,15 @@ type ListeningPort struct {
 	// direct scan, the registered name for a row that came through a runtime.service.
 	Host string
 
+	// Source names the collector that produced this row, set only by a merged
+	// read (ScanContextSources): there each rung of the chain contributed some
+	// of the rows, and a row that does not say which one cannot be weighed,
+	// because the rungs cover different sets of sockets. A single-collector read
+	// leaves it empty and names the one collector of the round in
+	// observation.source instead — stamping it on every row would repeat that
+	// fact per row and make a single read look like a merge.
+	Source string
+
 	// Display is a name already resolved elsewhere. The runtime service sets it when it
 	// turns a published state.Port back into a scanner row, because the wire
 	// does not carry the parent command line DisplayName would need. Empty on

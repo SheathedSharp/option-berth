@@ -82,8 +82,9 @@ The normal unit gate includes these packages. The shared race manifest adds the 
 
 ### Agent contract and skill coverage
 
-`scripts/check_skill_contract.py` extracts anchors from `docs/cli.md` (stable error codes, the
-manifest reference table, and the table of JSON fields that agents read),
+`scripts/check_skill_contract.py` extracts anchors from the CLI contract (`docs/cli.md` with the
+topic pages under `docs/cli/`: the stable error codes, the manifest reference table, and the table of
+JSON fields that agents read),
 `engine/docs/schema/manifest.schema.json` (manifest fields and the three `health` forms), and
 `engine/internal/state/observation.go` (`observation.state`), and requires both the skill's
 `SKILL.md` and `references/*.md` to mention them. The Linux job of `Engine verification` checks out
@@ -275,7 +276,7 @@ Not run: the nightly workflow itself, and `-race` on the scenario package.
 **The optional-Jev hint was unreachable (2026-11-02)**: `status` never showed the one-line offer of
 the enhancement. The hint required "Jev off **and** an `attention_path`", but the consent gate makes
 the artifact exist only when Jev is on, so the two halves could not hold at once. The contract text
-in [cli.md](../cli.md) "Listener observation and the optional Jev enhancement" described the hint as
+in [cli/facts.md](../cli/facts.md) "Listener observation and the optional Jev enhancement" described the hint as
 working; the code silently did not.
 
 Deriving and publishing are now two decisions. `publishAttention` always runs the deterministic

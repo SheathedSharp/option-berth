@@ -12,12 +12,18 @@ SPEC = importlib.util.spec_from_file_location(
 contract = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(contract)
 
-CLI = (ROOT / "docs" / "cli.md").read_text(encoding="utf-8")
+CLI = contract.read_contract(ROOT / "docs" / "cli.md")
 SCHEMA = json.loads((ROOT / "engine" / "docs" / "schema" / "manifest.schema.json").read_text())
 OBSERVATION = (ROOT / "engine" / "internal" / "state" / "observation.go").read_text()
 
 
 class ExtractionTests(unittest.TestCase):
+    def test_read_contract_covers_the_hub_and_its_topic_pages(self):
+        text = contract.read_contract(ROOT / "docs" / "cli.md")
+        self.assertIn("The stable codes are", text)  # the hub page
+        self.assertIn("## Manifest references", text)  # declaration topic page
+        self.assertIn("# Agent-facing JSON fields", text)  # JSON topic page
+
     def test_stable_error_codes_include_every_observation_code(self):
         codes = contract.stable_error_codes(CLI)
         for code in (
@@ -64,6 +70,7 @@ class ExtractionTests(unittest.TestCase):
                 "observation.sources",
                 "observation.degraded_since",
                 "observation.recovered_at",
+                "ports[].source",
                 "machine[].listening_known",
                 "attn_path",
                 "attn",
