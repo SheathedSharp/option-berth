@@ -7,7 +7,7 @@ from the path alone, whether a page is written for a person or for a coding agen
 
 | Reader | Path | Language | Carries |
 |---|---|---|---|
-| A person using or integrating `oberth` | `docs/*.md` | English and Simplified Chinese, paired | Task guides and external contracts: getting started, worktrees, CLI, installation, attention, integrations, work records |
+| A person using or integrating `oberth` | `docs/*.md` and `docs/cli/` | English and Simplified Chinese, paired | Task guides and external contracts: getting started, worktrees, CLI, installation, attention, integrations, work records |
 | Engineering history (not current acceptance) | `docs/agent/history/` | Preserved original language | Dated traces, previous plans and validation logs, each marked as historical |
 | A coding agent working on this repository | `docs/agent/*.md` | English only | Engineering process: architecture boundaries, build, validation, release, the scenario library |
 
@@ -41,9 +41,9 @@ in one of its homes and nobody can tell which.
 
 ## Bilingual pairs under `docs/`
 
-Each `docs/foo.md` has a `docs/foo.zh.md`. Both carry equal authority: either may be authored first and
-the counterpart is translated from it, but they must say the same thing. What binds them is meaning, not
-form.
+Each `docs/foo.md` has a `docs/foo.zh.md` in the same directory. Both carry equal authority: either may
+be authored first and the counterpart is translated from it, but they must say the same thing. What
+binds them is meaning, not form.
 
 - **A pair merges whole.** A PR never lands one language without the other.
 - **Structure mirrors.** Heading depth and order, list kinds and item counts, table row and column
