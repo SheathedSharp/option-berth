@@ -291,3 +291,14 @@ func QualityReport(lookback time.Duration, projectFilter string) (model.QualityR
 	report.Source = model.TelemetryPath(home)
 	return report, nil
 }
+
+// AppendDeliveryTelemetry records that a hook response included a finding.
+// It is best effort and must never write a human feedback label.
+func AppendDeliveryTelemetry(home, project, eventID, revision string) {
+	root, _ := filepath.Abs(project)
+	_, _ = model.AppendTelemetry(home, model.TelemetryRecord{
+		Kind: "lifecycle", Source: "claude-hook", Status: "delivered",
+		Project: model.ProjectLabel(root), WorktreeID: model.WorktreeID(root),
+		EventID: eventID, StateRevision: revision,
+	})
+}

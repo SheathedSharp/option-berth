@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attn"
@@ -21,6 +22,13 @@ import (
 
 const Summary = "Development task in the explicitly selected project; runtime relevance is unknown."
 const MaxLease = 10 * time.Minute
+
+// HookCommandTimeout is the hook process budget and the print-config timeout.
+// It must exceed the Attention client timeout so Stop can join an in-flight
+// model call before consume.
+const HookCommandTimeout = 20 * time.Second
+
+const previousFindingSeparator = "\n\n"
 
 // The deliberately small input ignores prompt, transcripts, answers and error_details.
 type Input struct {
@@ -67,6 +75,9 @@ type Adapter struct {
 	Observe    func(context.Context, model.TaskContext, func(runner.Output) error) error
 	Fresh      func(context.Context, model.TaskContext, Feedback) bool
 	Spawn      func(string, string) error
+	// Delivered is invoked after a finding has been included in a hook
+	// response. It must not write human feedback labels.
+	Delivered func(Feedback)
 }
 
 func Decode(r io.Reader) (Input, error) {
@@ -198,6 +209,27 @@ func runtimeContextReason(err error) string {
 	}
 	return base + ":" + cause
 }
+
+// pendingStillFresh reports whether a finding may still be delivered after the
+// observer lease clock has stopped. Lost, cancelled or stale findings stay
+// undeliverable.
+func pendingStillFresh(s Lease, now time.Time) bool {
+	if s.Pending == nil {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339Nano, s.Pending.Until)
+	return err == nil && now.Before(until)
+}
+func attachPreviousFinding(out, finding Response) Response {
+	text := finding.Reason
+	if out.Specific == nil {
+		out.Specific = &Context{Event: "UserPromptSubmit", Text: text}
+		return out
+	}
+	out.Specific.Text = strings.TrimSpace(out.Specific.Text + previousFindingSeparator + text)
+	return out
+}
+
 func (a Adapter) policy() error {
 	if a.EditOnly {
 		return errors.New("pure_edit")
@@ -260,7 +292,21 @@ func (a Adapter) Handle(ctx context.Context, in Input) (Response, error) {
 		return message("unavailable", "observer_stop_unconfirmed"), nil
 	}
 	if in.Event == "UserPromptSubmit" {
-		return a.submit(ctx, key)
+		previous, previousErr := a.load(key)
+		out, err := a.submit(ctx, key)
+		if err != nil {
+			return out, err
+		}
+		if previousErr == nil && !previous.Consumed {
+			finding := a.consume(ctx, previous)
+			if finding.Decision == "block" && previous.Pending != nil {
+				out = attachPreviousFinding(out, finding)
+				if a.Delivered != nil {
+					a.Delivered(*previous.Pending)
+				}
+			}
+		}
+		return out, nil
 	}
 	s, e := a.load(key)
 	if os.IsNotExist(e) {
@@ -275,6 +321,7 @@ func (a Adapter) Handle(ctx context.Context, in Input) (Response, error) {
 	}
 	// Persist consumption before emitting feedback. A crash loses feedback rather
 	// than replaying it after restart. Unknown/expired/killed leases fail closed.
+	delivered := s.Pending
 	s.Consumed = true
 	s.Active = false
 	s.Pending = nil
@@ -282,6 +329,9 @@ func (a Adapter) Handle(ctx context.Context, in Input) (Response, error) {
 	s.Reason = response.Message
 	if e = a.save(key, s); e != nil {
 		return Response{}, e
+	}
+	if response.Decision == "block" && a.Delivered != nil && delivered != nil {
+		a.Delivered(*delivered)
 	}
 	return response, nil
 }
@@ -373,7 +423,8 @@ func (a Adapter) consume(ctx context.Context, s Lease) Response {
 	if s.Consumed {
 		return message("stopped", "already_consumed")
 	}
-	if !time.Now().Before(s.Expires) {
+	now := time.Now()
+	if !now.Before(s.Expires) && !pendingStillFresh(s, now) {
 		return message("stopped", "lease_expired")
 	}
 	if s.Status == "not_attached" {
@@ -505,7 +556,9 @@ func (a Adapter) Run(ctx context.Context, key, generation string) error {
 		switch {
 		case !time.Now().Before(v.Expires):
 			v.Reason = "lease_expired"
-			v.Pending = nil
+			if !pendingStillFresh(*v, time.Now()) {
+				v.Pending = nil
+			}
 		case ctx.Err() != nil || !stopRequested:
 			v.Reason = "observer_cancelled_or_lost"
 			v.Pending = nil

@@ -126,7 +126,7 @@ oberth agent claude-hook --project "$PWD" --service api \
   --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m --print-config
 ```
 
-该命令只打印 JSON。`--print-config` 同样必须带 `--project`，不会从当前目录推断项目。审阅后把其中 `hooks` 合入所选项目的 `.claude/settings.json`，不要覆盖其他设置；按 Claude 正常的项目信任流程开启新的原生会话。命令不写设置、不安装全局 hook，也不更改 Attention 同意状态。保留 `UserPromptSubmit` 的 `onFailure: "block"`：若任务入口失败或超时，应阻止该 prompt，而不是让后续 Stop 消费上个任务的租约；该行为依赖已验证版本的官方协议。[示例配置](../../examples/claude-hooks/settings.example.json) 给出最小结构；可执行文件不在常规 PATH 时优先使用生成结果。已安装的 skill 一致不能证明 hooks 已执行。
+该命令只打印 JSON。`--print-config` 同样必须带 `--project`，不会从当前目录推断项目。审阅后把其中 `hooks` 合入所选项目的 `.claude/settings.json`，不要覆盖其他设置；按 Claude 正常的项目信任流程开启新的原生会话。命令不写设置、不安装全局 hook，也不更改 Attention 同意状态。保留 `UserPromptSubmit` 的 `onFailure: "block"`：若任务入口失败或超时，应阻止该 prompt，而不是让后续 Stop 消费上个任务的租约；该行为依赖已验证版本的官方协议。[示例配置](../../examples/claude-hooks/settings.example.json) 给出最小结构；可执行文件不在常规 PATH 时优先使用生成结果。已安装的 skill 一致不能证明 hooks 已执行。`oberth doctor --only claude_hooks` 只读检查项目可提交的 `.claude/settings.json`，不读 `settings.local.json` 或用户全局 Claude 配置，也不写入 hooks。若该文件已经启用 hook 命令，但把 `timeout` 写成低于 20 秒，或传入短于 hook 命令预算的 `--lease`，该行会发出警告：换上新的 oberth 二进制也无法阻止 Claude 先切断更短的 hook 超时。省略 `timeout` 时沿用 Claude 的官方默认值（UserPromptSubmit 为 30 秒，Stop 为 600 秒），不按过短预算警告。
 
 `--project` 必填，必须与 hook 输入解析到同一 worktree。`--service` 选声明服务；`--run` 选已登记的精确运行 ID，包括无端口 worker；两者都接受逗号分隔值。不认领同名陌生进程或替换代际的临时运行。`--authorize` 是固定只读评估选项的明确子集，不是工具或操作许可。范围在租约内固定；后来创建的临时运行需要在后续项目/任务配置中明确关联。不生成清单、不扫描 home、不启动缺失服务。已有 Runtime 必须认识所选项目；服务缺失、项目未登记或 Runtime 上下文不可用时返回 `runtime_context_unavailable`，不会转为全机扫描。原因已知时会限定为 `runtime_context_unavailable:runtime_service_required`、`runtime_context_unavailable:project_not_registered_in_runtime` 或 `runtime_context_unavailable:timeout`。未知的 Prepare 失败保持不加限定，避免把原始 RPC 文本写入 hook 消息。hook 不读源码、git diff 或日志正文。任务确实需要服务时仍走已有授权的 `up`/`start`，健康的既有运行作为事实复用。
 
@@ -136,7 +136,7 @@ oberth agent claude-hook --project "$PWD" --service api \
 
 到 `Stop` 时，hook 取消并等待自己的观察器回收，再核同意状态、配置身份、范围、事件修订与新鲜度。相关只读建议与需请人选择/评估不可用的发现都能返回。通过官方顶层 `decision: "block"` / `reason` JSON，给同一原生 Claude 任务**至多一次**有界报告/检查反馈；`systemMessage` 说明本地状态。不注入按键、不偷读 transcript、不新增工具权限、不自动控制服务。先记录已消费再输出：崩溃可能丢一次反馈，但不会重放。`stop_hook_active` 和消费游标防循环；得到原生答复不等于发现已修好。
 
-`StopFailure`、`SessionEnd` 只回收，不继续；新提交任务替换并等待旧代际回收。默认且最长不可续租时间为 `10m`，`--lease` 可缩短；丢失、过期或被杀的观察器不恢复，旧待交付反馈被丢弃。若用户中断没有提供 Stop/SessionEnd，靠下次 prompt 或租约到期回收，不宣称收到即时回调。清理不停止共享服务。`BERTH_HOME/attention/claude/` 只保存少量用户私有交付游标，不是另一份运行 registry。删除项目 hooks 不会同步通知已经持有的租约；可关闭 Attention 撤销评估，或让有界租约结束。不要求会话级或全局 hooks。
+`StopFailure`、`SessionEnd` 只回收，不继续；新提交任务替换并等待旧代际回收。默认且最长不可续租时间为 `10m`，`--lease` 可缩短。丢失或被杀的观察器不会恢复。观察器租约到期时，若 Pending 仍然新鲜，`Stop` 仍可交付；同一会话稍后的 `UserPromptSubmit` 会在开启新代际之前，把上一代未消费发现写入新 prompt 上下文。过期的 Pending 仍会被丢弃。hook 命令预算与 `--print-config` 的 `timeout` 使用同一值，并且大于 Attention 客户端超时，以便 `Stop` 能够等待仍持有 `active.lock` 的评估。成功交付只写入生命周期遥测，不会伪造人工或 Attention feedback 标签。若用户中断没有提供 Stop/SessionEnd，靠下次 prompt 或租约到期回收，不宣称收到即时回调。清理不停止共享服务。`BERTH_HOME/attention/claude/` 只保存少量用户私有交付游标，不是另一份运行 registry。删除项目 hooks 不会同步通知已经持有的租约；可关闭 Attention 撤销评估，或让有界租约结束。不要求会话级或全局 hooks。
 
 
 
