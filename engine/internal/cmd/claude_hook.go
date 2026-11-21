@@ -51,7 +51,7 @@ func addClaudeHooks(parent *cobra.Command) {
 		a.Task = model.TaskContext{Task: claudehook.Summary, Services: services, RunIDs: ids, AuthorizedOptions: authorized}
 		a.Duration = lease
 		a.EditOnly = os.Getenv("OBERTH_CLAUDE_TASK_MODE") == "edit"
-		ctx, cancel := context.WithTimeout(cmd.Context(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(cmd.Context(), claudehook.HookCommandTimeout)
 		defer cancel()
 		out, err := a.Handle(ctx, in)
 		if err != nil {
@@ -76,7 +76,7 @@ func addClaudeHooks(parent *cobra.Command) {
 		}
 		root, err := resolveWorktree(project)
 		if project == "" || err != nil {
-			return errors.New("explicit project worktree required")
+			return errors.New("print-config requires --project <worktree>; hook configuration is per project and is not inferred from this directory")
 		}
 		binary, err := os.Executable()
 		if err != nil {
@@ -110,7 +110,7 @@ func addClaudeHooks(parent *cobra.Command) {
 			if event == "UserPromptSubmit" {
 				failure = "block"
 			}
-			hooks[event] = []group{{Hooks: []entry{{Type: "command", Command: strings.Join(argv, " "), Timeout: 10, OnFailure: failure}}}}
+			hooks[event] = []group{{Hooks: []entry{{Type: "command", Command: strings.Join(argv, " "), Timeout: int(claudehook.HookCommandTimeout / time.Second), OnFailure: failure}}}}
 		}
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -142,6 +142,9 @@ func claudeAdapter(root string) claudehook.Adapter {
 	}
 	identity := hex.EncodeToString(hash)
 	a := claudehook.Adapter{Home: paths.Dir(), Root: root, Identity: identity}
+	a.Delivered = func(f claudehook.Feedback) {
+		runner.AppendDeliveryTelemetry(runner.TelemetryHome(), root, f.EventID, f.Revision)
+	}
 	a.Consent = func() error {
 		if identityErr != nil {
 			return errors.New("configuration_identity_unavailable")

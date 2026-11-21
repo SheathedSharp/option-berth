@@ -137,10 +137,31 @@ func TestProjectConfig(t *testing.T) {
 		wantStatus(t, checkProjectConfig(context.Background(), env), StatusSkip)
 	})
 
-	t.Run("absent warns and points at oberth init", func(t *testing.T) {
+	t.Run("absent outside a git worktree does not suggest init here", func(t *testing.T) {
 		row := run(t, fakeEnv(t), checkProjectConfig)
 		wantStatus(t, row, StatusWarn)
-		if !strings.Contains(row.Fix, "oberth init") {
+		if !strings.Contains(row.Summary, "not a git worktree") {
+			t.Errorf("summary = %q, want a non-project directory", row.Summary)
+		}
+		if !strings.Contains(row.Fix, "--project") {
+			t.Errorf("fix = %q, want --project or a project directory", row.Fix)
+		}
+		if strings.Contains(row.Fix, "oberth init writes one") {
+			t.Errorf("fix = %q, must not recommend init outside a project", row.Fix)
+		}
+	})
+
+	t.Run("absent in a git worktree points at oberth init", func(t *testing.T) {
+		env := fakeEnv(t)
+		if out, err := exec.Command("git", "-C", env.Project, "init", "-q").CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v %s", err, out)
+		}
+		row := run(t, env, checkProjectConfig)
+		wantStatus(t, row, StatusWarn)
+		if !strings.Contains(row.Summary, "no oberth.yaml for this project") {
+			t.Errorf("summary = %q", row.Summary)
+		}
+		if !strings.Contains(row.Fix, "oberth init writes one") {
 			t.Errorf("fix = %q", row.Fix)
 		}
 	})
