@@ -18,6 +18,19 @@ oberth attn assess --dry-run
 
 For native Claude/cld, explicit project hooks can attach the existing runner and return a fresh finding through the official Stop channel. Enable the project once; `on` or a skill alone cannot attach an arbitrary running agent. See the [native hook contract](cli/handoff.md#native-claude-project-hooks).
 
+## Judging whether it helped
+
+`oberth attn on` and a passing doctor row only mean assessment is allowed. They do not mean findings reached the current coding agent, or that a person agreed with the advice.
+
+In a git worktree, `oberth attn status` also reports:
+
+- the last assessment status when there is recent activity, such as `human_required`
+- whether the project's committed `.claude/settings.json` enables oberth's Claude hooks; `settings.local.json` is ignored
+- whether hook delivery leases for this worktree were consumed
+- whether a published artifact was followed by an observation, without starting one
+
+`oberth attn status --quality` prints the same ledger in ordinary text, including how many cases have a person's decision. Model calls and cache hits are not proof that Attention helped. To return findings through Claude, review `oberth agent claude-hook --project <worktree> --print-config` and merge it into the project's `.claude/settings.json` yourself; none of these commands write that file.
+
 ## Configure and consent separately
 
 Run the following only after deciding to configure a provider. `config` asks for provider, model and hidden key input, then makes one synthetic network probe before saving an owner-only settings file. The probe contains no worktree facts, but still contacts the provider and may incur its charges. If it fails, the existing settings are not replaced. Configuration alone does not enable real assessments.
