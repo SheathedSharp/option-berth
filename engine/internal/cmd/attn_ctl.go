@@ -39,9 +39,11 @@ var attnStatusCmd = &cobra.Command{
 		"printed, only a short fingerprint.\n\n" +
 		"With --json an agent gets the decision document: consent plus the quality\n" +
 		"counters that say whether a task runner is observing and whether anything is\n" +
-		"happening. `--quality` adds the full ledger report (label coverage,\n" +
-		"calibration, routing and action metrics); `--since` and `--quality-project`\n" +
-		"narrow that report, so they imply `--quality`.",
+		"happening. In a git worktree, status also reports whether committed project\n" +
+		"hooks are enabled, whether hook findings were consumed, and whether a\n" +
+		"published artifact was followed by an observation. `--quality` adds the full\n" +
+		"ledger report (label coverage, calibration, routing and action metrics);\n" +
+		"`--since` and `--quality-project` narrow that report, so they imply `--quality`.",
 	Args: cobra.NoArgs,
 	RunE: runAttnStatus,
 }
@@ -134,6 +136,8 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	state["quality"] = attnStatusQuality(cmd, report)
+	loop := collectAttnLoopFacts(attnProjectFlag, report.Activity)
+	applyAttnLoopJSON(state, loop)
 	return attnPrint(state, func() string {
 		var b strings.Builder
 		switch {
@@ -163,11 +167,9 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintf(&b, "  assessment unavailable (%s)\n", consent.Reason)
 		}
 		fmt.Fprintf(&b, "  activity  %s\n", model.ActivitySummary(report.Activity))
-		if consent.Enabled && consent.Reason == "" && report.Activity.State == "no_session" {
-			b.WriteString("  next      attach a task-scoped `oberth attn assess --follow --project <worktree> --task <summary> --authorize <fixed-options>`; no background session was started\n")
-		}
-		if !consent.Enabled || consent.Reason != "" {
-			fmt.Fprintf(&b, "  next      %s\n", model.ReasonHint(consent.Reason))
+		writeAttnLoopText(&b, loop)
+		if next := attnLoopNext(loop, consent, report.Activity); next != "" {
+			fmt.Fprintf(&b, "  next      %s\n", next)
 		}
 		return strings.TrimRight(b.String(), "\n")
 	})
