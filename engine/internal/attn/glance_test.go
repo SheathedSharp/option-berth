@@ -81,3 +81,43 @@ func TestGlanceAtHidesUnknownKindAndDoesNotRequireFreshness(t *testing.T) {
 		t.Fatalf("unknown kind leaked or missing presence: %+v", got)
 	}
 }
+
+func TestGlanceAtSameSecondEarlierObservationIsNotFollowed(t *testing.T) {
+	home := t.TempDir()
+	root := "/tmp/same-second-worktree"
+	body := `{
+		"schema":"oberth.attn/v1",
+		"event_id":"event-three",
+		"state_revision":"rev-three",
+		"worktree_root":"` + root + `",
+		"generated_at":"2026-11-20T09:52:57.800000Z",
+		"fresh_until":"2026-11-20T10:02:57.800000Z",
+		"first_seen":"2026-11-20T09:52:57.800000Z",
+		"last_seen":"2026-11-20T09:52:57.800000Z",
+		"event":{"kind":"ready_timeout","at":"2026-11-20T09:52:57.800000Z"},
+		"evidence":[],
+		"options":[]
+	}`
+	if err := os.MkdirAll(home+"/attention", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(home, root), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GlanceAt(home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Present || got.GeneratedAt != "2026-11-20T09:52:57Z" {
+		t.Fatalf("display timestamp = %+v", got)
+	}
+	if got.ObservedAfter("2026-11-20T09:52:57.100000Z") {
+		t.Fatal("an earlier observation in the same second was reported as already followed")
+	}
+	if !got.ObservedAfter("2026-11-20T09:52:57.800000Z") {
+		t.Fatal("an observation at the exact publish time should count as followed")
+	}
+	if !got.ObservedAfter("2026-11-20T09:52:57.900000Z") {
+		t.Fatal("a later observation in the same second should count as followed")
+	}
+}
