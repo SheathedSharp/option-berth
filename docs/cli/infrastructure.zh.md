@@ -24,6 +24,8 @@ Runtime Service、这份安装、自检与可选的改进报告，以及首屏�
 - oberth runtime service run|status|path|stop|restart|log|schema：管理或查看后台采集器。`runtime service status --json`
   带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`），表示 runtime service 自己能否看见监听；
   `runtime.service.hello` 也带同一份结果，客户端不能把失明 runtime service 的空端口表当成事实。
+  同时还带 `scanner`：有订阅者时为 `scanning`，没有订阅者时为 `parked`。停驻时不会按 `scan_interval_ms`
+  持续扫描，因此在下一次状态读取或订阅唤醒之前，较旧的 `last_scan_at` 是预期现象。
   `run` 默认前台，`--detach` 转后台；`--persistent` 无视 `runtime_service.idle_timeout` 关闭空闲退出，用户级服务单元正是带它启动的。装了该单元的机器上，`restart` 重启单元，不会另起一个游离进程。
 - `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth runtime service run`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。

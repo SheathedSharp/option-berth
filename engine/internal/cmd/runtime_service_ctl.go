@@ -165,6 +165,7 @@ func (s runtimeServiceStatus) jsonDoc() map[string]any {
 		"pid":                     s.status.PID,
 		"uptime":                  s.status.Uptime,
 		"subscribers":             s.status.Subscribers,
+		"scanner":                 scannerDemandState(s.status.Subscribers),
 		"last_scan_at":            s.status.LastScanAt,
 		"scan_interval_ms":        s.status.ScanIntervalMs,
 		"scan_base_interval_ms":   s.status.ScanBaseIntervalMs,
@@ -193,6 +194,11 @@ func (s runtimeServiceStatus) writeText(w io.Writer) {
 	line("build         %s, built %s", orUnknown(s.status.Commit), orUnknown(s.status.Built))
 	line("uptime        %s", s.status.Uptime)
 	line("subscribers   %d", s.status.Subscribers)
+	if s.status.Subscribers == 0 {
+		line("scanner       parked (last scan stays until a state read or subscription)")
+	} else {
+		line("scanner       scanning")
+	}
 	line("scan interval %dms", s.status.ScanIntervalMs)
 	line("scan base     %dms", s.status.ScanBaseIntervalMs)
 	line("stats tick    %dms", s.status.StatsIntervalMs)
@@ -213,6 +219,17 @@ func (s runtimeServiceStatus) writeText(w io.Writer) {
 		line("database      %s", s.status.DBPath)
 	}
 	line("capabilities  %v", s.hello.Capabilities)
+}
+
+// scannerDemandState reports whether the port-scan loop is parked. Zero
+// subscribers park the loop; last_scan_at then stays until a state read or
+// subscription wakes it. This is derived from subscribers, not a separate RPC
+// fact.
+func scannerDemandState(subscribers int) string {
+	if subscribers == 0 {
+		return "parked"
+	}
+	return "scanning"
 }
 
 // staleRuntimeServiceNote is empty when the runtime service is this build, and otherwise says

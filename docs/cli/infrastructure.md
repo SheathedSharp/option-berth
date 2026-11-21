@@ -17,6 +17,7 @@ The Runtime Service, this installation, the self-checks, the optional improvemen
 - oberth runtime service run|status|path|stop|restart|log|schema: manages or inspects the background collector. `runtime service status --json`
   carries `observation` (`state`, `code`, `detail`, `hint`, `checked_at`), saying whether the runtime service itself can see listeners;
   `runtime.service.hello` carries the same result, and clients must not take a blind runtime service's empty port table as fact.
+  It also carries `scanner`: `scanning` when there is at least one subscriber, or `parked` when there are none. A parked loop does not keep scanning at `scan_interval_ms`, so an old `last_scan_at` is expected until a state read or subscription wakes it.
   `run` is foreground unless `--detach` is given; `--persistent` disables idle shutdown regardless of `runtime_service.idle_timeout`, and it is what the user-level service unit passes. Where that unit is installed, `restart` restarts the unit and never starts a detached process of its own.
 - `oberth -v` / `oberth --version`: prints the current CLI version concisely; `oberth config init|path|edit`, `oberth runtime service run`, `oberth version`, `oberth completion`: configuration and runtime environment entry points.
 - `oberth version --json` outputs `version`, `commit`, `built` and `platform` for the current build, for install check scripts to confirm the build actually running.

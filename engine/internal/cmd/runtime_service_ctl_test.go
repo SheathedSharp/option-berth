@@ -60,6 +60,7 @@ version       v1.2.3 (protocol 1)
 build         deadbee, built 2026-11-09T09:00:00Z
 uptime        3m12s
 subscribers   2
+scanner       scanning
 scan interval 1000ms
 scan base     500ms
 stats tick    2000ms
@@ -73,6 +74,24 @@ capabilities  [groups.start]
 `
 	if got := buf.String(); got != want {
 		t.Fatalf("text output:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRuntimeServiceStatusReportsParkedScannerWhenThereAreNoSubscribers(t *testing.T) {
+	doc := syntheticRuntimeServiceStatus(nil)
+	doc.status.Subscribers = 0
+	var buf bytes.Buffer
+	doc.writeText(&buf)
+	got := buf.String()
+	if !strings.Contains(got, "scanner       parked (last scan stays until a state read or subscription)") {
+		t.Fatalf("text output missing parked scanner:\n%s", got)
+	}
+	if !strings.Contains(got, "last scan     2026-11-09T10:00:00Z") {
+		t.Fatalf("last scan disappeared:\n%s", got)
+	}
+	body := doc.jsonDoc()
+	if body["scanner"] != "parked" {
+		t.Fatalf("scanner = %v, want parked", body["scanner"])
 	}
 }
 
@@ -97,6 +116,7 @@ func TestRuntimeServiceStatusJSONDocKeepsItsDocumentedFields(t *testing.T) {
 		"pid":                     float64(42),
 		"uptime":                  "3m12s",
 		"subscribers":             float64(2),
+		"scanner":                 "scanning",
 		"last_scan_at":            "2026-11-09T10:00:00Z",
 		"scan_interval_ms":        float64(1000),
 		"scan_base_interval_ms":   float64(500),
