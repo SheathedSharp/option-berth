@@ -389,3 +389,9 @@ func TestStopConsumeInvokesDeliveryCallbackOnce(t *testing.T) {
 		t.Fatalf("duplicate delivery callback: %d", delivered)
 	}
 }
+
+func TestHookCommandTimeoutExceedsAttentionClientTimeout(t *testing.T) {
+	if HookCommandTimeout <= model.DefaultTimeout {
+		t.Fatalf("HookCommandTimeout %s must exceed Attention client timeout %s so Stop can join an in-flight assessment", HookCommandTimeout, model.DefaultTimeout)
+	}
+}

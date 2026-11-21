@@ -23,6 +23,11 @@ import (
 const Summary = "Development task in the explicitly selected project; runtime relevance is unknown."
 const MaxLease = 10 * time.Minute
 
+// HookCommandTimeout is the hook process budget and the print-config timeout.
+// It must exceed the Attention client timeout so Stop can join an in-flight
+// model call before consume.
+const HookCommandTimeout = 20 * time.Second
+
 const previousFindingSeparator = "\n\n"
 
 // The deliberately small input ignores prompt, transcripts, answers and error_details.

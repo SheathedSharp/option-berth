@@ -51,7 +51,7 @@ func addClaudeHooks(parent *cobra.Command) {
 		a.Task = model.TaskContext{Task: claudehook.Summary, Services: services, RunIDs: ids, AuthorizedOptions: authorized}
 		a.Duration = lease
 		a.EditOnly = os.Getenv("OBERTH_CLAUDE_TASK_MODE") == "edit"
-		ctx, cancel := context.WithTimeout(cmd.Context(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(cmd.Context(), claudehook.HookCommandTimeout)
 		defer cancel()
 		out, err := a.Handle(ctx, in)
 		if err != nil {
@@ -110,7 +110,7 @@ func addClaudeHooks(parent *cobra.Command) {
 			if event == "UserPromptSubmit" {
 				failure = "block"
 			}
-			hooks[event] = []group{{Hooks: []entry{{Type: "command", Command: strings.Join(argv, " "), Timeout: 10, OnFailure: failure}}}}
+			hooks[event] = []group{{Hooks: []entry{{Type: "command", Command: strings.Join(argv, " "), Timeout: int(claudehook.HookCommandTimeout / time.Second), OnFailure: failure}}}}
 		}
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
