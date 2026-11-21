@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "oberth agent claude-hook --project \"$CLAUDE_PROJECT_DIR\" --service api --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m",
-            "timeout": 10,
+            "timeout": 20,
             "onFailure": "block"
           }
         ]
@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "oberth agent claude-hook --project \"$CLAUDE_PROJECT_DIR\" --service api --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m",
-            "timeout": 10
+            "timeout": 20
           }
         ]
       }
@@ -29,7 +29,7 @@
           {
             "type": "command",
             "command": "oberth agent claude-hook --project \"$CLAUDE_PROJECT_DIR\" --service api --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m",
-            "timeout": 10
+            "timeout": 20
           }
         ]
       }
@@ -40,7 +40,7 @@
           {
             "type": "command",
             "command": "oberth agent claude-hook --project \"$CLAUDE_PROJECT_DIR\" --service api --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m",
-            "timeout": 10
+            "timeout": 20
           }
         ]
       }
