@@ -187,6 +187,29 @@ func message(status, reason string) Response {
 	return Response{Message: "Oberth Runtime: " + status + " (" + reason + "). Shared services are unchanged."}
 }
 
+// runtimeContextReason keeps the stable unavailable token and, when the
+// cause is a fixed hook code or a cancelled/timed-out context, qualifies it.
+// Unknown errors stay unqualified so raw RPC text never becomes the reason.
+func runtimeContextReason(err error) string {
+	const base = "runtime_context_unavailable"
+	if err == nil {
+		return base
+	}
+	var cause string
+	switch err.Error() {
+	case "runtime_service_required", "project_not_registered_in_runtime":
+		cause = err.Error()
+	default:
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			cause = "timeout"
+		}
+	}
+	if cause == "" {
+		return base
+	}
+	return base + ":" + cause
+}
+
 // pendingStillFresh reports whether a finding may still be delivered after the
 // observer lease clock has stopped. Lost, cancelled or stale findings stay
 // undeliverable.
@@ -335,7 +358,7 @@ func (a Adapter) submit(ctx context.Context, key string) (Response, error) {
 	}
 	facts, e := a.Prepare(ctx, s.Task)
 	if e != nil {
-		s.Reason = "runtime_context_unavailable"
+		s.Reason = runtimeContextReason(e)
 		if err := a.save(key, s); err != nil {
 			return Response{}, err
 		}
