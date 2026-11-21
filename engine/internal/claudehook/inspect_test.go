@@ -55,6 +55,49 @@ func TestInspectProjectSettingsIgnoresLocalFileAndDetectsHookCommand(t *testing.
 	}
 }
 
+func TestInspectProjectSettingsIgnoresIncidentalClaudeHookMentions(t *testing.T) {
+	root := t.TempDir()
+	claude := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(claude, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	public := filepath.Join(claude, "settings.json")
+	// A permissions allow-list may mention the hook command without enabling it.
+	if err := os.WriteFile(public, []byte(`{"permissions":{"allow":["Bash(oberth agent claude-hook:*)"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := InspectProjectSettings(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Present || got.Enabled {
+		t.Fatalf("permissions allow-list was treated as hook opt-in: %+v", got)
+	}
+
+	quoted := `{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"'/usr/bin/oberth' 'agent' 'claude-hook' '--project' '/tmp/demo' '--lease' '10m0s'"}]}]}}`
+	if err := os.WriteFile(public, []byte(quoted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = InspectProjectSettings(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Present || !got.Enabled {
+		t.Fatalf("quoted print-config command not detected: %+v", got)
+	}
+
+	if err := os.WriteFile(public, []byte(`{"hooks":{"Stop":[{"hooks":[{"command":"cat /tmp/claude-hook-notes"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = InspectProjectSettings(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Present || got.Enabled {
+		t.Fatalf("path containing claude-hook was treated as opt-in: %+v", got)
+	}
+}
+
 func TestSummarizeDeliveryCountsUnconsumedLeasesAndHidesBodies(t *testing.T) {
 	home := t.TempDir()
 	worktree := "0a12d03a15d322c08e082efd"

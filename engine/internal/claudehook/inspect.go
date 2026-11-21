@@ -7,14 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attn"
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 )
 
-// ProjectSettings reports whether a worktree's committed Claude settings
-// enable oberth's hook command. It never reads settings.local.json and never
-// writes a file.
+// ProjectSettings reports whether a worktree's .claude/settings.json enables
+// oberth's hook command. It never reads settings.local.json, never inspects
+// git history, and never writes a file.
 type ProjectSettings struct {
 	Path    string `json:"path,omitempty"`
 	Present bool   `json:"settings_present"`
@@ -59,33 +60,94 @@ func InspectProjectSettings(root string) (ProjectSettings, error) {
 	if json.Unmarshal(data, &payload) != nil {
 		return view, nil
 	}
-	view.Enabled = jsonContainsClaudeHook(payload)
+	view.Enabled = hooksEnableClaudeHook(payload)
 	return view, nil
 }
 
-func jsonContainsClaudeHook(value any) bool {
+// hooksEnableClaudeHook looks only at hook command fields under the top-level
+// hooks object. Incidental mentions, such as a permissions allow-list, are
+// not opt-in. A command counts only when claude-hook appears as its own
+// argument token, not as a substring of a path or other word.
+func hooksEnableClaudeHook(payload any) bool {
+	obj, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	return hookCommandsInvokeClaudeHook(obj["hooks"])
+}
+
+func hookCommandsInvokeClaudeHook(value any) bool {
 	switch v := value.(type) {
 	case map[string]any:
-		for _, item := range v {
-			if jsonContainsClaudeHook(item) {
+		if command, ok := v["command"].(string); ok && commandInvokesClaudeHook(command) {
+			return true
+		}
+		for key, item := range v {
+			if key == "command" {
+				continue
+			}
+			if hookCommandsInvokeClaudeHook(item) {
 				return true
 			}
 		}
 	case []any:
 		for _, item := range v {
-			if jsonContainsClaudeHook(item) {
+			if hookCommandsInvokeClaudeHook(item) {
 				return true
 			}
 		}
-	case string:
-		return strings.Contains(v, "claude-hook")
 	}
 	return false
+}
+
+func commandInvokesClaudeHook(command string) bool {
+	for _, tok := range commandTokens(command) {
+		if tok == "claude-hook" || filepath.Base(tok) == "claude-hook" {
+			return true
+		}
+	}
+	return false
+}
+
+func commandTokens(command string) []string {
+	var tokens []string
+	var b strings.Builder
+	var quote rune
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, b.String())
+		b.Reset()
+	}
+	for _, r := range command {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+				continue
+			}
+			b.WriteRune(r)
+		case r == '\'' || r == '"':
+			quote = r
+		case unicode.IsSpace(r):
+			flush()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	flush()
+	return tokens
 }
 
 // SummarizeDelivery lists lease.json files under the Attention hook directory
 // that belong to worktreeID. Unknown keys, other worktrees, and lease bodies
 // are ignored; Pending and Task are never copied into the view.
+//
+// LastStatus and LastReason come from the lease with the latest Expires.
+// Lease files have no created-at field, so this is not necessarily the most
+// recently started session when lease durations differ. Session counts still
+// include every matching lease.
 func SummarizeDelivery(home, worktreeID string) (DeliveryView, error) {
 	var view DeliveryView
 	worktreeID = strings.TrimSpace(worktreeID)

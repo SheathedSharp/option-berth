@@ -219,6 +219,35 @@ func TestAttnStatusReportsEnabledProjectHooks(t *testing.T) {
 	}
 }
 
+func TestAttnStatusDoesNotTreatPermissionAllowListAsHookOptIn(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	initFakeCheckout(t, project)
+	checkout, inRepo := groups.Locate(project)
+	if !inRepo {
+		t.Fatal("expected a fake checkout")
+	}
+	project = checkout.Root
+	writeEnabledAttnSettings(t, home)
+	if err := os.MkdirAll(filepath.Join(project, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{"permissions":{"allow":["Bash(oberth agent claude-hook:*)"]}}`
+	if err := os.WriteFile(filepath.Join(project, ".claude", "settings.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := attnStatusText(t, home, project)
+	if strings.Contains(out, "enables oberth claude-hook") {
+		t.Fatalf("permissions allow-list was treated as hook opt-in:\n%s", out)
+	}
+	if !strings.Contains(out, "does not enable oberth claude-hook") {
+		t.Fatalf("missing not-enabled diagnosis:\n%s", out)
+	}
+	if !strings.Contains(out, "print-config") {
+		t.Fatalf("should still suggest reviewing print-config:\n%s", out)
+	}
+}
+
 func TestAttnStatusQualityFlagPrintsLedgerInText(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
