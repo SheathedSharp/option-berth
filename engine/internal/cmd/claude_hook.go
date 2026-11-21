@@ -142,6 +142,9 @@ func claudeAdapter(root string) claudehook.Adapter {
 	}
 	identity := hex.EncodeToString(hash)
 	a := claudehook.Adapter{Home: paths.Dir(), Root: root, Identity: identity}
+	a.Delivered = func(f claudehook.Feedback) {
+		runner.AppendDeliveryTelemetry(runner.TelemetryHome(), root, f.EventID, f.Revision)
+	}
 	a.Consent = func() error {
 		if identityErr != nil {
 			return errors.New("configuration_identity_unavailable")
