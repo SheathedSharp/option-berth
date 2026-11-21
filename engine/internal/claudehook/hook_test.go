@@ -340,3 +340,52 @@ func TestFailedNewPromptDoesNotDropUnconsumedFinding(t *testing.T) {
 		t.Fatalf("finding was not recoverable after failed prompt: %+v %v", r, e)
 	}
 }
+
+func TestUserPromptSubmitDeliversUnconsumedPreviousFinding(t *testing.T) {
+	a, n := fixture(t)
+	var delivered int
+	a.Delivered = func(Feedback) { delivered++ }
+	submit(t, a)
+	r, e := a.Handle(context.Background(), event(a, "UserPromptSubmit"))
+	if e != nil {
+		t.Fatalf("new prompt failed: %v", e)
+	}
+	if r.Decision == "block" {
+		t.Fatalf("delivered finding blocked the new prompt: %+v", r)
+	}
+	if r.Specific == nil || !strings.Contains(r.Specific.Text, "only automatic feedback") || !strings.Contains(r.Specific.Text, "worker-1") {
+		t.Fatalf("previous finding not returned on the next prompt: %+v", r)
+	}
+	if !strings.Contains(r.Message, "observing") {
+		t.Fatalf("new generation not attached: %+v", r)
+	}
+	if n.Load() != 1 {
+		t.Fatalf("previous observer not joined: n=%d", n.Load())
+	}
+	if delivered != 1 {
+		t.Fatalf("delivery callback = %d, want 1", delivered)
+	}
+}
+
+func TestStopConsumeInvokesDeliveryCallbackOnce(t *testing.T) {
+	a, _ := fixture(t)
+	var delivered int
+	a.Delivered = func(f Feedback) {
+		if f.EventID != "event-1" || f.Body == "" {
+			t.Fatalf("unexpected delivery payload: %+v", f)
+		}
+		delivered++
+	}
+	submit(t, a)
+	r, e := a.Handle(context.Background(), event(a, "Stop"))
+	if e != nil || r.Decision != "block" {
+		t.Fatalf("not delivered: %+v %v", r, e)
+	}
+	if delivered != 1 {
+		t.Fatalf("delivery callback = %d, want 1", delivered)
+	}
+	_, _ = a.Handle(context.Background(), event(a, "Stop"))
+	if delivered != 1 {
+		t.Fatalf("duplicate delivery callback: %d", delivered)
+	}
+}
