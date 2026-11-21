@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -147,7 +148,16 @@ func ActivitySummary(a ActivityMetric) string {
 	case "failed":
 		return "last observation failed (" + activityReason(a.Reason) + "); inspect task runner output"
 	case "recent":
-		return "past activity only; no fresh observation lease (not proof of a running session)"
+		detail := "past activity only"
+		if status := activityStatus(a.LastStatus); a.LastStatus != "" && status != "unavailable" {
+			detail += "; last status " + status
+		} else if a.LastStatus != "" {
+			detail += "; last status unavailable"
+		}
+		if at := formatObservedAt(a.LastObservedAt); at != "" {
+			detail += " at " + at
+		}
+		return detail + "; no fresh observation lease (not proof of a running session)"
 	default:
 		return "no task observation recorded; assessment permission alone does not start one"
 	}
@@ -160,4 +170,17 @@ func activityStatus(status string) string {
 	default:
 		return "unavailable"
 	}
+}
+
+func formatObservedAt(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if at, err := time.Parse(layout, value); err == nil {
+			return at.UTC().Format(time.RFC3339)
+		}
+	}
+	return ""
 }
