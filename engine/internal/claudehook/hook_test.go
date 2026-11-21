@@ -120,13 +120,16 @@ func TestNativeStopGuardsAndCleanup(t *testing.T) {
 	}
 }
 func TestLeaseExpiresWithoutSessionEnd(t *testing.T) {
-	a, n := fixture(t)
+	a, _ := fixture(t)
 	a.Duration = 140 * time.Millisecond
 	submit(t, a)
-	wait(t, func() bool { return n.Load() == 0 })
-	r, e := a.Handle(context.Background(), event(a, "Stop"))
-	if e != nil || r.Decision != "" || !strings.Contains(r.Message, "expired") {
-		t.Fatalf("expired task resumed: %+v %v", r, e)
+	wait(t, func() bool {
+		s, err := a.load(Key(a.Root, "s1"))
+		return err == nil && !s.Active && s.Finished && s.Reason == "lease_expired"
+	})
+	s, err := a.load(Key(a.Root, "s1"))
+	if err != nil || s.Active || !s.Finished || s.Reason != "lease_expired" {
+		t.Fatalf("observer did not settle as expired: %+v %v", s, err)
 	}
 }
 func TestNewTaskGenerationJoinsPreviousAndDoesNotReplay(t *testing.T) {
@@ -269,5 +272,71 @@ func TestFailedTaskBoundaryCannotProceedOnOldGeneration(t *testing.T) {
 	in.Cwd = t.TempDir()
 	if _, err := a.Handle(context.Background(), in); err == nil {
 		t.Fatal("wrong worktree allowed a new prompt")
+	}
+}
+
+func TestStopDeliversFreshPendingAfterLeaseExpires(t *testing.T) {
+	a, _ := fixture(t)
+	a.Duration = 140 * time.Millisecond
+	submit(t, a)
+	wait(t, func() bool {
+		s, err := a.load(Key(a.Root, "s1"))
+		return err == nil && !s.Active && s.Finished && s.Reason == "lease_expired"
+	})
+	s, err := a.load(Key(a.Root, "s1"))
+	if err != nil || s.Pending == nil {
+		t.Fatalf("expired observer discarded fresh pending: %+v %v", s, err)
+	}
+	r, e := a.Handle(context.Background(), event(a, "Stop"))
+	if e != nil || r.Decision != "block" || !strings.Contains(r.Reason, "worker-1") {
+		t.Fatalf("fresh pending not delivered after lease expiry: %+v %v", r, e)
+	}
+	s, _ = a.load(Key(a.Root, "s1"))
+	if !s.Consumed || s.Pending != nil {
+		t.Fatalf("delivery not consumed: %+v", s)
+	}
+}
+
+func TestStopDoesNotDeliverStalePendingAfterLeaseExpires(t *testing.T) {
+	a, n := fixture(t)
+	a.Duration = 140 * time.Millisecond
+	a.Observe = func(ctx context.Context, _ model.TaskContext, emit func(runner.Output) error) error {
+		n.Add(1)
+		defer n.Add(-1)
+		relevance := .9
+		err := emit(runner.Output{Status: "continue", EventID: "event-1", AttnRevision: "revision-1", FreshUntil: time.Now().Add(80 * time.Millisecond).Format(time.RFC3339Nano), Assessment: &attn.Assessment{TaskRelevant: &relevance}, Decision: &runner.HILDecision{NextOption: "inspect_logs", Reason: "confident_read_only_step"}, Request: &runner.HILRequest{Events: []attn.Event{{Kind: attn.EventServiceFailed, Service: "worker", RunID: "worker-1"}}}})
+		if err != nil {
+			return err
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	submit(t, a)
+	wait(t, func() bool {
+		s, err := a.load(Key(a.Root, "s1"))
+		return err == nil && !s.Active && s.Finished && s.Reason == "lease_expired"
+	})
+	time.Sleep(120 * time.Millisecond)
+	r, e := a.Handle(context.Background(), event(a, "Stop"))
+	if e != nil || r.Decision != "" {
+		t.Fatalf("stale pending delivered: %+v %v", r, e)
+	}
+}
+
+func TestFailedNewPromptDoesNotDropUnconsumedFinding(t *testing.T) {
+	a, _ := fixture(t)
+	submit(t, a)
+	a.Duration = MaxLease + time.Second
+	if _, err := a.Handle(context.Background(), event(a, "UserPromptSubmit")); err == nil {
+		t.Fatal("invalid lease allowed a new prompt")
+	}
+	s, err := a.load(Key(a.Root, "s1"))
+	if err != nil || s.Pending == nil || s.Consumed {
+		t.Fatalf("failed new prompt dropped previous finding: %+v %v", s, err)
+	}
+	a.Duration = time.Second
+	r, e := a.Handle(context.Background(), event(a, "Stop"))
+	if e != nil || r.Decision != "block" || !strings.Contains(r.Reason, "worker-1") {
+		t.Fatalf("finding was not recoverable after failed prompt: %+v %v", r, e)
 	}
 }

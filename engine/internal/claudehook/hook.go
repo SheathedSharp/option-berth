@@ -175,6 +175,17 @@ func newGeneration() string {
 func message(status, reason string) Response {
 	return Response{Message: "Oberth Runtime: " + status + " (" + reason + "). Shared services are unchanged."}
 }
+
+// pendingStillFresh reports whether a finding may still be delivered after the
+// observer lease clock has stopped. Lost, cancelled or stale findings stay
+// undeliverable.
+func pendingStillFresh(s Lease, now time.Time) bool {
+	if s.Pending == nil {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339Nano, s.Pending.Until)
+	return err == nil && now.Before(until)
+}
 func (a Adapter) policy() error {
 	if a.EditOnly {
 		return errors.New("pure_edit")
@@ -350,7 +361,8 @@ func (a Adapter) consume(ctx context.Context, s Lease) Response {
 	if s.Consumed {
 		return message("stopped", "already_consumed")
 	}
-	if !time.Now().Before(s.Expires) {
+	now := time.Now()
+	if !now.Before(s.Expires) && !pendingStillFresh(s, now) {
 		return message("stopped", "lease_expired")
 	}
 	if s.Status == "not_attached" {
@@ -482,7 +494,9 @@ func (a Adapter) Run(ctx context.Context, key, generation string) error {
 		switch {
 		case !time.Now().Before(v.Expires):
 			v.Reason = "lease_expired"
-			v.Pending = nil
+			if !pendingStillFresh(*v, time.Now()) {
+				v.Pending = nil
+			}
 		case ctx.Err() != nil || !stopRequested:
 			v.Reason = "observer_cancelled_or_lost"
 			v.Pending = nil
