@@ -117,17 +117,35 @@ func TestClaudeHooksWarnsWhenLeaseIsShorterThanTheCommandBudget(t *testing.T) {
 	}
 }
 
-func TestClaudeHooksWarnsWhenTimeoutIsMissing(t *testing.T) {
+func TestClaudeHooksOKWhenTimeoutIsOmitted(t *testing.T) {
 	env := integrationProject(t)
 	write(t, filepath.Join(env.Project, ".claude", "settings.json"), `{
   "hooks": {
-    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"oberth agent claude-hook --project /tmp/demo"}]}]
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"oberth agent claude-hook --project /tmp/demo --lease 10m0s"}]}],
+    "Stop": [{"hooks":[{"type":"command","command":"oberth agent claude-hook --project /tmp/demo --lease 10m0s"}]}]
+  }
+}`)
+	row := run(t, env, checkClaudeHooks)
+	wantStatus(t, row, StatusOK)
+	if strings.Contains(row.Summary, "too short") || strings.Contains(row.Detail, "no timeout") {
+		t.Fatalf("omitted timeout must not be treated as a short budget: summary=%q detail=%q", row.Summary, row.Detail)
+	}
+}
+
+func TestClaudeHooksWarnsForShortLeaseEvenWhenTimeoutIsOmitted(t *testing.T) {
+	env := integrationProject(t)
+	write(t, filepath.Join(env.Project, ".claude", "settings.json"), `{
+  "hooks": {
+    "Stop": [{"hooks":[{"type":"command","command":"oberth agent claude-hook --project /tmp/demo --lease 10s"}]}]
   }
 }`)
 	row := run(t, env, checkClaudeHooks)
 	wantStatus(t, row, StatusWarn)
-	if !strings.Contains(row.Detail, "UserPromptSubmit has no timeout") {
+	if !strings.Contains(row.Detail, "Stop --lease is 10s") {
 		t.Fatalf("detail = %q", row.Detail)
+	}
+	if strings.Contains(row.Detail, "no timeout") {
+		t.Fatalf("omitted timeout must not be reported as a short budget: %q", row.Detail)
 	}
 }
 

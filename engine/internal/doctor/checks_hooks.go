@@ -86,9 +86,11 @@ func settingsContainClaudeHook(text string) bool {
 	return strings.Contains(text, "claude-hook")
 }
 
-// hookBudgetProblems reports hook commands whose Claude timeout or --lease is
-// shorter than the hook command budget. A newer binary cannot stop Claude
-// from cutting a shorter timeout first.
+// hookBudgetProblems reports hook commands whose explicit Claude timeout or
+// --lease is shorter than the hook command budget. A newer binary cannot
+// stop Claude from cutting a shorter explicit timeout first. Omitting
+// timeout is not a short budget: Claude Code uses its own official defaults
+// (30s for UserPromptSubmit, 600s for Stop).
 func hookBudgetProblems(text string) []string {
 	var doc map[string]any
 	if err := json.Unmarshal([]byte(text), &doc); err != nil {
@@ -109,10 +111,7 @@ func hookBudgetProblems(text string) []string {
 					continue
 				}
 				timeout, hasTimeout := hookCommandTimeout(item)
-				switch {
-				case !hasTimeout:
-					problems = append(problems, event+" has no timeout; Claude may cut the hook before the "+budget.String()+" command budget")
-				case timeout < budget:
+				if hasTimeout && timeout < budget {
 					problems = append(problems, fmt.Sprintf("%s timeout is %s, shorter than the %s hook command budget", event, timeout, budget))
 				}
 				if lease, ok := hookCommandLease(command); ok && lease < budget {
