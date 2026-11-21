@@ -173,6 +173,44 @@ func TestMissingScopeAuthorizationAndEditAreVisible(t *testing.T) {
 		})
 	}
 }
+func TestPrepareFailureSurfacesKnownRuntimeCause(t *testing.T) {
+	cases := []struct {
+		name, want string
+		err        error
+	}{
+		{name: "runtime down", err: errors.New("runtime_service_required"), want: "runtime_context_unavailable:runtime_service_required"},
+		{name: "unregistered project", err: errors.New("project_not_registered_in_runtime"), want: "runtime_context_unavailable:project_not_registered_in_runtime"},
+		{name: "deadline", err: context.DeadlineExceeded, want: "runtime_context_unavailable:timeout"},
+		{name: "unknown stays unqualified", err: errors.New("rpc exploded with leftover detail"), want: "runtime_context_unavailable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, n := fixture(t)
+			a.Prepare = func(context.Context, model.TaskContext) (string, error) { return "", tc.err }
+			r, e := a.Handle(context.Background(), event(a, "UserPromptSubmit"))
+			if e != nil || n.Load() != 0 {
+				t.Fatalf("observer started or handle failed: %+v %v", r, e)
+			}
+			if !strings.Contains(r.Message, tc.want) {
+				t.Fatalf("message = %q, want %q", r.Message, tc.want)
+			}
+			if tc.want == "runtime_context_unavailable" && strings.Contains(r.Message, "rpc exploded") {
+				t.Fatalf("raw error leaked into the hook message: %q", r.Message)
+			}
+			s, err := a.load(Key(a.Root, "s1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.Reason != tc.want {
+				t.Fatalf("lease reason = %q, want %q", s.Reason, tc.want)
+			}
+			if s.Status != "not_attached" || s.Active {
+				t.Fatalf("lease status = %+v", s)
+			}
+		})
+	}
+}
+
 func TestHookInputIgnoresPromptTranscriptAndAnswer(t *testing.T) {
 	in, e := Decode(strings.NewReader(`{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/project","prompt":"PROMPT-SECRET","transcript_path":"/must/not/read","last_assistant_message":"ANSWER-SECRET"}`))
 	if e != nil {
