@@ -43,6 +43,9 @@ func TestAttnCheckReportsOnWithModel(t *testing.T) {
 	if got.Summary != "Attention: on · test/model" {
 		t.Fatalf("summary = %q", got.Summary)
 	}
+	if !strings.Contains(got.Detail, "oberth attn status") {
+		t.Fatalf("detail should point at status to judge delivery: %q", got.Detail)
+	}
 	// The key must never appear in a doctor row.
 	if strings.Contains(got.Detail, `"k"`) || strings.Contains(got.Summary, `"k"`) {
 		t.Fatalf("the row leaks the key: %q / %q", got.Summary, got.Detail)

@@ -39,5 +39,5 @@ func checkAttn(_ context.Context, env *Env) rpc.DoctorCheck {
 			"run `oberth attn config` to store a key, or `oberth attn test` to see the current reason")
 	}
 	return ok("Attention: on · "+consent.Model,
-		"endpoint "+consent.Endpoint+", key from "+string(consent.KeySource))
+		"endpoint "+consent.Endpoint+", key from "+string(consent.KeySource)+"; this row is configuration only — run `oberth attn status` to see whether findings reached the current agent")
 }

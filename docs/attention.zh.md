@@ -17,6 +17,18 @@ oberth attn assess --dry-run
 
 原生 Claude/cld 可在项目明确启用 hooks 后，自动附着现有 runner，并通过官方 Stop 通道交回新鲜发现。项目只需启用一次；单靠 `on` 或 skill 不能附着任意已运行的助手。见[原生 hook 合同](cli/handoff.zh.md#原生-claude-项目-hooks)。
 
+## 怎样判断它是否帮上了忙
+
+`oberth attn on` 和 doctor 里通过的 Attention 行只说明允许评估，并不表示发现已经回到当前编程助手，也不表示有人同意那些建议。
+
+在 git 工作树里，`oberth attn status` 还会报告：
+
+- 如果近期有活动，上次评估的状态，例如 `human_required`
+- 项目里已提交的 `.claude/settings.json` 是否启用了 oberth 的 Claude hooks；不会读取 `settings.local.json`
+- 这个工作树的 hook 交付租约是否已被消费
+- 已发布的制品之后有没有观察，而且不会因此自动开始评估
+
+`oberth attn status --quality` 会把同一本账用普通文本写出来，包括有多少案例有人的判定。模型调用次数和缓存命中不能证明 Attention 帮上了忙。若要把发现交回 Claude，请查看 `oberth agent claude-hook --project <worktree> --print-config`，自行合并进项目的 `.claude/settings.json`；这些命令都不会改写该文件。
 
 ## 配置和同意是两步
 

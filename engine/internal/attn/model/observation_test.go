@@ -109,10 +109,14 @@ func TestActivitySummaryExplainsQuietAndFailedStatesWithoutPrivateText(t *testin
 	if !strings.Contains(ActivitySummary(ActivityMetric{State: "observing", ObservingSessions: 1, NoEvent: true}), "no eligible event") {
 		t.Fatal("missing quiet-session explanation")
 	}
-	if !strings.Contains(ActivitySummary(ActivityMetric{State: "recent"}), "no fresh observation") {
+	recent := ActivitySummary(ActivityMetric{State: "recent", LastStatus: "human_required", LastObservedAt: "2026-11-20T06:39:18.618736Z"})
+	if !strings.Contains(recent, "no fresh observation") {
 		t.Fatal("historical activity looked active")
 	}
-	for _, a := range []ActivityMetric{{State: "failed", Reason: "private-path"}, {State: "observing", LastStatus: "private-path"}} {
+	if !strings.Contains(recent, "human_required") || !strings.Contains(recent, "2026-11-20T06:39:18Z") {
+		t.Fatalf("recent activity hid the last status: %q", recent)
+	}
+	for _, a := range []ActivityMetric{{State: "failed", Reason: "private-path"}, {State: "observing", LastStatus: "private-path"}, {State: "recent", LastStatus: "private-path", LastObservedAt: "not-a-timestamp"}} {
 		if strings.Contains(ActivitySummary(a), "private-path") {
 			t.Fatal("private text rendered")
 		}
