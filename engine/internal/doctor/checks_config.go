@@ -126,6 +126,8 @@ func missingProjectConfig(project string, dirs []string) rpc.DoctorCheck {
 	detail := "looked at " + strings.Join(looked, ", ")
 	if gitRootOf(project) == "" {
 		detail += fmt.Sprintf("\n%s is not inside a git repository, so there is no repository root to look at either", project)
+		return warn("no "+groups.ConfigName+" here; this directory is not a git worktree", detail,
+			"run `oberth doctor` inside a project, or pass `--project <worktree>`. `oberth init` belongs in a project directory, not here")
 	}
 	return warn("no "+groups.ConfigName+" for this project", detail,
 		"oberth init writes one from what is listening right now")

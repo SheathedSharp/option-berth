@@ -76,7 +76,7 @@ func addClaudeHooks(parent *cobra.Command) {
 		}
 		root, err := resolveWorktree(project)
 		if project == "" || err != nil {
-			return errors.New("explicit project worktree required")
+			return errors.New("print-config requires --project <worktree>; hook configuration is per project and is not inferred from this directory")
 		}
 		binary, err := os.Executable()
 		if err != nil {

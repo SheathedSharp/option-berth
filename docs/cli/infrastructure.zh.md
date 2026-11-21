@@ -18,6 +18,9 @@ Runtime Service、这份安装、自检与可选的改进报告，以及首屏�
   `--only agent_integration` 读取最近清单所在目录的 `AGENTS.md` 与 `CLAUDE.md`，任一提到 oberth
   即 `ok`；没有清单是 `skip`，有清单但两个文件都没提到 oberth 是 `warn`，fix 指向
   [接入编排工具](../integrations.zh.md) 的粘贴段落。它只读不改，也不知道某个工具是否真的会加载这些文件。
+  `--only project_config` 在 git worktree 里没有 `oberth.yaml` 时仍会警告，修复建议仍是 `oberth init`。
+  若当前目录不在 git worktree 内（例如家目录），同一行会说明这里不是项目，请在项目里运行 doctor
+  或传入 `--project`，而不会建议在这里执行 `oberth init`。
 - oberth runtime service run|status|path|stop|restart|log|schema：管理或查看后台采集器。`runtime service status --json`
   带 `observation`（`state`、`code`、`detail`、`hint`、`checked_at`），表示 runtime service 自己能否看见监听；
   `runtime.service.hello` 也带同一份结果，客户端不能把失明 runtime service 的空端口表当成事实。
