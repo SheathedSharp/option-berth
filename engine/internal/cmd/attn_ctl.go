@@ -167,6 +167,9 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintf(&b, "  assessment unavailable (%s)\n", consent.Reason)
 		}
 		fmt.Fprintf(&b, "  activity  %s\n", model.ActivitySummary(report.Activity))
+		if attnStatusShowsFullQuality(cmd) {
+			writeQualityLedgerText(&b, report)
+		}
 		writeAttnLoopText(&b, loop)
 		if next := attnLoopNext(loop, consent, report.Activity); next != "" {
 			fmt.Fprintf(&b, "  next      %s\n", next)

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attn"
@@ -9,6 +10,8 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 	"github.com/sheathedsharp/option-berth/engine/internal/claudehook"
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+
+	"github.com/spf13/cobra"
 )
 
 // attnLoopFacts is the project-scoped, read-only picture that tells a person
@@ -118,4 +121,57 @@ func attnLoopNext(facts attnLoopFacts, consent model.Resolved, activity model.Ac
 		return "attach a task-scoped `oberth attn assess --follow --project <worktree> --task <summary> --authorize <fixed-options>`; no background session was started"
 	}
 	return ""
+}
+
+func writeQualityLedgerText(b *strings.Builder, report model.QualityReport) {
+	if report.UniqueCases > 0 {
+		if report.LabeledCases == 0 {
+			fmt.Fprintf(b, "  labels    0 of %d cases have a person's decision, so this ledger cannot say whether Attention helped\n", report.UniqueCases)
+		} else {
+			fmt.Fprintf(b, "  labels    %d of %d cases have a person's decision\n", report.LabeledCases, report.UniqueCases)
+		}
+	}
+	if report.Actions.Attempts > 0 {
+		fmt.Fprintf(b, "  actions   %d follow-through attempts, %d succeeded\n", report.Actions.Attempts, report.Actions.Succeeded)
+	} else if report.UniqueCases > 0 {
+		b.WriteString("  actions   0 recorded follow-through attempts\n")
+	}
+	if len(report.StatusCounts) == 0 {
+		return
+	}
+	order := []string{"continue", "human_required", "clear", "assessed", "unavailable", "error", "stale", "subscribed", "stopped"}
+	seen := make(map[string]bool, len(order))
+	var parts []string
+	for _, status := range order {
+		if n := report.StatusCounts[status]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", status, n))
+			seen[status] = true
+		}
+	}
+	var rest []string
+	for status := range report.StatusCounts {
+		if !seen[status] && report.StatusCounts[status] > 0 && publicQualityStatus(status) {
+			rest = append(rest, status)
+		}
+	}
+	sort.Strings(rest)
+	for _, status := range rest {
+		parts = append(parts, fmt.Sprintf("%s %d", status, report.StatusCounts[status]))
+	}
+	if len(parts) > 0 {
+		fmt.Fprintf(b, "  results   %s\n", strings.Join(parts, " · "))
+	}
+}
+
+func publicQualityStatus(status string) bool {
+	switch status {
+	case "clear", "continue", "human_required", "unavailable", "error", "stale", "subscribed", "stopped", "assessed":
+		return true
+	default:
+		return false
+	}
+}
+
+func attnStatusShowsFullQuality(cmd *cobra.Command) bool {
+	return attnQualityFlag || cmd.Flags().Changed("since") || cmd.Flags().Changed("quality-project")
 }

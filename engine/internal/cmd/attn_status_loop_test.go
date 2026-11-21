@@ -218,3 +218,30 @@ func TestAttnStatusReportsEnabledProjectHooks(t *testing.T) {
 		t.Fatalf("suggested hook opt-in even though hooks are enabled:\n%s", out)
 	}
 }
+
+func TestAttnStatusQualityFlagPrintsLedgerInText(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	writeEnabledAttnSettings(t, home)
+	if _, err := model.AppendTelemetry(home, model.TelemetryRecord{
+		Kind: "assessment", Project: "example", SessionID: "session-one",
+		Status: "human_required", EventID: "event-one", StateRevision: "rev-one",
+		ModelCalls: 1, RecordedAt: "2026-11-20T06:39:18.618736Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plain := attnStatusText(t, home, project)
+	if strings.Contains(plain, "this ledger cannot say whether Attention helped") {
+		t.Fatalf("default text already printed the full ledger:\n%s", plain)
+	}
+	full := attnStatusText(t, home, project, "--quality")
+	for _, want := range []string{
+		"0 of 1 cases have a person's decision, so this ledger cannot say whether Attention helped",
+		"0 recorded follow-through attempts",
+		"human_required 1",
+	} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("missing %q in --quality text:\n%s", want, full)
+		}
+	}
+}
