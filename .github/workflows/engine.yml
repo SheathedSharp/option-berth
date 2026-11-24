@@ -52,7 +52,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: python3 scripts/check_skill_contract.py --skill-dir option-berth-skill
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: engine/go.mod
           cache-dependency-path: engine/go.sum
