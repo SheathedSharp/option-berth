@@ -927,11 +927,21 @@ figure.fragment { position: relative; }
   .chapter-table tbody th { white-space: normal; }
 }
 
-@media (max-width: 460px) {
+@media (max-width: 480px) {
   .doc-foot-cols { grid-template-columns: minmax(0, 1fr); }
-  .doc-tools { gap: 2px; }
+  .doc-top-inner { gap: 6px; }
+  .doc-brand { flex-shrink: 0; gap: 7px; }
   .doc-brand-name { font-size: 0.875rem; }
-  .doc-search-open { padding-inline: 6px; }
+  .doc-search-open { flex-shrink: 0; padding: 7px; }
+  .doc-tools { flex-shrink: 0; gap: 2px; }
+  .doc-lang > summary { padding: 5px 6px; gap: 4px; }
+  .doc-rail-toggle { width: 32px; padding: 0; }
+  .doc-rail-toggle > span:not(.doc-rail-glyph) { display: none; }
+}
+
+@media (max-width: 350px) {
+  .doc-top-inner { padding-inline: 12px; gap: 4px; }
+  .doc-brand img { width: 18px; height: 18px; }
 }
 
 @media print {
