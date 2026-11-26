@@ -243,7 +243,26 @@ jobs:
     name: Site
     needs: changes
     if: needs.changes.outputs.site == 'true'
-    uses: ./.github/workflows/site.yml
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-site
+      - name: Build verified static pages
+        run: python3 site/build.py
+      - name: Verify browsers, responsive layouts, keyboard and reduced motion
+        working-directory: site
+        run: npm test
+      - name: Keep browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: website-browser-evidence-${{ github.run_id }}
+          path: site/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   skill-drift:
     # Advisory, never required: this job reports how far the pinned skill commit

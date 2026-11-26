@@ -1,17 +1,9 @@
 name: Product website
 on:
-  # Called by ci.yml for a pull request that touches the site or its toolchain,
-  # so website changes are gated by the required check like any other area. A
-  # caller only verifies: deploying from a call would run the Pages job on the
-  # caller's read-only token. A push to main deploys directly so a deployment
-  # never waits for a pull request, and a manual dispatch of this workflow
-  # deploys unless the dispatcher says otherwise.
-  workflow_call:
-    inputs:
-      deploy:
-        description: Deploy the verified site to GitHub Pages.
-        type: boolean
-        default: false
+  # Pull-request verification runs directly inside ci.yml via the shared
+  # setup-site composite action so ci.yml keeps strictly contents:read
+  # permissions without inheriting pages:write/id-token:write from deploy.
+  # This workflow verifies and deploys on pushes to main and manual dispatches.
   workflow_dispatch:
     inputs:
       deploy:
