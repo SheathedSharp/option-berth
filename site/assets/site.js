@@ -1,16 +1,17 @@
 'use strict';
 (() => {
-  const root = document.documentElement;
-  const gsap = window.gsap;
-  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const still = () => !gsap || reduce.matches;
+  // Progressive enhancement only. Every control below starts hidden in the
+  // markup and is revealed here, so a page with no script shows the default
+  // state and no dead buttons.
 
   // Command filter: keep every row in the DOM, hide the ones that do not match.
   const input = document.getElementById('command-filter');
   const list = document.getElementById('command-list');
   const empty = document.getElementById('command-empty');
   const status = document.getElementById('command-status');
+  const search = document.querySelector('[data-command-search]');
   if (input && list && empty && status) {
+    if (search) search.hidden = false;
     const rows = [...list.querySelectorAll('li')];
     const filtered = input.dataset.countFiltered || '{n}';
     const all = input.dataset.countAll || '{n}';
@@ -37,6 +38,7 @@
 
   // Copy a fragment without leaving the page.
   for (const button of document.querySelectorAll('.copy')) {
+    button.hidden = false;
     const labelEl = button.querySelector('.copy-label');
     const original = labelEl ? labelEl.textContent : '';
     const copied = button.dataset.copied || original;
@@ -66,88 +68,205 @@
     });
   }
 
-  // The one live thing: two worktrees of one repository, each with its own berth.
-  const switchButtons = [...document.querySelectorAll('.wt-switch button')];
-  const panels = [...document.querySelectorAll('[data-wt-panel]')];
-  const setPressed = index => {
-    for (const button of switchButtons) {
-      button.setAttribute('aria-pressed', String(Number(button.dataset.wt) === index));
-    }
-  };
-  const showWorktree = index => {
-    const current = panels.find(panel => !panel.hidden);
-    const next = panels[index];
-    if (!next || next === current) return;
-    setPressed(index);
-    next.hidden = false;
-    if (still()) {
-      if (current) current.hidden = true;
-      return;
-    }
-    const out = current ? [...current.querySelectorAll('.ln')] : [];
-    const into = [...next.querySelectorAll('.ln')];
-    gsap.to(out, { y: -8, autoAlpha: 0, duration: 0.22, stagger: 0.03, ease: 'power2.in' });
-    gsap.fromTo(into, { y: 10, autoAlpha: 0 }, {
-      y: 0, autoAlpha: 1, duration: 0.36, stagger: 0.04, ease: 'power2.out', delay: 0.12,
-      onComplete: () => { if (current) { current.hidden = true; gsap.set(current, { clearProps: 'all' }); } },
-    });
-  };
-  for (const button of switchButtons) {
-    button.addEventListener('click', () => showWorktree(Number(button.dataset.wt)));
-  }
+  /* ------------------------------------------------------------ workbench */
+  // The Human view is rendered in the markup for every worked state. This
+  // table only supplies the compact --json shape, so the two views describe
+  // the same fixture and neither one has to fetch anything.
 
-  // A press answers on every control.
-  if (gsap && !reduce.matches) {
-    for (const el of document.querySelectorAll('.btn, .copy, .wt-switch button, .command-list a')) {
-      el.addEventListener('pointerdown', () => gsap.to(el, { scale: 0.97, duration: 0.12, ease: 'power2.out' }));
-      el.addEventListener('pointerup', () => gsap.to(el, { scale: 1, duration: 0.24, ease: 'power2.out' }));
-      el.addEventListener('pointerleave', () => gsap.to(el, { scale: 1, duration: 0.24, ease: 'power2.out' }));
-    }
-  }
+  const worktrees = [
+    { key: 'main', identity: 'wt_018a9f2c4b10', branch: 'main', root: '~/src/hello/main', api: 21730, web: 21731, gateway: 21732, otherBranch: 'feat/billing' },
+    { key: 'billing', identity: 'wt_94c2d07e1a88', branch: 'feat/billing', root: '~/src/hello/billing', api: 21740, web: 21741, gateway: 21742, otherBranch: 'main' },
+  ];
+  const reports = {
+    healthy: wt => ({
+      health: 'healthy',
+      services: [
+        { name: 'api', state: 'ready', running: true, ready: true, port_actual: wt.api, health: { status: 'ok', code: 200 } },
+        { name: 'web', state: 'ready', running: true, ready: true, port_actual: wt.web, health: { status: 'ok', code: 200 } },
+        { name: 'worker', state: 'ready', running: true, ready: true },
+      ],
+      machine: [{ name: 'postgres', port: 5432, listening: true, listening_known: true }],
+      diagnosis: { healthy: true, summary: 'all declared services ready', root_causes: [] },
+      attention: { mode: 'assist', notes: [] },
+    }),
+    cascade: wt => ({
+      health: 'broken',
+      services: [
+        { name: 'auth', state: 'crashed', running: false, ready: false, last_exit: { reason: 'crashed', code: 1, at: '12:04:17Z' } },
+        { name: 'api', state: 'blocked_by_dep', running: false, ready: false, port_declared: wt.api, blocked_by: ['auth'] },
+        { name: 'gateway', state: 'blocked_by_dep', running: false, ready: false, port_declared: wt.gateway, blocked_by: ['api'] },
+        { name: 'web', state: 'ready', running: true, ready: true, port_actual: wt.web, health: { status: 'ok', code: 200 } },
+      ],
+      diagnosis: {
+        healthy: false,
+        summary: '1 root cause (auth) blocking 2 downstream services',
+        root_causes: [{
+          id: 'rc_8f31a0c4e912d0ab',
+          service: 'auth',
+          kind: 'service_crashed',
+          severity: 'critical',
+          summary: 'auth crashed with exit code 1',
+          impacted: ['api', 'gateway'],
+          first_error: 'connection refused: postgres:5432 (redacted)',
+          command: 'oberth logs auth --once --run current --first-error',
+        }],
+        next_actions: [{
+          priority: 1,
+          safety: 'read_only',
+          service: 'auth',
+          command: 'oberth logs auth --once --run current --first-error',
+        }],
+      },
+      attention: { mode: 'assist', notes: [{ state: 'triaged', urgency: 0.92, action: 'inspect_logs', target: 'auth' }] },
+    }),
+    port: wt => ({
+      health: 'broken',
+      services: [
+        {
+          name: 'billing',
+          state: 'port_conflict',
+          running: false,
+          ready: false,
+          port_declared: 8080,
+          port_holder: { port: 8080, pid: 44120, kind: 'oberth_run', group: `hello@${wt.otherBranch}` },
+        },
+        { name: 'api', state: 'ready', running: true, ready: true, port_actual: wt.api, health: { status: 'ok', code: 200 } },
+        { name: 'web', state: 'ready', running: true, ready: true, port_actual: wt.web, health: { status: 'ok', code: 200 } },
+      ],
+      diagnosis: {
+        healthy: false,
+        summary: 'billing port 8080 occupied by another worktree run',
+        root_causes: [{
+          id: 'rc_41c0d9ab72e108fa',
+          service: 'billing',
+          kind: 'port_occupied',
+          severity: 'high',
+          summary: `port 8080 held by ${wt.otherBranch} (pid 44120)`,
+          command: 'oberth status --only billing',
+        }],
+        next_actions: [{
+          priority: 1,
+          safety: 'human_decision',
+          service: 'billing',
+          command: 'oberth status --only billing',
+        }],
+      },
+      attention: { mode: 'strict', notes: [{ state: 'open', urgency: 0.64, action: 'inspect_port', target: 'billing' }] },
+    }),
+    drift: wt => ({
+      health: 'drifted',
+      services: [
+        {
+          name: 'web',
+          state: 'ready',
+          running: true,
+          ready: true,
+          port_actual: wt.web,
+          drifts: [{ kind: 'code_stale', severity: 'warning', summary: '3 source files changed since start', command: 'oberth restart --only web' }],
+        },
+        { name: 'api', state: 'ready', running: true, ready: true, port_actual: wt.api, health: { status: 'ok', code: 200 } },
+        { name: 'worker', state: 'ready', running: true, ready: true },
+      ],
+      machine: [{ name: 'postgres', port: 5432, listening: true, listening_known: true }],
+      diagnosis: {
+        healthy: false,
+        summary: 'web is running stale code (3 files changed)',
+        root_causes: [{
+          id: 'rc_77e4b2c1a0f831de',
+          service: 'web',
+          kind: 'code_stale',
+          severity: 'warning',
+          summary: '3 files changed since 12:01:08',
+          command: 'oberth restart --only web',
+        }],
+        next_actions: [{
+          priority: 2,
+          safety: 'local_restart',
+          service: 'web',
+          command: 'oberth restart --only web',
+        }],
+      },
+      attention: {
+        mode: 'assist',
+        notes: [{ state: 'triaged', urgency: 0.81, action: 'restart_service', target: 'web', command: 'oberth restart --only web' }],
+      },
+    }),
+  };
 
-  // Motion: tiles arrive in rows, the log stream keeps moving, nothing hides without script.
-  if (!gsap) return;
-  const mm = gsap.matchMedia();
-  mm.add('(prefers-reduced-motion: no-preference)', () => {
-    const tiles = [...document.querySelectorAll('.board > .tile')];
-    let batch = [];
-    let timer;
-    const play = () => {
-      const group = batch.filter(tile => tile.dataset.arrived !== '1');
-      batch = [];
-      if (!group.length) return;
-      for (const tile of group) tile.dataset.arrived = '1';
-      gsap.from(group, {
-        y: 26, autoAlpha: 0, duration: 0.7, stagger: 0.06, ease: 'power2.out',
-        onComplete: () => gsap.set(group, { clearProps: 'transform,opacity,visibility' }),
+  const workbench = document.querySelector('[data-workbench]');
+  if (workbench) {
+    const controls = workbench.querySelector('[data-wb-controls]');
+    const staticLine = workbench.querySelector('[data-wb-static]');
+    const human = workbench.querySelector('[data-wb-human]');
+    const json = workbench.querySelector('[data-wb-json]');
+    const jsonCode = workbench.querySelector('[data-wb-json-code]');
+    const jsonBranch = workbench.querySelector('[data-wb-json-branch]');
+    const live = workbench.querySelector('[data-wb-status]');
+    const wtButtons = [...workbench.querySelectorAll('[data-wt]')];
+    const scenarioButtons = [...workbench.querySelectorAll('[data-scenario]')];
+    const viewButtons = [...workbench.querySelectorAll('[data-view]')];
+    const wtPanels = [...workbench.querySelectorAll('[data-wt-panel]')];
+    let wt = 0;
+    let scenario = 'healthy';
+    let view = 'human';
+
+    const reportFor = (index, name) => {
+      const tree = worktrees[index];
+      return {
+        schema: 'oberth.runtime.world/v1',
+        worktree: { identity: tree.identity, group: 'hello-worktree', branch: tree.branch, root: tree.root, manifest_present: true },
+        coverage: 'observable',
+        ...reports[name](tree),
+      };
+    };
+
+    const render = () => {
+      const tree = worktrees[wt];
+      for (const button of wtButtons) {
+        button.setAttribute('aria-pressed', String(Number(button.dataset.wt) === wt));
+      }
+      for (const button of scenarioButtons) {
+        button.setAttribute('aria-pressed', String(button.dataset.scenario === scenario));
+      }
+      for (const button of viewButtons) {
+        button.setAttribute('aria-pressed', String(button.dataset.view === view));
+      }
+      for (const panel of wtPanels) {
+        const active = Number(panel.dataset.wtPanel) === wt;
+        panel.hidden = !active;
+        if (active) {
+          for (const state of panel.querySelectorAll('[data-scenario-panel]')) {
+            state.hidden = state.dataset.scenarioPanel !== scenario;
+          }
+        }
+      }
+      human.hidden = view !== 'human';
+      json.hidden = view !== 'json';
+      if (jsonBranch) jsonBranch.textContent = tree.branch;
+      if (jsonCode) jsonCode.textContent = JSON.stringify(reportFor(wt, scenario), null, 2);
+      if (live) live.textContent = `${tree.branch} · ${scenario} · ${view}`;
+    };
+
+    if (controls) controls.hidden = false;
+    if (staticLine) staticLine.hidden = true;
+    for (const button of wtButtons) {
+      button.addEventListener('click', () => {
+        wt = Number(button.dataset.wt);
+        render();
       });
-      const parts = group.flatMap(tile => [...tile.querySelectorAll('.stage, .mark, .fact')]);
-      if (parts.length) {
-        gsap.from(parts, { y: 14, autoAlpha: 0, duration: 0.55, delay: 0.18, stagger: 0.05, ease: 'power2.out' });
-      }
-    };
-    const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        batch.push(entry.target);
-        observer.unobserve(entry.target);
-      }
-      clearTimeout(timer);
-      timer = setTimeout(play, 40);
-    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
-    for (const tile of tiles) observer.observe(tile);
-
-    const caret = document.querySelector('.tile-status .caret');
-    if (caret) gsap.to(caret, { autoAlpha: 0, duration: 0.5, repeat: -1, yoyo: true, ease: 'steps(1)' });
-
-    const stream = document.querySelector('.logs-stream .term');
-    const loop = stream ? gsap.to(stream, { y: -72, duration: 6, ease: 'none', repeat: -1 }) : null;
-
-    return () => {
-      observer.disconnect();
-      clearTimeout(timer);
-      if (loop) loop.kill();
-      gsap.set(tiles, { clearProps: 'transform,opacity,visibility' });
-    };
-  });
+    }
+    for (const button of scenarioButtons) {
+      button.addEventListener('click', () => {
+        scenario = button.dataset.scenario;
+        render();
+      });
+    }
+    for (const button of viewButtons) {
+      button.addEventListener('click', () => {
+        view = button.dataset.view;
+        render();
+      });
+    }
+    render();
+  }
 })();

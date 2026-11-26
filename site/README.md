@@ -1,8 +1,8 @@
 # Engine website / 引擎官网
 
-`site/` 是 `oberth` 引擎的静态官网和指南，只讲引擎本身。中文产品页在 `/`，英文在 `/en/`；指南英文在 `/guide/`，中文在 `/guide/zh/`。页面不连接 runtime service，也不带遥测、外部字体或图片服务。唯一的第三方脚本是随站点同源发布的 GSAP 3.15.1，只用于动效，许可与来源记在`third_party/README.md` 和对应原许可文件；CSP 仍然是 `script-src 'self'`。图标、浅色字标和深色字标的站点副本在 `site/assets/`。
+`site/` 是 `oberth` 引擎的静态官网和指南，只讲引擎本身。中文产品页在 `/`，英文在 `/en/`；指南英文在 `/guide/`，中文在 `/guide/zh/`。页面不连接 runtime service，也不带遥测、外部字体或图片服务。页面不加载任何第三方脚本：动效只用 CSS 过渡和 `site.js` 的原生逻辑，CSP 仍是 `script-src 'self'`。GSAP 3.15.1 的副本与许可仍保留在 `site/assets/` 和 `third_party/`，作为第三方材料清单的一部分；产品页不再引用它。图标、浅色字标和深色字标的站点副本在 `site/assets/`；深色底用 `mark-dark.svg`，指南按主题切换两份字标。
 
-禁用 JavaScript 时，正文、目录、语言切换和下载入口仍然可用。只有靠脚本才有意义的控件（产品页的舞台切换、指南的搜索、主题和抽屉）在没有脚本时不出现，而不是留下点了没反应的按钮。
+禁用 JavaScript 时，正文、目录、语言切换、下载入口和工作台的默认状态（`main · healthy`）仍然可用。只有靠脚本才有意义的控件（产品页的工作台切换、命令过滤、指南的搜索、主题和抽屉）在没有脚本时不出现，而不是留下点了没反应的按钮。
 
 给 coding agent 的 skill 是独立产品，在
 [option-berth-skill](https://github.com/SheathedSharp/option-berth-skill)。本仓库不保存其他产品的截图或采集脚本。
@@ -25,18 +25,22 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory site/dist
 
 ## 产品页的版式
 
-产品页是一张「泊位图」：12 栏满幅板面，8px 缝、16px 外边距，每块格子放一条真实事实
-（状态面板、清单、JSON、命令表、四个运行事实、安装片段）。陶土色只留在字标里，操作色是
-中性近白；实测区（proof）与结尾区（close）翻成浅色底，作为整页的节奏。任何一块格子的内容
-都来自真实运行，不写示意数字。
+产品页是一块 **Precision Harbor** 仪器面板：1180px 单栏、1px 横向分区线和竖向栏线，陶土色
+`#db9378` 只做索引、强调和主操作。没有 bento 格子，也没有整块反白纸片；Measured Proof 用
+同一深色底上的水平对比条（oberth 陶土、native 石板灰），数字来自 `site/data/eval.json`。
+章节用 `01`–`07` 的陶土索引标记，标题与正文靠字号和留白分层，元数据用等宽大写小标签。
 
-页面只有一处真交互：状态面板上的 worktree 切换（`main` / `feature/ports`）。点一下，端口从
-`21730` 变成 `21741`，GSAP 用遮片式动画换行；没有脚本时只显示第一个 worktree，切换按钮不出现
-（`.js-only`）。动效全部走 `gsap.matchMedia()` 的 `prefers-reduced-motion` 分支，减弱动效时
-格子不位移、切换瞬时完成。指南是一块阅读
-界面，自带浅色和深色两套皮肤（默认跟随系统，可以手动切换），字标用浅色变体 `mark.svg`。
-字体只用系统字族：站点 CSP 只允许 `self`，所以没有引用 `design-taste-frontend` 方向单里的
-Albert Sans。`mark-dark.svg` 是品牌深色字标，保证深色底上两条轨仍然可读。
+页面只有一处真交互：**Runtime and Attention Workbench**。它把两个 worktree（`main` /
+`feat/billing`）和四种故障状态（`healthy` / `cascade` / `port` / `drift`）放在同一块面板里，
+Human 视图读服务、端口、证据、根因和 Attention note，`--json` 视图读 `oberth runtime inspect
+--json` 的同一份紧凑载荷。没有脚本时只显示默认的 `main · healthy` 状态，切换、场景、输出和
+复制按钮不出现；所有控件都用 `hidden` 起步，由 `site.js` 在加载后揭开，所以脚本失败也不会
+留下死按钮。减弱动效时没有位移动画，切换瞬时完成。
+
+指南是一块阅读界面，自带暖纸浅色和 obsidian 深色两套皮肤（默认跟随系统，可以手动切换）。
+代码块在两种皮肤下都保持同一种深色仪器底，边框用 `--line`。字标按主题切换：浅色底用
+`mark.svg`，深色底用 `mark-dark.svg`，两条轨始终可见。字体只用系统字族：站点 CSP 只允许
+`self`，所以没有引用外部字体。
 
 ## 指南（`/guide/`）
 
@@ -109,7 +113,8 @@ CI=1 npm test                  # CI 两种浏览器引擎
 ```
 
 回归覆盖两种语言、360/390/768/1440px、图片加载、无横向溢出、命令过滤与空状态、Escape
-重置、worktree 切换、减弱动效时格子不位移、无 JavaScript 时的基本可用性，以及结尾的三产品链接。
+重置、工作台的 worktree / 场景 / Human 与 `--json` 切换、减弱动效时页面不位移且工作台瞬时
+切换、无 JavaScript 时的默认状态与控件隐藏，以及结尾的引擎与 skill 链接。
 
 指南另有这些检查：
 
@@ -193,4 +198,4 @@ SITE_URL=https://sheathedsharp.github.io/option-berth/ python3 site/build.py
 ```
 
 GitHub Pages 的软限制是每月 100 GB 流量和每小时 10 次构建。构建出的 `site/dist` 目前有
-62 个文件（`find site/dist -type f | wc -l`），不需要额外付费。
+63 个文件（`find site/dist -type f | wc -l`），不需要额外付费。
