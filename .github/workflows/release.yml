@@ -12,7 +12,7 @@ jobs:
   policy:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # SHA-only checkout keeps fetched annotated tag objects intact.
           ref: ${{ github.sha }}
@@ -35,28 +35,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # SHA-only checkout keeps fetched annotated tag objects intact.
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: ./.github/actions/setup-engine
         with:
-          go-version-file: engine/go.mod
-          cache-dependency-path: engine/go.sum
-      - name: Install package tools for tests
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          # Only the network fetch is retried: a mirror hiccup is not a result
-          # about this release. Never wrap a test, vet or verification step —
-          # a retry there would mask a real failure behind a slower red build.
-          source scripts/retry.sh
-          retry 4 5 -- sudo apt-get update
-          retry 4 5 -- sudo apt-get install -y rpm
-          retry 4 5 -- go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          install-packaging-tools: ${{ runner.os == 'Linux' }}
       - name: Native release gates
         env:
           GOTOOLCHAIN: local
@@ -81,22 +68,22 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # SHA-only checkout keeps fetched annotated tag objects intact.
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: ./.github/actions/setup-engine
         with:
-          go-version-file: engine/go.mod
-          cache-dependency-path: engine/go.sum
+          # Only the Linux targets build rpm/deb packages.
+          install-packaging-tools: ${{ matrix.os == 'linux' }}
       - name: Restore this target from an earlier attempt
         # A re-run starts on a fresh runner. The only state that crosses is the
         # previous attempt's upload for this target, and it is absent on the
         # first attempt, so its absence is not a failure here: --resume reuses
         # what verifies against this build and rebuilds the rest.
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:
           name: release-${{ matrix.os }}-${{ matrix.arch }}
@@ -117,13 +104,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Network fetch only; packaging itself runs once, unretried.
-          source scripts/retry.sh
-          retry 4 5 -- go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
-          gopath=$(go env GOPATH)
-          export PATH="$gopath/bin:$PATH"
           python3 scripts/package_linux.py --arch "$TARGET_ARCH" --dist dist --resume
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*
@@ -139,13 +121,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # SHA-only checkout keeps fetched annotated tag objects intact.
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
           merge-multiple: true

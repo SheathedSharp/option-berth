@@ -1,5 +1,5 @@
 # Packages covered by the race gate. Paths are relative to engine/.
-# This file is the single source for .github/workflows/engine.yml and
+# This file is the single source for .github/workflows/ci.yml and
 # scripts/release.py; do not duplicate the list in either caller.
 ./internal/attn/...
 ./internal/claims

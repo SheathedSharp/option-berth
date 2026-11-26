@@ -28,6 +28,7 @@ jobs:
       git: ${{ steps.areas.outputs.git }}
       examples: ${{ steps.areas.outputs.examples }}
       readiness: ${{ steps.areas.outputs.readiness }}
+      site: ${{ steps.areas.outputs.site }}
       ci: ${{ steps.areas.outputs.ci }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -50,11 +51,187 @@ jobs:
             python3 scripts/changed_areas.py --base "$BASE" --head "$HEAD"
           fi
 
-  engine:
-    name: Engine
+  ci-config:
+    name: CI configuration
     needs: changes
-    if: needs.changes.outputs.engine == 'true'
-    uses: ./.github/workflows/engine.yml
+    if: needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-engine
+      - name: Install actionlint
+        shell: bash
+        run: |
+          # Only the network fetch is retried; the lint below runs once, so a
+          # real workflow error still fails this check on the first attempt.
+          source scripts/retry.sh
+          retry 4 5 -- go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Lint every workflow
+        # actionlint reads each composite action's metadata through the
+        # workflows that call it and rejects a `with:` key the action does not
+        # declare. It has no schema for an action.yml on its own, so passing
+        # one here would only produce false workflow errors.
+        run: actionlint .github/workflows/*.yml
+      - name: Parse every composite action
+        # actionlint cannot lint an action.yml directly; the job that uses a
+        # malformed one fails at setup. Parsing it here is the cheap check that
+        # happens before any of those jobs starts. Ruby's Psych is the YAML
+        # parser every hosted Ubuntu runner ships.
+        run: ruby -ryaml -e 'ARGV.each { |path| YAML.safe_load(File.read(path)) }' .github/actions/*/action.yml
+      - name: Check required checks against workflow jobs
+        run: python3 scripts/check_ci_gate.py
+      - name: Run gate checker tests
+        run: python3 -m unittest discover -s scripts -p 'check_ci_gate_test.py'
+
+  engine:
+    name: Engine / ${{ matrix.os }}
+    needs: changes
+    if: >-
+      needs.changes.outputs.engine == 'true'
+      || needs.changes.outputs.git == 'true'
+      || needs.changes.outputs.examples == 'true'
+      || needs.changes.outputs.readiness == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    env:
+      GOMAXPROCS: '4'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      # The skill is a separate repository, but it teaches this contract. The
+      # required check reads a literal commit, so an unrelated push to the skill
+      # repository cannot turn this pull request red. Moving the pin is a change
+      # to this workflow, which Gate integrity already limits to a maintainer.
+      - name: Check out the agent skill at the pinned commit
+        if: runner.os == 'Linux' && needs.changes.outputs.engine == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: SheathedSharp/option-berth-skill
+          ref: 12ce21c664f9e926b705ee17c210b77edf4181c5
+          path: option-berth-skill
+          persist-credentials: false
+      - name: Skill covers the agent contract
+        if: runner.os == 'Linux' && needs.changes.outputs.engine == 'true'
+        shell: bash
+        run: python3 scripts/check_skill_contract.py --skill-dir option-berth-skill
+      - uses: ./.github/actions/setup-engine
+        with:
+          install-packaging-tools: ${{ runner.os == 'Linux' && needs.changes.outputs.engine == 'true' }}
+          record-verification: 'true'
+      - name: Native build
+        if: needs.changes.outputs.engine == 'true'
+        working-directory: engine
+        run: go build ./...
+      - name: Build the CLI once
+        id: build-cli
+        # One binary serves the example smoke and the readiness check, so each
+        # of them is a few commands in this job instead of two more runners.
+        if: needs.changes.outputs.examples == 'true' || needs.changes.outputs.readiness == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd engine
+            go build -o "$RUNNER_TEMP/oberth" ./cmd/oberth
+          )
+          echo "OBERTH_BIN=$RUNNER_TEMP/oberth" >> "$GITHUB_ENV"
+      - name: Cross-build release targets
+        if: runner.os == 'Linux' && needs.changes.outputs.engine == 'true'
+        working-directory: engine
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+          done
+      - name: Vet
+        if: needs.changes.outputs.engine == 'true'
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          go version | tee ../verification/go-version.txt
+          go vet ./... 2>&1 | tee ../verification/vet.log
+      - name: Full engine tests
+        if: needs.changes.outputs.engine == 'true' && (success() || failure())
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout=8m ./... 2>&1 | tee ../verification/unit.log
+      - name: Native Git, worktree, and observation tests
+        if: needs.changes.outputs.git == 'true' && (success() || failure())
+        working-directory: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version | tee ../verification/go-version.txt
+          git --version | tee ../verification/git-version.txt
+          test -z "$(gofmt -l internal/git internal/groups internal/scanner)"
+          go vet ./internal/git ./internal/groups ./internal/scanner 2>&1 | tee ../verification/git-vet.log
+          go test -count=3 -timeout=5m ./internal/git ./internal/groups ./internal/scanner 2>&1 | tee ../verification/git-unit.log
+      - name: Native attribution and observation race tests
+        if: needs.changes.outputs.git == 'true' && (success() || failure())
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=3 -timeout=5m ./internal/git ./internal/groups ./internal/scanner 2>&1 | tee ../verification/git-race.log
+      - name: Run the per-PR example smoke
+        if: needs.changes.outputs.examples == 'true' && steps.build-cli.outcome == 'success' && (success() || failure())
+        shell: bash
+        run: python3 scripts/smoke.py --binary "$OBERTH_BIN"
+      - name: Check real healthy and unhealthy service reuse
+        if: needs.changes.outputs.readiness == 'true' && steps.build-cli.outcome == 'success' && (success() || failure())
+        shell: bash
+        run: python3 scripts/verify-reused-readiness.py --binary "$OBERTH_BIN"
+      - name: Mage workflow regression tests
+        if: needs.changes.outputs.engine == 'true' && (success() || failure())
+        shell: bash
+        run: go test -race -count=1 magefiles/build.go magefiles/workflow.go magefiles/workflow_test.go
+      - name: Measurement helper tests
+        if: needs.changes.outputs.engine == 'true' && (success() || failure())
+        shell: bash
+        run: python3 -m unittest discover -s scripts -p '*_test.py'
+      - name: Core concurrency tests
+        # The release-sized checks stay on manual dispatch and on the nightly,
+        # where spending 10 more minutes is the point.
+        if: github.event_name == 'workflow_dispatch' && (success() || failure())
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          # macOS ships bash 3.2, which has no mapfile.
+          race_packages=()
+          while IFS= read -r package; do
+            race_packages+=("$package")
+          done < <(grep -vE '^[[:space:]]*(#|$)' ../scripts/race-packages.txt)
+          go test -race -count=1 -timeout=10m "${race_packages[@]}" 2>&1 | tee ../verification/race.log
+      - name: Real service scenarios
+        if: github.event_name == 'workflow_dispatch' && (success() || failure())
+        working-directory: engine
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -tags integration -v -count=1 -timeout=8m ./internal/scenario/... 2>&1 | tee ../verification/scenario.log
+      - name: Retain verification logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: engine-verification-${{ matrix.os }}-${{ github.run_id }}
+          path: verification/
+          retention-days: 7
 
   windows:
     name: Windows
@@ -62,46 +239,100 @@ jobs:
     if: needs.changes.outputs.windows == 'true'
     uses: ./.github/workflows/windows.yml
 
-  git-read:
-    name: Git read
+  site:
+    name: Site
     needs: changes
-    if: needs.changes.outputs.git == 'true'
-    uses: ./.github/workflows/git-read.yml
+    if: needs.changes.outputs.site == 'true'
+    uses: ./.github/workflows/site.yml
 
-  examples:
-    name: Examples
+  skill-drift:
+    # Advisory, never required: this job reports how far the pinned skill commit
+    # lags `main`, so adopting a skill release is a visible decision instead of a
+    # surprise red pull request. Keep it out of .github/quality-gate-checks.json,
+    # the `main` ruleset and the gate's needs.
+    name: Skill contract / drift from main
     needs: changes
-    if: needs.changes.outputs.examples == 'true'
-    uses: ./.github/workflows/examples.yml
-
-  readiness:
-    name: Reused readiness
-    needs: changes
-    if: needs.changes.outputs.readiness == 'true'
-    uses: ./.github/workflows/readiness.yml
-
-  ci-config:
-    name: CI configuration
-    needs: changes
-    if: needs.changes.outputs.ci == 'true'
-    uses: ./.github/workflows/ci-config.yml
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check out the agent skill at main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: SheathedSharp/option-berth-skill
+          ref: main
+          path: option-berth-skill
+          persist-credentials: false
+      - name: Record the pinned and the moving commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep in sync with the literal ref in the required checkout above.
+          pin=12ce21c664f9e926b705ee17c210b77edf4181c5
+          head=$(git -C option-berth-skill rev-parse HEAD)
+          echo "pinned: $pin"
+          echo "main:   $head"
+          if [ "$pin" = "$head" ]; then
+            echo "skill main is the pinned commit"
+          else
+            echo "skill main has moved past the pin; the required check still uses the pinned commit"
+          fi
+      - name: Skill main covers the agent contract
+        id: drift
+        # Advisory: the step reports failure but the job stays green.
+        continue-on-error: true
+        shell: bash
+        run: python3 scripts/check_skill_contract.py --skill-dir option-berth-skill
+      - name: Publish drift as an annotation
+        if: steps.drift.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning title=Skill contract drift::option-berth-skill main no longer covers the engine's agent contract; review the skill change and move the pinned ref in .github/workflows/ci.yml when it is ready"
 
   gate:
     name: Gate / required checks
-    needs: [changes, engine, windows, git-read, examples, readiness, ci-config]
+    needs: [changes, ci-config, engine, windows, site]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Record every area result
+      - name: Summarize every area and fail on a real failure
         shell: bash
-        run: echo '${{ toJSON(needs) }}' | python3 -m json.tool
-      - name: Fail when an area that had to run did not pass
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
-        shell: bash
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "::error::a check that had to run did not pass; see the job results above"
-          exit 1
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS"])
+          areas = (
+              ("changes", "Detect changed areas"),
+              ("ci-config", "CI configuration"),
+              ("engine", "Engine"),
+              ("windows", "Windows"),
+              ("site", "Site"),
+          )
+          rows = [(label, needs[area]["result"]) for area, label in areas]
+          table = "\n".join(
+              ["| area | result |", "| --- | --- |"]
+              + [f"| {label} | {result} |" for label, result in rows]
+          )
+          print(table)
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as handle:
+                  handle.write("## Required checks\n\n" + table + "\n")
+          failed = [label for label, result in rows if result in ("failure", "cancelled")]
+          if failed:
+              print("::error::required checks that did not pass: " + ", ".join(failed))
+              sys.exit(1)
+          PY
 
   # No retry job here: `gh run rerun` only accepts a completed run, and this run
   # is not complete while one of its own jobs is deciding. flake-retry.yml makes

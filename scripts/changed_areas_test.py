@@ -54,9 +54,20 @@ class AreasTests(unittest.TestCase):
                 self.assertEqual(needed(areas.areas_for([path])), set(areas.AREAS))
 
     def test_skill_pin_change_runs_the_engine_check_that_reads_it(self):
-        # The pin lives in engine.yml. A workflow change already runs every
-        # area, so bumping it cannot skip `Skill covers the agent contract`.
-        self.assertEqual(needed(areas.areas_for([".github/workflows/engine.yml"])), set(areas.AREAS))
+        # The pin lives in ci.yml. A workflow change already runs every area,
+        # so bumping it cannot skip `Skill covers the agent contract`.
+        self.assertEqual(needed(areas.areas_for([".github/workflows/ci.yml"])), set(areas.AREAS))
+
+    def test_site_change_only_runs_the_site_area(self):
+        self.assertEqual(needed(areas.areas_for(["site/index.html"])), {"site"})
+
+    def test_composite_action_change_runs_every_area(self):
+        # A job's setup runs through these actions, so a change to one is proved
+        # by running the whole pipeline, exactly like a workflow change.
+        for path in (".github/actions/setup-engine/action.yml",
+                     ".github/actions/setup-site/action.yml"):
+            with self.subTest(path=path):
+                self.assertEqual(needed(areas.areas_for([path])), set(areas.AREAS))
 
     def test_file_rules_match_exactly_not_by_prefix(self):
         self.assertEqual(needed(areas.areas_for(["install.sh.bak"])), set())
