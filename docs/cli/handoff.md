@@ -12,9 +12,19 @@ produced and their boundaries) is in [Work records](../workplace.md).
 
 ## oberth attn
 
-The optional assessment is the `oberth attn` command; the consent model and what may leave the
-machine are in [Attention](../attention.md). An agent should complete status reading, abnormality
-verification, assessment and HIL output in a single invocation:
+The optional assessment is the `oberth attn` command; the consent model, the deterministic notes layer
+and what may leave the machine are in [Attention](../attention.md). Notes are always available and
+need no configuration:
+
+~~~sh
+oberth attn notes [--all] [--project <path>] [--json]
+~~~
+
+`notes` reads what the Runtime Service persisted for a worktree, and derives the notes live from
+`oberth runtime inspect` when no host has persisted any yet. `--all` adds resolved history, and
+`oberth attn status` reports a `notes` summary whenever notes exist. With the model layer on, an agent
+should complete status reading, abnormality verification, assessment and HIL output in a single
+invocation:
 
 ~~~sh
 # for short tasks pass arguments directly, no need to write a file
@@ -25,18 +35,27 @@ oberth attn assess --project "$PWD" \
 
 `oberth attn config` is the only verb that writes credentials. Run with no flags on a terminal it
 asks three questions with the arrow keys — provider, model, key — and every list ends with a custom
-row, so an endpoint or model the build does not list can still be configured. A preset is a
-convenience, not a provider restriction: `openrouter` fills
-`https://openrouter.ai/api/alpha/decisions` and defaults to `typesafe/jev-1.14`, and its list carries
-the current decision models that endpoint serves (TypeSafe Jev, OpenAI GPT-6 Luna Decisions, Google
-Gemini Decision 1, Microsoft Decision 1, Perplexity Decider, Cloudflare Clef, LiquidAI d1.1, Upstage
-Solar Decide, Morph Reflex); `typesafe` fills `https://api.typesafe.ai/v1/systemone` with
-`jev-latest` and `jev-preview`. Scripts and CI keep the flag form: an endpoint and model directly,
-or `--preset NAME`, with the key from `--key-stdin`, `--key-env NAME`, hidden terminal input, or
-the already stored key. Either form sends one synthetic redacted probe and only writes `attn.json`
-when the probe succeeds — a failed probe leaves the existing configuration untouched. `config`
-changes credentials, not consent. `oberth attn on` and `oberth attn off [--forget]` flip the single
-`enabled` boolean and never touch the network. `oberth attn test` probes the current effective
+row, so an endpoint or model the build does not list can still be configured. A preset fills a
+convention, never a restriction:
+
+| Preset | Protocol | Endpoint |
+| --- | --- | --- |
+| `openrouter` | `decisions` | `https://openrouter.ai/api/alpha/decisions` |
+| `typesafe` | `decisions` | `https://api.typesafe.ai/v1/systemone` |
+| `openai` | `openai_chat` | The provider's chat-completions endpoint |
+| `anthropic` | `anthropic` | The provider's messages endpoint |
+| `ollama` | `openai_chat` | Loopback `http://127.0.0.1:11434/v1/chat/completions` |
+
+`--protocol` (or `BERTH_ATTN_PROTOCOL`) selects the wire protocol; `decisions` is the default. A remote
+endpoint needs a key, and without one the fixed reason is `no_key`. The `ollama` preset is the
+exception: a loopback endpoint needs no key and reports `key_source: "loopback"`. Scripts and CI keep
+the flag form: an endpoint and model directly, or `--preset NAME`, with the key from `--key-stdin`,
+`--key-env NAME`, hidden terminal input, or the already stored key. Either form sends one synthetic
+redacted probe and only writes `attn.json` when the probe succeeds — a failed probe leaves the existing
+configuration untouched. `config` changes credentials, not consent. `oberth attn on` and
+`oberth attn off [--forget]` flip the single `enabled` boolean and never touch the network; `--mode
+strict|assist|reconcile` (or `BERTH_ATTN_MODE`) decides how far triage may go and defaults to `assist`.
+`oberth attn test` probes the current effective
 configuration once. `oberth attn status` reports the resolved state, the fixed reason when it cannot
 be used, and a summary of the local quality ledger. `--json` carries the decision document: the
 consent and configuration fields plus a `quality` object reduced to the counters that answer "is a
@@ -68,7 +87,9 @@ there is no usable environment endpoint, model or key, or on network failure,
 invalid response, expired file or changed state revision, the fact file is left unchanged. The
 `~/.option-berth/attn.json` written by `oberth attn config` (`$BERTH_HOME/attn.json` for isolated
 runs) is read automatically by `oberth attn` and is the only persistent consent: `enabled: true`
-turns the model on, `enabled: false` keeps it off even when a key is present. An explicit
+turns the model on, `enabled: false` keeps it off even when a key is present. The same file carries
+`mode`, `protocol` and `include_error_line`; `include_error_line` defaults to true and sends one
+bounded, secret- and path-redacted error line, and false suppresses error lines entirely. An explicit
 `BERTH_ATTN_ENDPOINT` / `BERTH_ATTN_MODEL` / `BERTH_ATTN_KEY` supplies those fields but does not
 enable the model; `BERTH_ATTN=1` enables it for one process. Each unavailable answer carries one fixed
 reason (`no_key`, `disabled`, `invalid_config`, `unauthorized`, `rate_limited`, `timeout`, `network`,
@@ -138,7 +159,7 @@ or a particular installed version; a provider failure remains a provider failure
 
 ## Native Claude project hooks
 
-`agent claude-hook` handles Claude Code's official `UserPromptSubmit`, `Stop`, `StopFailure` and `SessionEnd` JSON envelopes. The adapter has native non-interactive (`-p`) end-to-end evidence with Claude Code **2.1.322 on macOS** and local fake providers; earlier versions and native Windows execution are not verified/supported by this adapter. It is not a transparent attachment to arbitrary running `claude`/`cld` processes. A wrapper must preserve project hooks.
+`agent claude-hook` handles Claude Code's official `UserPromptSubmit`, `PostToolUse`, `Stop`, `StopFailure` and `SessionEnd` JSON envelopes. The adapter has native non-interactive (`-p`) end-to-end evidence with Claude Code **2.1.322 on macOS** and local fake providers; earlier versions and native Windows execution are not verified/supported by this adapter. It is not a transparent attachment to arbitrary running `claude`/`cld` processes. A wrapper must preserve project hooks.
 
 Interactive TTY and the user’s private `cld` wrapper are not verified. A clean-HOME interactive PTY attempt exited before task execution: Claude’s first-run connectivity check still targeted `api.anthropic.com` despite a local provider base URL and failed through the deliberately refusing proxy. No task or hook feedback ran in that attempt; do not infer interactive coverage from `-p` evidence or bypass project trust/onboarding to claim it.
 
@@ -149,9 +170,11 @@ oberth agent claude-hook --project "$PWD" --service api \
   --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m --print-config
 ```
 
-The command only prints JSON. `--print-config` also requires `--project` and does not infer the current directory. Review the JSON and merge its `hooks` into the selected project's `.claude/settings.json` without replacing unrelated settings; start a new native Claude session under the tool's normal project-trust rules. It does not write settings, install a global hook or change Attention consent. Keep `UserPromptSubmit`'s `onFailure: "block"`: a failed/timed-out task boundary must block that prompt rather than let a later Stop consume a previous task's lease; this uses the verified version's official failure policy. A minimal configuration is in [the example](../../examples/claude-hooks/settings.example.json); prefer generated output when using a nonstandard executable path. A matching installed skill is not evidence that these hooks ran. `oberth doctor --only claude_hooks` is a read-only check of the project's committable `.claude/settings.json`; it never reads `settings.local.json` or the user-global Claude config, and it never writes hooks. If that file already enables the hook command but hard-codes a `timeout` below 20 seconds, or passes a `--lease` shorter than the hook command budget, the row warns: a newer oberth binary cannot stop Claude from cutting a shorter hook timeout first. Omitting `timeout` keeps Claude's official defaults (30 seconds for UserPromptSubmit, 600 seconds for Stop) and is not warned as a short budget.
+The command only prints JSON. `--print-config` also requires `--project` and does not infer the current directory. Review the JSON and merge its `hooks` into the selected project's `.claude/settings.json` without replacing unrelated settings; start a new native Claude session under the tool's normal project-trust rules. It does not write settings, install a global hook or change Attention consent. `--print-config` includes the `PostToolUse` entry without `onFailure`, because a slow disk must never block a tool call; that entry stays silent until a notes file exists for the worktree. Keep `UserPromptSubmit`'s `onFailure: "block"`: a failed/timed-out task boundary must block that prompt rather than let a later Stop consume a previous task's lease; this uses the verified version's official failure policy. A minimal configuration is in [the example](../../examples/claude-hooks/settings.example.json); prefer generated output when using a nonstandard executable path. A matching installed skill is not evidence that these hooks ran. `oberth doctor --only claude_hooks` is a read-only check of the project's committable `.claude/settings.json`; it never reads `settings.local.json` or the user-global Claude config, and it never writes hooks. If that file already enables the hook command but hard-codes a `timeout` below 20 seconds, or passes a `--lease` shorter than the hook command budget, the row warns: a newer oberth binary cannot stop Claude from cutting a shorter hook timeout first. Omitting `timeout` keeps Claude's official defaults (30 seconds for UserPromptSubmit, 600 seconds for Stop) and is not warned as a short budget.
 
-`--project` is mandatory and must resolve to the hook input's exact worktree. `--service` selects declared services; `--run` selects exact already-recorded run IDs, including portless workers. Both accept comma-separated values. Same-named foreign processes and replacement ad-hoc generations are never adopted. `--authorize` is an explicit subset of fixed read-only evaluation options, not tool/action approval. Task scope is fixed for the lease; associate a newly created ad-hoc run explicitly in later project/task configuration. No manifest is generated, no home directory scanned, and no missing service started. An already-running Runtime must know the selected project; an absent service, unregistered project or missing Runtime context returns `runtime_context_unavailable` rather than switching to a system scan. When the cause is known, the reason is qualified as `runtime_context_unavailable:runtime_service_required`, `runtime_context_unavailable:project_not_registered_in_runtime`, or `runtime_context_unavailable:timeout`. Unknown Prepare failures stay unqualified so raw RPC text is not copied into the hook message. The hook reads no source, git diff or log contents. A task that needs services still uses the ordinary authorized `up`/`start` path; healthy existing runs are reused as facts.
+`--project` is mandatory and must resolve to the hook input's exact worktree. `--service` selects declared services; `--run` selects exact already-recorded run IDs, including portless workers. Both accept comma-separated values. When both are omitted and the worktree holds a valid `oberth.yaml`, the hook scopes itself to the manifest's declared services; an explicit selector always wins, and a worktree with no manifest still returns `scope_required`. Same-named foreign processes and replacement ad-hoc generations are never adopted. `--authorize` is an explicit subset of fixed read-only evaluation options, not tool/action approval. Task scope is fixed for the lease; associate a newly created ad-hoc run explicitly in later project/task configuration. No manifest is generated, no home directory scanned, and no missing service started. An already-running Runtime must know the selected project; an absent service, unregistered project or missing Runtime context returns `runtime_context_unavailable` rather than switching to a system scan. When the cause is known, the reason is qualified as `runtime_context_unavailable:runtime_service_required`, `runtime_context_unavailable:project_not_registered_in_runtime`, or `runtime_context_unavailable:timeout`. Unknown Prepare failures stay unqualified so raw RPC text is not copied into the hook message. The hook reads no source, git diff or log contents. A task that needs services still uses the ordinary authorized `up`/`start` path; healthy existing runs are reused as facts.
+
+`PostToolUse` is the mid-turn delivery path. It takes no delivery lease, skips the key derivation and consent work of a task boundary, and reads this worktree's notes file under the lock. It emits `hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: "..."}` of at most 500 runes, only when a live note it has not yet delivered at this world revision matches the task scope; each `(note, world_revision)` pair is delivered once. It stays silent under `OBERTH_CLAUDE_TASK_MODE=edit` and when the worktree has no notes file.
 
 `UserPromptSubmit` binds canonical worktree, opaque session identity and a fresh task generation. It injects only selected Runtime facts, including observation coverage: a blind/narrow listener view does not become `running:false`. Exact task runs read the existing full exit facts, not the status display's five-row cap. The hook ignores `prompt`, `transcript_path`, assistant messages and error details. The assessment summary is a fixed conservative development-task label, so relevance has less task detail than a manually supplied redacted summary; conversations are neither stored by the adapter nor used as assessment summaries.
 

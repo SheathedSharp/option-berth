@@ -26,6 +26,8 @@ Runtime Service、这份安装、自检与可选的改进报告，以及首屏�
   `runtime.service.hello` 也带同一份结果，客户端不能把失明 runtime service 的空端口表当成事实。
   同时还带 `scanner`：有订阅者时为 `scanning`，没有订阅者时为 `parked`。停驻时不会按 `scan_interval_ms`
   持续扫描，因此在下一次状态读取或订阅唤醒之前，较旧的 `last_scan_at` 是预期现象。
+  同一个宿主在 `runtime.world` 能力下响应 `runtime.world.read`，返回收敛后的 Runtime World
+  （`oberth.runtime.world/v1`），包含 `coverage`、`health` 与 `diagnosis`，见[运行事实](facts.zh.md#oberth-runtime-inspect-path---json)。
   `run` 默认前台，`--detach` 转后台；`--persistent` 无视 `runtime_service.idle_timeout` 关闭空闲退出，用户级服务单元正是带它启动的。装了该单元的机器上，`restart` 重启单元，不会另起一个游离进程。
 - `oberth -v` / `oberth --version`：简洁地打印当前 CLI 版本；`oberth config init|path|edit`、`oberth runtime service run`、`oberth version`、`oberth completion`：配置与运行环境入口。
 - `oberth version --json` 输出当前构建的 `version`、`commit`、`built` 和 `platform`，供安装检查脚本确认实际运行的构建。
@@ -60,6 +62,8 @@ Runtime Service、这份安装、自检与可选的改进报告，以及首屏�
 ### Runtime Service 协议 3 切换
 
 Runtime 运行领域仍是 worktree → manifest → service → run → runtime-facts 事实链，Runtime Service 是后台宿主。产品 3.0.0 / 协议 3.0.0 直接移除旧公共宿主命名空间，不保留别名。能力协商仅适用于协议主版本一致的双方，不能让 v2 宿主变成可接受的目标。
+
+协议 `3.1.0` 只增加一个能力 `runtime.world` 及其 `runtime.world.read` 方法。这是与 3.0.0 兼容的叠加：不改名、不删除，不索取它的客户端读到的仍是原来的接口，行为不变。
 
 <!-- retired-runtime-v2-begin: refused names and manual switching only -->
 | 退役的 v2 输入 | 协议 3 替代项 |

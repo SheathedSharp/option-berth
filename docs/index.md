@@ -2,7 +2,7 @@
 
 English | [中文](index.zh.md)
 
-Start with a task, not the protocol. `oberth` runs the services declared for a local Git worktree and reports their processes, ports, health and exits.
+Pick the task you have; the protocol can wait. `oberth` runs the services a local Git worktree declares and then publishes what it can see — processes, ports, health, exits, and a diagnosis of anything that is wrong.
 
 ## Use oberth
 
@@ -11,9 +11,10 @@ Start with a task, not the protocol. `oberth` runs the services declared for a l
 | Install or upgrade | [Installation](install.md) |
 | Run a first service | [Quick start](quickstart.md) |
 | Work on two branches at once | [Multiple worktrees](worktrees.md) |
-| Understand the background process | [Runtime Service](runtime-service.md) |
-| Diagnose a failure | [Troubleshooting](troubleshooting.md) |
-| Use optional model advice | [Attention](attention.md) |
+| Understand the background host | [Runtime Service](runtime-service.md) |
+| See the whole runtime picture and why a service failed | [Runtime facts](cli/facts.md#oberth-runtime-inspect-path---json) |
+| Diagnose a failure step by step | [Troubleshooting](troubleshooting.md) |
+| Read attention notes, or turn on model advice | [Attention](attention.md) |
 | Give an agent the operating instructions | [Integrations](integrations.md) |
 | Record a temporary task or hand work over | [Work records](workplace.md) |
 

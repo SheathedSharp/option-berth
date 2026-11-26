@@ -18,6 +18,7 @@ The Runtime Service, this installation, the self-checks, the optional improvemen
   carries `observation` (`state`, `code`, `detail`, `hint`, `checked_at`), saying whether the runtime service itself can see listeners;
   `runtime.service.hello` carries the same result, and clients must not take a blind runtime service's empty port table as fact.
   It also carries `scanner`: `scanning` when there is at least one subscriber, or `parked` when there are none. A parked loop does not keep scanning at `scan_interval_ms`, so an old `last_scan_at` is expected until a state read or subscription wakes it.
+  The same host answers `runtime.world.read` under the `runtime.world` capability and returns the reduced Runtime World (`oberth.runtime.world/v1`) documented in [runtime facts](facts.md#oberth-runtime-inspect-path---json), including its `coverage`, `health` and `diagnosis`.
   `run` is foreground unless `--detach` is given; `--persistent` disables idle shutdown regardless of `runtime_service.idle_timeout`, and it is what the user-level service unit passes. Where that unit is installed, `restart` restarts the unit and never starts a detached process of its own.
 - `oberth -v` / `oberth --version`: prints the current CLI version concisely; `oberth config init|path|edit`, `oberth runtime service run`, `oberth version`, `oberth completion`: configuration and runtime environment entry points.
 - `oberth version --json` outputs `version`, `commit`, `built` and `platform` for the current build, for install check scripts to confirm the build actually running.
@@ -54,6 +55,8 @@ a build from `main`) and when they cannot be compared (for example `dev`).
 ### Runtime Service protocol 3 switch
 
 The Runtime domain remains the worktree → manifest → service → run → runtime-facts chain. Runtime Service is its background host. Product 3.0.0 / protocol 3.0.0 removes the old public host namespace rather than keeping aliases. Capability negotiation is only between matching protocol majors; it does not make a v2 host acceptable.
+
+Protocol `3.1.0` adds one capability, `runtime.world`, and its `runtime.world.read` method. The addition is compatible with 3.0.0: it renames nothing and removes nothing, and a client that does not ask for it reads the earlier surface unchanged.
 
 <!-- retired-runtime-v2-begin: refused names and manual switching only -->
 | Retired v2 input | Protocol 3 replacement |

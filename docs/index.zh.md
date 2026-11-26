@@ -2,7 +2,7 @@
 
 [English](index.md) | 中文
 
-按你要完成的事情往下读，不必先学内部协议。`oberth` 根据当前 Git 工作树的配置启动本地服务，告诉你进程、端口、健康检查和退出结果。
+按你手上的任务往下读，不必先学协议。`oberth` 根据当前 Git 工作树的配置启动本地服务，再发布它看到的情况：进程、端口、健康、退出，以及出了问题时该往哪查。
 
 ## 使用 oberth
 
@@ -11,9 +11,10 @@
 | 安装或升级 | [安装说明](install.zh.md) |
 | 让第一个服务跑起来 | [快速开始](quickstart.zh.md) |
 | 同时开发两个分支 | [多工作树使用](worktrees.zh.md) |
-| 了解后台进程 | [Runtime Service 后台服务](runtime-service.zh.md) |
-| 排查启动或运行故障 | [常见问题](troubleshooting.zh.md) |
-| 使用可选的模型建议 | [Attention 辅助判断](attention.zh.md) |
+| 了解后台宿主 | [Runtime Service 后台服务](runtime-service.zh.md) |
+| 看整体运行画面、弄明白某个服务为什么坏 | [运行事实](cli/facts.zh.md#oberth-runtime-inspect-path---json) |
+| 一步步排查启动或运行故障 | [常见问题](troubleshooting.zh.md) |
+| 读 Attention 提示，或开启模型建议 | [Attention 辅助判断](attention.zh.md) |
 | 让编程助手学会操作 | [工具接入](integrations.zh.md) |
 | 记录临时任务、交接工作 | [工作记录](workplace.zh.md) |
 
