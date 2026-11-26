@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sheathedsharp/option-berth/engine/internal/attn/engine"
 	"github.com/sheathedsharp/option-berth/engine/internal/buildinfo"
 	"github.com/sheathedsharp/option-berth/engine/internal/config"
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
@@ -112,6 +113,20 @@ func runForegroundRuntimeService(ctx context.Context, persistent bool) error {
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Attention is wired in exactly like a host plugin: the runtime service
+	// knows a world observer, and the optional model client is reached only
+	// from here. Neither runtimesvc nor runtimecore imports it, which is what
+	// keeps a missing key from being able to reach status, up, down, restart
+	// or logs.
+	attention := attnengine.New(attnengine.Options{
+		Home:    paths.Dir(),
+		Logger:  logger,
+		Resolve: attnResolvedConsent,
+	})
+	attention.Start(ctx)
+	defer attention.Stop()
+	srv.RegisterWorldObserver(attention.Observe)
 
 	serveErr := srv.Serve(ctx)
 	switch {

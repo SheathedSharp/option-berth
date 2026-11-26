@@ -49,8 +49,16 @@ type EnableOptions struct {
 	Preset   string
 	Endpoint string
 	Model    string
-	Timeout  time.Duration
-	KeyKind  KeySourceKind
+	// Protocol is the wire shape the endpoint speaks. When a preset is named,
+	// its protocol fills this unless the flag set one explicitly.
+	Protocol string
+	// Mode is the autonomy stored with the configuration.
+	Mode string
+	// IncludeErrorLine stores whether one redacted first-error line may travel
+	// with a triage. Nil keeps the stored value.
+	IncludeErrorLine *bool
+	Timeout          time.Duration
+	KeyKind          KeySourceKind
 	// KeyEnv names the variable for KeyFromEnv.
 	KeyEnv string
 	// KeyValue is the secret for the stdin and prompt paths. It is never
@@ -69,6 +77,10 @@ func (o EnableOptions) SettingsFrom(cfg LocalConfig) LocalConfig {
 		next.Preset = preset
 		if endpoint, modelName, ok := PresetDefaults(preset); ok {
 			next.Endpoint, next.Model = endpoint, modelName
+			// A preset carries the wire shape its endpoint speaks; without
+			// this a configured Ollama or OpenAI endpoint would be asked in
+			// the decisions schema and answer nothing.
+			next.Protocol = NormalizeProtocol(PresetProtocol(preset))
 		}
 	} else if strings.TrimSpace(o.Endpoint) != "" || strings.TrimSpace(o.Model) != "" {
 		// Explicit fields with no preset describe a custom deployment; keeping
@@ -80,6 +92,16 @@ func (o EnableOptions) SettingsFrom(cfg LocalConfig) LocalConfig {
 	}
 	if strings.TrimSpace(o.Model) != "" {
 		next.Model = strings.TrimSpace(o.Model)
+	}
+	if strings.TrimSpace(o.Protocol) != "" {
+		next.Protocol = strings.ToLower(strings.TrimSpace(o.Protocol))
+	}
+	if strings.TrimSpace(o.Mode) != "" {
+		next.Mode = strings.ToLower(strings.TrimSpace(o.Mode))
+	}
+	if o.IncludeErrorLine != nil {
+		allowed := *o.IncludeErrorLine
+		next.IncludeErrorLine = &allowed
 	}
 	if o.Timeout > 0 {
 		next.TimeoutMS = int(o.Timeout / time.Millisecond)
@@ -149,11 +171,14 @@ func ProbeWithClient(ctx context.Context, cfg LocalConfig, httpClient *http.Clie
 	}
 	artifact := syntheticProbeArtifact()
 	client := Client{
-		Endpoint:   cfg.Endpoint,
-		Model:      cfg.Model,
-		APIKey:     cfg.APIKey,
-		Timeout:    cfg.Timeout(),
-		HTTPClient: httpClient,
+		Endpoint:         cfg.Endpoint,
+		Model:            cfg.Model,
+		APIKey:           cfg.APIKey,
+		Timeout:          cfg.Timeout(),
+		HTTPClient:       httpClient,
+		Protocol:         Protocol(cfg.EffectiveProtocol()),
+		Mode:             Mode(cfg.EffectiveMode()),
+		IncludeErrorLine: cfg.AllowsErrorLine(),
 	}
 	_, err := client.Evaluate(ctx, artifact, task)
 	result := ProbeResult{Latency: time.Since(started), Model: client.Model}
