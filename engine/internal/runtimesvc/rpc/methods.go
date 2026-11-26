@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/groups"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
 )
 
@@ -109,7 +110,26 @@ const (
 	// An older host ignores the field and would widen the stop, so the CLI
 	// must refuse instead.
 	CapabilityKillRuns = "groups.kill.runs"
+
+	// CapabilityRuntimeWorld covers `runtime.world.read`: a worktree's causal
+	// Runtime World, including loop signals. An older runtime service does not
+	// serve the method at all, so a caller that needs those signals falls back
+	// to reducing the snapshot it already has.
+	CapabilityRuntimeWorld = "runtime.world"
 )
+
+// RuntimeWorldReadParams names the worktree whose world is requested. A caller
+// sets Group or WorktreePath; both are matched against the runtime service's
+// live worlds.
+type RuntimeWorldReadParams struct {
+	Group        string `json:"group,omitempty"`
+	WorktreePath string `json:"worktree_path,omitempty"`
+}
+
+// RuntimeWorldReadResult is the one worktree's world.
+type RuntimeWorldReadResult struct {
+	World runtimecore.World `json:"world"`
+}
 
 // Include lists the optional per-subscriber enrichments ("stats", "health").
 type Include []string
@@ -711,8 +731,8 @@ type RunsRegisterParams struct {
 	Cmd       string   `json:"cmd"`
 	Argv      []string `json:"argv,omitempty"`
 	Cwd       string   `json:"cwd"`
-	PortHint  *int   `json:"port_hint,omitempty"`
-	StartedAt string `json:"started_at"`
+	PortHint  *int     `json:"port_hint,omitempty"`
+	StartedAt string   `json:"started_at"`
 	// ID lets the caller name the run itself. Absent, the registry gives it one,
 	// which is what keeps a recycled pid attributable.
 	ID *string `json:"id,omitempty"`

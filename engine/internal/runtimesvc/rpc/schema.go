@@ -303,6 +303,7 @@ func init() {
 	Describe("runtime.service.status", Empty{}, RuntimeServiceStatusResult{}, nil, nil)
 	Describe("runtime.service.schema", Empty{}, RuntimeServiceSchemaResult{}, nil, nil)
 	Describe("runtime.service.doctor", RuntimeServiceDoctorParams{}, RuntimeServiceDoctorResult{}, nil, nil)
+	Describe("runtime.world.read", RuntimeWorldReadParams{}, RuntimeWorldReadResult{}, nil, nil)
 
 	// State: a one-shot snapshot, a subscription, and cancelling either.
 	Describe("state.snapshot", StateSnapshotParams{}, StateSnapshotResult{}, nil, nil)

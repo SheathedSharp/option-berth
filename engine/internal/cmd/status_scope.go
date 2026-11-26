@@ -64,6 +64,7 @@ func scopeStatusDocument(doc *statusDocument, names []string) error {
 	doc.Exits = exits
 
 	scopeStatusChange(doc.Changed, selected, ports)
+	doc.Diagnosis = statusDiagnosis(*doc)
 	return nil
 }
 

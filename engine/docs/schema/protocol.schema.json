@@ -3,8 +3,47 @@
   "$id": "https://github.com/sheathedsharp/option-berth/engine/docs/schema/protocol.schema.json",
   "title": "option-berth runtime service protocol",
   "description": "Generated from the Go types in internal/state and internal/runtimesvc/rpc. Do not edit by hand; run `go generate ./...`.",
-  "protocol_version": "3.0.0",
+  "protocol_version": "3.1.0",
   "definitions": {
+    "CausalDiagnosis": {
+      "properties": {
+        "healthy": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "root_causes": {
+          "items": {
+            "$ref": "#/definitions/RootCause"
+          },
+          "type": "array"
+        },
+        "drifts": {
+          "items": {
+            "$ref": "#/definitions/Drift"
+          },
+          "type": "array"
+        },
+        "loops": {
+          "items": {
+            "$ref": "#/definitions/LoopSignal"
+          },
+          "type": "array"
+        },
+        "next_actions": {
+          "items": {
+            "$ref": "#/definitions/NextAction"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "healthy",
+        "summary"
+      ]
+    },
     "ChangeGroup": {
       "properties": {
         "added": {
@@ -237,6 +276,28 @@
         "status",
         "summary",
         "fixable"
+      ]
+    },
+    "Drift": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "severity",
+        "summary"
       ]
     },
     "Empty": {
@@ -1069,6 +1130,37 @@
         "ok"
       ]
     },
+    "LoopSignal": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "window_sec": {
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "recommendation": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "service",
+        "count",
+        "window_sec",
+        "summary",
+        "recommendation"
+      ]
+    },
     "MachineRef": {
       "properties": {
         "name": {
@@ -1119,6 +1211,32 @@
       "required": [
         "ok",
         "affected"
+      ]
+    },
+    "NextAction": {
+      "properties": {
+        "priority": {
+          "type": "integer"
+        },
+        "safety": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "priority",
+        "safety",
+        "summary",
+        "command"
       ]
     },
     "OKResult": {
@@ -1519,6 +1637,51 @@
         "cpu_percent",
         "memory_rss_bytes",
         "services"
+      ]
+    },
+    "RootCause": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "impacted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "first_error": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "service",
+        "kind",
+        "severity",
+        "summary"
       ]
     },
     "Run": {
@@ -2184,6 +2347,28 @@
         "last_seen"
       ]
     },
+    "RuntimeWorldReadParams": {
+      "properties": {
+        "group": {
+          "type": "string"
+        },
+        "worktree_path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeWorldReadResult": {
+      "properties": {
+        "world": {
+          "$ref": "#/definitions/World"
+        }
+      },
+      "type": "object",
+      "required": [
+        "world"
+      ]
+    },
     "Scope": {
       "properties": {
         "worktrees": {
@@ -2831,6 +3016,80 @@
       "required": [
         "from",
         "to"
+      ]
+    },
+    "ServiceRuntime": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "port_declared": {
+          "type": "integer"
+        },
+        "port_actual": {
+          "type": "integer"
+        },
+        "port_auto": {
+          "type": "boolean"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "blocked_by": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "health": {
+          "$ref": "#/definitions/Health"
+        },
+        "starting": {
+          "$ref": "#/definitions/ServiceStarting"
+        },
+        "last_exit": {
+          "$ref": "#/definitions/ServiceExit"
+        },
+        "port_holder": {
+          "$ref": "#/definitions/PortHolder"
+        },
+        "drifts": {
+          "items": {
+            "$ref": "#/definitions/Drift"
+          },
+          "type": "array"
+        },
+        "first_error": {
+          "type": "string"
+        },
+        "log_path": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "state",
+        "ready",
+        "running"
       ]
     },
     "ServiceStarting": {
@@ -3730,6 +3989,84 @@
       "required": [
         "workplace"
       ]
+    },
+    "World": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "worktree": {
+          "$ref": "#/definitions/WorldIdentity"
+        },
+        "coverage": {
+          "type": "string"
+        },
+        "health": {
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/definitions/ServiceRuntime"
+          },
+          "type": "array"
+        },
+        "machine": {
+          "items": {
+            "$ref": "#/definitions/MachineRef"
+          },
+          "type": "array"
+        },
+        "diagnosis": {
+          "$ref": "#/definitions/CausalDiagnosis"
+        }
+      },
+      "type": "object",
+      "required": [
+        "schema",
+        "seq",
+        "revision",
+        "worktree",
+        "coverage",
+        "health",
+        "services",
+        "diagnosis"
+      ]
+    },
+    "WorldIdentity": {
+      "properties": {
+        "identity": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "manifest_present": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "group",
+        "manifest_present"
+      ]
     }
   },
   "methods": {
@@ -3935,6 +4272,14 @@
       },
       "result": {
         "$ref": "#/definitions/RuntimeStorageReadResult"
+      }
+    },
+    "runtime.world.read": {
+      "params": {
+        "$ref": "#/definitions/RuntimeWorldReadParams"
+      },
+      "result": {
+        "$ref": "#/definitions/RuntimeWorldReadResult"
       }
     },
     "sessions.kill": {
