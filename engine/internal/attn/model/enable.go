@@ -12,6 +12,7 @@ package model
 
 import (
 	"context"
+	"crypto/pbkdf2"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -312,12 +313,17 @@ func writeDisabledSettings(path string, cfg LocalConfig) error {
 }
 
 // KeyFingerprint is the short, non-reversible label a status line may show so a
-// person can tell two keys apart without either being printable.
+// person can tell two keys apart without either being printable. It uses a slow
+// domain-separated KDF rather than a fast hash so a leaked status line cannot
+// be used to brute-force low-entropy keys.
 func KeyFingerprint(key string) string {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])[:8]
+	sum, err := pbkdf2.Key(sha256.New, key, []byte("oberth/attn-key-fingerprint/v1"), 600000, 32)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(sum)[:8]
 }
