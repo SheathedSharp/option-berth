@@ -109,3 +109,60 @@ func TestWizardStaysOutOfTheScriptedPaths(t *testing.T) {
 		t.Fatal("--preset started the wizard")
 	}
 }
+
+func TestReusableStoredKeyIsolatesProvidersAndLoopback(t *testing.T) {
+	openai := model.LocalConfig{
+		Preset:   "openai",
+		Endpoint: "https://api.openai.com/v1/chat/completions",
+		Model:    "gpt-4.1-mini",
+		APIKey:   "sk-openai-secret",
+	}
+	ollama := model.LocalConfig{
+		Preset:   "ollama",
+		Endpoint: "http://127.0.0.1:11434/v1/chat/completions",
+		Model:    "qwen2.5:7b",
+		APIKey:   model.LoopbackKeyPlaceholder,
+	}
+	anthropic := model.LocalConfig{
+		Preset:   "anthropic",
+		Endpoint: "https://api.anthropic.com/v1/messages",
+		Model:    "claude-haiku-4-5",
+	}
+	sameHostNewModel := model.LocalConfig{
+		Preset:   "openai",
+		Endpoint: "https://api.openai.com/v1/chat/completions",
+		Model:    "gpt-4.1-nano",
+	}
+
+	if got := reusableStoredKey(openai, ollama); got != "" {
+		t.Fatalf("openai -> ollama leaked stored key %q", got)
+	}
+	if got := reusableStoredKey(ollama, openai); got != "" {
+		t.Fatalf("ollama -> openai reused loopback placeholder %q", got)
+	}
+	if got := reusableStoredKey(openai, anthropic); got != "" {
+		t.Fatalf("openai -> anthropic leaked stored key %q", got)
+	}
+	if got := reusableStoredKey(openai, sameHostNewModel); got != "sk-openai-secret" {
+		t.Fatalf("same host model update = %q, want stored key preserved", got)
+	}
+}
+
+func TestProtocolChoicesInferCustomEndpointShape(t *testing.T) {
+	cases := []struct {
+		endpoint string
+		stored   string
+		want     string
+	}{
+		{"https://api.deepseek.com/v1/chat/completions", "", string(model.ProtocolOpenAIChat)},
+		{"https://proxy.example/v1/messages", "", string(model.ProtocolAnthropic)},
+		{"https://openrouter.ai/api/alpha/decisions", "", string(model.ProtocolDecisions)},
+		{"https://api.deepseek.com/v1/chat/completions", string(model.ProtocolAnthropic), string(model.ProtocolAnthropic)},
+	}
+	for _, tc := range cases {
+		choices, initial := attnProtocolChoices(tc.endpoint, tc.stored)
+		if got := choices[initial].Value; got != tc.want {
+			t.Errorf("attnProtocolChoices(%q, %q) = %q, want %q", tc.endpoint, tc.stored, got, tc.want)
+		}
+	}
+}

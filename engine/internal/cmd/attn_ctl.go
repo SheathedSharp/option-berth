@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -287,12 +288,39 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 	if err := attnValidateSelection(next); err != nil {
 		return err
 	}
-	key, keyErr := attnConfigKey(next.APIKey, next.Endpoint)
+	key, keyErr := attnConfigKey(reusableStoredKey(current, next), next.Endpoint)
 	if keyErr != nil {
 		return keyErr
 	}
 	next.APIKey = key
 	return attnCommitConfig(cmd, next)
+}
+
+// reusableStoredKey returns the previously stored key only when it belongs to
+// the same endpoint origin and is not the keyless loopback placeholder. That
+// prevents leaking a cloud provider's API key onto a local loopback runtime or
+// another provider when switching presets, and avoids reusing the loopback
+// placeholder when moving to a remote provider.
+func reusableStoredKey(prev, next model.LocalConfig) string {
+	if model.LoopbackEndpoint(next.Endpoint) {
+		return ""
+	}
+	key := strings.TrimSpace(prev.APIKey)
+	if key == "" || key == model.LoopbackKeyPlaceholder {
+		return ""
+	}
+	if endpointOrigin(prev.Endpoint) == "" || endpointOrigin(prev.Endpoint) != endpointOrigin(next.Endpoint) {
+		return ""
+	}
+	return key
+}
+
+func endpointOrigin(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host)
 }
 
 // attnCommitConfig is the one end of every setup path: validate, prove the key

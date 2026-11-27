@@ -51,7 +51,7 @@ func runAttnConfigWizard(cmd *cobra.Command) error {
 	if err := attnValidateSelection(next); err != nil {
 		return attnWizardStop(cmd, err)
 	}
-	key, err := attnAskKey(next.APIKey, next.Endpoint)
+	key, err := attnAskKey(reusableStoredKey(current, next), next.Endpoint)
 	if err != nil {
 		return attnWizardStop(cmd, err)
 	}
@@ -133,6 +133,11 @@ func attnAskProvider(current model.LocalConfig) (model.LocalConfig, error) {
 		}
 		next.Preset = ""
 		next.Endpoint = strings.TrimSpace(endpoint)
+		protocol, err := attnAskProtocol(next.Endpoint, current.Protocol)
+		if err != nil {
+			return next, err
+		}
+		next.Protocol = protocol
 		modelName, err := terminal.Line(os.Stderr, "Model name", current.Model)
 		if err != nil {
 			return next, err
@@ -189,6 +194,58 @@ func attnAskModel(vendor model.Vendor, current model.LocalConfig) (string, error
 	}
 	if choices[picked].Value == attnCustomModel {
 		return terminal.Line(os.Stderr, "Model name", current.Model)
+	}
+	return choices[picked].Value, nil
+}
+
+// attnProtocolChoices offers the three wire shapes a custom endpoint may speak,
+// preselecting the stored protocol or inferring the most likely shape from the
+// URL path (defaulting to OpenAI Chat Completions for generic custom gateways).
+func attnProtocolChoices(endpoint, currentProtocol string) ([]terminal.Choice, int) {
+	choices := []terminal.Choice{
+		{
+			Value:  string(model.ProtocolOpenAIChat),
+			Label:  "OpenAI Chat Completions",
+			Detail: "DeepSeek, OpenAI-compatible gateways, vLLM, LiteLLM, Ollama",
+		},
+		{
+			Value:  string(model.ProtocolAnthropic),
+			Label:  "Anthropic Messages",
+			Detail: "Claude / Anthropic-compatible /v1/messages endpoints",
+		},
+		{
+			Value:  string(model.ProtocolDecisions),
+			Label:  "Decisions schema",
+			Detail: "OpenRouter alpha/decisions, TypeSafe SystemOne",
+		},
+	}
+	want := strings.ToLower(strings.TrimSpace(currentProtocol))
+	if want == "" {
+		lower := strings.ToLower(strings.TrimSpace(endpoint))
+		switch {
+		case strings.Contains(lower, "/messages"):
+			want = string(model.ProtocolAnthropic)
+		case strings.Contains(lower, "/decisions") || strings.Contains(lower, "/systemone"):
+			want = string(model.ProtocolDecisions)
+		default:
+			want = string(model.ProtocolOpenAIChat)
+		}
+	}
+	initial := 0
+	for i, choice := range choices {
+		if choice.Value == want {
+			initial = i
+			break
+		}
+	}
+	return choices, initial
+}
+
+func attnAskProtocol(endpoint, currentProtocol string) (string, error) {
+	choices, initial := attnProtocolChoices(endpoint, currentProtocol)
+	picked, err := terminal.Select(os.Stderr, "Protocol", choices, initial)
+	if err != nil {
+		return "", err
 	}
 	return choices[picked].Value, nil
 }

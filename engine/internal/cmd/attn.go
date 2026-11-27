@@ -56,11 +56,12 @@ var (
 
 var attnCmd = &cobra.Command{
 	Use:     "attn",
-	Short:   "Optional model assessment of a runtime anomaly (off unless enabled)",
+	Short:   "Worktree attention notes and optional model triage",
 	GroupID: commandGroupHandoff,
-	Long: "Ask an optional model whether a runtime anomaly affects the current task, and\n" +
-		"whether the next step needs the person's choice.\n\n" +
-		"Off by default. Only `enabled: true` in the owner-only attn.json under\n" +
+	Long: "Read deterministic local attention notes (`oberth attn notes`, always on with\n" +
+		"no key or network) and optionally enable System-1 model triage (`config` / `on`)\n" +
+		"to rank whether a runtime anomaly needs the person's choice.\n\n" +
+		"Model calls stay off by default. Only `enabled: true` in the owner-only attn.json under\n" +
 		"BERTH_HOME, or a one-shot BERTH_ATTN=1 for this process, lets this command\n" +
 		"contact a configured endpoint; a key in the environment supplies the secret\n" +
 		"but is not consent. `oberth status` publishes fact-only `attn_path` for\n" +
