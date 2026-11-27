@@ -9,11 +9,11 @@ Use the Go version declared in `engine/go.mod`, Python 3 for repository scripts,
 | Change | Start here | Keep in agreement |
 |---|---|---|
 | CLI command or JSON result | `engine/internal/cmd/`, `engine/internal/runtimesvc/rpc/` | CLI reference, generated schema, coding-agent skill |
-| Runtime observation or operation | `engine/internal/runtimecore/` | Ownership, cancellation, run generation and partial-result contracts |
+| Runtime observation or operation | `engine/internal/runtimecore/` | Ownership, cancellation, run generation, the `World` reduction and partial-result contracts |
 | Background host, sessions or subscriptions | `engine/internal/runtimesvc/` | Protocol, resource cleanup and database ownership |
 | Manifest parsing | `engine/internal/groups/` | Manifest schema, examples and integrations |
 | Persistence | `engine/internal/store/` | Schema compatibility, transactions and read-only paths |
-| Optional attention adapter | `engine/internal/attn/` | Explicit consent and [adapter contract](attn-adapter.md) |
+| Attention notes or optional triage | `engine/internal/attn/engine/` (deterministic), `engine/internal/attn/model/` (optional) | Explicit consent, the notes store and [adapter contract](attn-adapter.md) |
 | User documentation | `docs/` | Both languages and [documentation rules](../AGENTS.md) |
 | Source archives and attribution | `third_party/` | [Source inventory](../../third_party/README.md) and notices |
 
@@ -29,7 +29,7 @@ go vet ./...
 go build -o ../bin/oberth ./cmd/oberth
 ```
 
-`mage buildEngine` is the root-level build wrapper. `mage schema` regenerates the protocol and manifest JSON Schema; review the source and generated diff together. Building is not proof that scanning, starting services or upgrading a running installation works.
+`mage buildEngine` is the root-level build wrapper. `mage schema` regenerates the protocol and manifest JSON Schema; review the source and generated diff together. Building is not proof that scanning, starting services or upgrading a running installation works. CI takes the same steps through the `.github/actions/setup-engine` composite action and the site through `.github/actions/setup-site`, so a local build and a workflow build are separate evidence.
 
 `mage install` changes the installation and can change PATH. Runtime-service commands and project `up`/`down` control processes. None belongs in a routine documentation or source-inspection check. For an explicitly authorized isolated run, use the [runtime-service guide](../runtime-service.md) and the safety boundaries in the root instructions.
 
@@ -37,7 +37,7 @@ Dependency versions remain in `engine/go.mod` and `engine/go.sum`. The [third-pa
 
 `scripts/retry.sh` retries the network fetch of a tool install only (`go install`, `apt-get update`, `apt-get install`). Never wrap a test, vet, build or verification step with it: the retry would turn a real failure into a slower red build instead of a result about the change.
 
-A failed verification run gets a second attempt only through `.github/workflows/flake-retry.yml`, never through a wrapped step. It has to be a separate workflow: `gh run rerun` only accepts a completed run, so no job inside the run it would re-run can make that call. `flake-retry.yml` starts on `workflow_run` for `CI`, `Nightly full verification`, `Windows build verification`, `Reused service readiness` and `Git read verification`, and only for a failure or for a success on a later attempt.
+A failed verification run gets a second attempt only through `.github/workflows/flake-retry.yml`, never through a wrapped step. It has to be a separate workflow: `gh run rerun` only accepts a completed run, so no job inside the run it would re-run can make that call. `flake-retry.yml` starts on `workflow_run` for `CI`, `Nightly full verification` and `Windows build verification` — reused readiness and the Git read race are jobs inside `CI`, so its run covers them — and only for a failure or for a success on a later attempt.
 
 `scripts/ci_failures.py` classifies one attempt from the job and step names and the Go test output: `infrastructure` (a job that never ran a step, or a step that failed while installing a tool), `flaky-candidate` (a test or package listed in `scripts/flaky-tests.txt`, which lists nothing by default), or `deterministic` (everything else, including every shape the classifier does not recognise). Only the first two are re-run, with `gh run rerun --failed`, at most twice; `scripts/retry-ci.sh` decides the outcome. The record goes onto the pull request the run belongs to, and a failure that stands with no pull request is escalated through `scripts/reconcile_repo.py --failure`. A run that only went green on a later attempt is classified again and says so, so a flake is never silently green; any other conclusion, a cancellation included, is left alone. `Gate / required checks` keeps its meaning: it fails on the attempt that failed and turns green on the attempt the re-run produces.
 

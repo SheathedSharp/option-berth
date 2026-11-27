@@ -20,7 +20,9 @@ The public Go module path is unchanged; the wire/CLI contract is owned by [cli.m
 
 `runsreg` is the live run authority. `servicefacts` reduces a captured registry/exit set; `groups.ApplyServiceFacts` adapts it and `runtimecore.Project` refreshes the same published declaration rows. `ports` is the system-observation adapter: it contributes listeners and ownership evidence, never a second service lifecycle. `groupstart`, `killer` and existing claims transactions retain execution authority.
 
-Optional attention remains an agent-side consumer, not part of the host's control loop.
+`runtimecore.ReduceWorld` is the one reduction that turns a projected snapshot into the Runtime World (`oberth.runtime.world/v1`): per-service state, drift kinds, the sliding-window `LoopTracker` verdicts (`crash_loop` over ten minutes, `restart_thrash` over five) and the diagnosis with its safety-classed next actions. `Server.RegisterWorldObserver` hands each reduced world to in-process plugins, and `runtime.world.read` publishes the same value over RPC under the additive protocol `3.1.0`.
+
+The deterministic notes engine is the one such plugin attached in production; the optional model client stays an agent-side consumer and never enters the host's control loop.
 
 ## Storage ownership and read routing
 
@@ -82,6 +84,7 @@ The projection starts from declarations already published by the normal manifest
 | Lifecycle | `groupstart` starts services in dependency order; `killer` verifies identity before signalling; the registry records exits | A failed prepare starts nothing; prepare is skipped only when the last attempt succeeded and `prepare_inputs` content is unchanged; cancellation reclaims only the work it created; a successful signal does not mean the process exited. A run judged dead leaves one terminal fact before its mirror entry is removed; when nobody observed the status, that fact is `ended_unobserved`, not a borrowed older exit. The exact argv is a launch fact carried through the mirror and the exit record, so a restart replays it instead of re-parsing the display command; a run without one is not guessed at. |
 | Scheduling | `scanner` owns observation, invalidation, statistics and ordered publication | An older result never overwrites newer facts; cancellation is not success; snapshots are immutable and continuation is bounded; a failed or timed-out health check (HTTP, TCP or command) is not readiness. |
 | Persistence | `store`'s SQLite transactions; `runs` compatibility mirror and recovery | A required recovery failure blocks the service; updates follow the run generation; write failures are not swallowed and the code never claims it can undo OS side effects. The mirror is recovery evidence: readers hide dead entries but do not rewrite the file, and the runtime service records the ending before removing the entry. |
+| Reduction | `runtimecore.ReduceWorld`, `LoopTracker`, the diagnosis builder | One reduction of the rows above, carrying its `coverage` so a blind round is never a negative fact. A drift describes a fact, it is not a second state source; the `revision` excludes the clock, so equal facts and an equal revision mean the same reduction. An observer receives a value and cannot publish back into the world. |
 
 Code identity rides this chain but not the scan hot path: before spawning, `groupstart` captures one
 content fingerprint and HEAD for each path in `sources:`, writing them under `$BERTH_HOME/code` by run
@@ -117,20 +120,18 @@ Deleting data remains a person's job.
 
 ## Optional enrichment stays off the control path
 
-`internal/attn` holds only the deterministic part: fact input, event classification, derivation,
-atomic publication, expiry and reads. It does not open a network connection, read a key or call a model.
-`internal/attn/model` holds the optional enrichment: the model client, local settings, telemetry,
-preflight and the runner.
+`internal/attn` holds the deterministic fact-only handoff (event classification, derivation, atomic publication, expiry and reads) with no network or model imports. `internal/attn/model` holds the optional multi-protocol model client (`Client.Evaluate`, `Client.EvaluateWorld`), presets, consent resolution, secret/path redaction (`RedactLine`), settings and quality telemetry. `internal/attn/engine` coordinates native Attention notes: pure note derivation from `runtimecore.World` (`DeriveNotes`), the owner-only cross-process-locked `NoteStore` under `BERTH_HOME/attention/notes/`, and the asynchronous fail-open triage worker pool (`Engine`, calling `internal/attn/model` only with consent).
 
-`internal/cmd/attention_boundary_test.go` checks that boundary instead of leaving it as a comment:
+`internal/attn/engine` attaches to the host as a plugin strictly from the CLI entrypoint `cmd/runtime_service_run.go`: `Server.RegisterWorldObserver(attention.Observe)` hands each reduced `runtimecore.World` to it in process and `defer attention.Stop()` joins its workers on shutdown. Notes therefore ride the same reduction `runtime.world.read` publishes instead of a second scan or a second copy of runtime results, while `runtimesvc` and `runtimecore` themselves never import `internal/attn/engine` or `internal/attn/model`.
 
-- `go list -deps` asserts that the dependency closure of `runtime service`, `scanner`, `groups`, `ports` and
-  `servicefacts` contains no `internal/attn/model`;
+`internal/cmd/attention_boundary_test.go` checks the model boundary instead of leaving it as a comment:
+
+- `go list -deps` asserts that the dependency closure of `runtime service`, `runtimesvc`, `runtimecore`,
+  `scanner`, `groups`, `ports` and `servicefacts` contains no `internal/attn/model`;
 - `go/parser` asserts that the imports of `status`, `up`, `down`, `restart`, `logs` and `start`
   contain none either.
 
-So with no key, no `attn.json` and an unreachable provider, the control path still works: nothing
-leaves the machine, and no service start, stop or readiness decision depends on the enrichment.
+So with no key, no `attn.json` and an unreachable provider, the control path still works: the host keeps deriving notes locally, nothing leaves the machine, and no service start, stop or readiness decision depends on the enrichment.
 
 The artifact is not gated on consent: it is a local, code-derived fact, and publishing it sends
 nothing anywhere. `attn_path` present means there is an anomaly; the adjacent `attn` block (consent,
@@ -180,7 +181,9 @@ The command and field contract is [workplace.md](../workplace.md).
 
 ## Native task observation ownership
 
-`claudehook.Adapter` owns only a short-lived delivery lease: worktree/session hash, task generation, selected service/run scope, configuration fingerprint and one pending bounded result. Runtime facts are re-read through the existing owner, never recovered from this cursor. The hook and state locks serialize lifecycle transitions; the observer's separate kernel lock is released only after runner/socket cancellation and join. A dead observer cannot resume a lease. Project enablement, limits and native protocol are defined in the [CLI contract](../cli/handoff.md#native-claude-project-hooks).
+`claudehook.Adapter` owns only a short-lived delivery lease: worktree/session hash, task generation, selected service/run scope, configuration fingerprint and one pending bounded result. Runtime facts are re-read through the existing owner, never recovered from this cursor. The hook and state locks serialize lifecycle transitions; the observer's separate kernel lock is released only after runner/socket cancellation and join. A dead observer cannot resume a lease.
+
+`PostToolUse` sits deliberately outside that lease: it reads the worktree's notes file under the same lock, keeps only a bounded `(note, world_revision)` delivery cursor, and starts no observer, so a tool call never waits on a task boundary. Project enablement, limits and native protocol are defined in the [CLI contract](../cli/handoff.md#native-claude-project-hooks).
 
 ## Start, stop and port reservations
 

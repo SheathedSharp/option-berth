@@ -260,6 +260,11 @@ file exists. Use logs for detailed output. `worktree.services[]`'s `pid`, `run_i
 are provided while the service is being run by option-berth, so even a portless worker can be
 verified against the actual run record through these fields; `log_path` is always given by the engine.
 
+When faults or drifts exist, the full document and `--brief` carry an additive `diagnosis` object —
+`healthy`, `summary`, `root_causes[]`, `drifts[]`, `loops[]` and `next_actions[]`, the same shape the
+Runtime World publishes. `status --only` scopes it to the selected services. Nothing else in either
+document moves, so a consumer that ignores the field reads exactly what it read before.
+
 A definite abnormal event in the state puts a fact-only handoff in the JSON, whether or not the
 optional assessment is enabled. `attn_path` points at a recomputable, expirable agent handoff file
 under `BERTH_HOME/attention/`; with no current abnormality the field is absent. **Its presence means
@@ -286,6 +291,80 @@ and the authorized-option allow-list; it is not a runtime fact and grants no exe
 This file is a derived notification, not a new source of runtime truth. The model client is not on the runtime service's or
 `status`'s control path: the deterministic part lives in `internal/attn`, the model client in
 `internal/attn/model`, and `internal/cmd/attention_boundary_test.go` checks that dependency boundary.
+
+## oberth runtime inspect [path] [--json]
+
+Reduces the same facts `status` reads — declarations, runs, listeners, health, code identity — into
+one document, the Runtime World, and answers what is wrong when something is. `schema` is
+`oberth.runtime.world/v1`, `seq` orders reductions, `observed_at` is clock time, and `revision` is a
+deterministic SHA-256 prefix over the reduced content that excludes the clock: two reads of unchanged
+facts carry the same revision. It reads through a runtime service when one answers and reads the same
+facts without one otherwise; `coverage` says how much this round actually saw (`observable`,
+`partial`, `blind`), so a blind round is never published as "nothing is running". `health` is the
+worktree verdict: `healthy`, `starting`, `drifted`, `degraded`, `broken`, `idle` or `blind`.
+
+Each row in `services[]` carries `state` (`ready`, `starting`, `degraded`, `crashed`, `crash_loop`,
+`port_conflict`, `blocked_by_dep`, `stopped`, `unobserved`), the `blocked_by` dependencies that keep it
+from starting, its `drifts` and its `first_error`. Drift kinds are `code_stale`, `binary_stale`,
+`manifest_stale`, `port_occupied`, `unowned_listener`, `health_failing`, `ready_timeout`,
+`service_crashed`, `start_failed`, `repeated_crash` and `dependency_blocked`.
+
+`diagnosis` turns those observations into causes:
+
+- `healthy` and `summary` answer "is anything wrong" in one line.
+- `root_causes[]` names each cause by `id`, `service`, `kind` and `severity`, and carries its `summary`, the `impacted` services, its `evidence`, the `first_error` line and the executable `command` that follows from it.
+- `drifts[]` and `loops[]` list what the reduction noticed; a `crash_loop` is counted over a 10-minute window and `restart_thrash` over a 5-minute window.
+- `next_actions[]` ranks what could be done next with `priority`, `safety`, `service`, `summary` and `command`; `safety` is `read_only`, `local_restart` or `human_decision`, so a reader can tell an inspection from a change that needs a person.
+
+~~~json
+{
+  "schema": "oberth.runtime.world/v1",
+  "seq": 42,
+  "observed_at": "2026-10-31T10:00:00Z",
+  "revision": "9f2c1a7d4b0e112233445566",
+  "worktree": {"identity": "wt_0123456789ab", "group": "demo", "root": "/work/demo",
+               "branch": "main", "config_path": "/work/demo/oberth.yaml",
+               "manifest_present": true},
+  "coverage": "observable",
+  "health": "broken",
+  "services": [
+    {"name": "api", "state": "ready", "ready": true, "running": true},
+    {"name": "worker", "state": "crash_loop", "ready": false, "running": false,
+     "drifts": [{"kind": "repeated_crash", "severity": "critical",
+                 "summary": "worker crashed 3 times in 10m",
+                 "command": "oberth logs worker --once"}],
+     "first_error": "Traceback (most recent call last): ..."}
+  ],
+  "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
+  "diagnosis": {
+    "healthy": false,
+    "summary": "worker crashed 3 times in 10m",
+    "root_causes": [
+      {"id": "rc_9a0b1c2d3e4f5a6b", "service": "worker", "kind": "repeated_crash",
+       "severity": "critical", "summary": "worker crashed 3 times in 10m",
+       "evidence": ["exit status 1 at 10:00:12"],
+       "first_error": "Traceback (most recent call last): ...",
+       "command": "oberth logs worker --once"}
+    ],
+    "drifts": [{"kind": "repeated_crash", "severity": "critical",
+                "summary": "worker crashed 3 times in 10m",
+                "command": "oberth logs worker --once"}],
+    "loops": [{"kind": "crash_loop", "service": "worker", "count": 3,
+               "window_sec": 600, "summary": "3 crashes in 10m"}],
+    "next_actions": [
+      {"priority": 1, "safety": "read_only", "service": "worker",
+       "summary": "inspect worker logs before restarting",
+       "command": "oberth logs worker --once"}
+    ]
+  }
+}
+~~~
+
+`oberth status` and `status --brief` carry the same `diagnosis` as an additive field, so one read
+gives both the per-service facts and the reduced cause. The runtime service answers the same document
+over RPC as `runtime.world.read` under the `runtime.world` capability (protocol `3.1.0`); the
+[infrastructure reference](infrastructure.md#runtime-service-protocol-3-switch) owns the version
+rules.
 
 ## oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
 

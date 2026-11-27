@@ -2,18 +2,18 @@
 
 For a person deciding whether to configure or enable models, start with [Attention](../attention.md). This page is the engineering reference for typed requests, eligibility, cancellation, privacy and quality evidence. Example model calls below require separate authorization and are not part of ordinary service control.
 
-`oberth attn` is an optional, read-only assessment of the agent attention handoff.
-Its `assess` runner reads `oberth status --json --no-mark`, validates the exact
-published artifact, asks the selected provider whether the event affects the
-current development task and needs the user's choice, then stores only the
-validated typed assessment in the same artifact. It never reads service logs,
-starts or stops a process, edits a manifest, or invents a command.
+`oberth attn` has a deterministic half that is always on and an optional assessment on top of it.
+
+The deterministic half reduces every `runtimecore.World` into notes (`DeriveNotes`) and persists them through `NoteStore` at `$BERTH_HOME/attention/notes/<worktree_id>.json` (`schema: oberth.attn.notes/v1`): owner-only `0600`, atomic rename, one cross-process file lock, and at most ten resolved notes kept per worktree. It opens no network connection and reads no key.
+
+The optional half is a read-only assessment of the agent attention handoff. Its `assess` runner reads `oberth status --json --no-mark`, validates the exact published artifact, asks the selected provider whether the event affects the current development task and needs the user's choice, then stores only the validated typed assessment in the same artifact. It never reads service logs, starts or stops a process, edits a manifest, or invents a command.
 
 It is one `oberth` binary, not a second executable. The verbs split by audience:
 
 | `oberth attn` | Who | What |
 |---|---|---|
-| `status` | person | resolved state, fixed reason, local quality summary |
+| `notes` | person/agent | read the persisted notes, or derive them live from `runtime inspect` |
+| `status` | person | resolved state, fixed reason, local quality summary, `notes` summary |
 | `config` | person | choose provider/model with the arrow keys, then store endpoint/model/key after a synthetic probe |
 | `on` / `off [--forget]` | person | flip the single consent boolean |
 | `test` | person | probe the effective configuration once |
@@ -23,17 +23,25 @@ It is one `oberth` binary, not a second executable. The verbs split by audience:
 | `preflight` | agent | derive and optionally assess a bounded action |
 | `feedback` | agent | label what a person actually decided |
 
-The adapter speaks one wire contract: a structured `state`, `model` and typed
-`questions` request, answered with typed `answers`. TypeSafe's endpoint and
-OpenRouter's Decisions API both implement it, and OpenRouter serves most current
-decision models through the same request; any other endpoint that implements the
-same shape works too. Endpoint, model and key are independent fields — the
-`openrouter` and `typesafe` presets only fill the first two while you configure,
-and are never consulted at runtime. The adapter uses two `noul` questions
-(`task_relevant`, `needs_human`) and a `choice` question for the authorized fixed
-options. See the [OpenRouter Jev guide](https://openrouter.ai/blog/insights/what-is-jev/)
-and [TypeSafe API reference](https://docs.typesafe.ai/api/) for the upstream
-wire contract.
+The adapter speaks three wire protocols, selected by `--protocol` or `BERTH_ATTN_PROTOCOL`:
+
+- `decisions` (default): a structured `state`, `model` and typed `questions` request, answered with typed `answers`. TypeSafe's endpoint and OpenRouter's Decisions API both implement it, and it carries two `noul` questions (`task_relevant`, `needs_human`) plus a `choice` question for the authorized fixed options.
+- `openai_chat`: an OpenAI-compatible chat-completions request whose reply is parsed into the same typed decision.
+- `anthropic`: an Anthropic messages request parsed into the same typed decision.
+
+Endpoint, model and key are independent fields — a preset only fills the first two while you configure and is never consulted at runtime. Five presets ship: `openrouter` and `typesafe` (`decisions`), `openai` (`openai_chat`), `anthropic` (`anthropic`) and `ollama` (`openai_chat` at the loopback endpoint `http://127.0.0.1:11434/v1/chat/completions`). A remote endpoint needs a key and reports `no_key` without one; the loopback preset does not, and reports `key_source: "loopback"`. See the [OpenRouter Jev guide](https://openrouter.ai/blog/insights/what-is-jev/) and [TypeSafe API reference](https://docs.typesafe.ai/api/) for two upstream `decisions` contracts.
+
+## Autonomy modes
+
+`--mode` (or `BERTH_ATTN_MODE`) decides how far an assessment may go; the default is `assist`.
+
+| Mode | What the typed result may contain |
+|---|---|
+| `strict` | Facts and evidence only; no action recommendation |
+| `assist` | `urgency`, `needs_human`, `task_relevant`, a bounded summary and one recommended fixed `next_option` |
+| `reconcile` | The same, plus `auto_reconcile_eligible: true` when every gate holds |
+
+`auto_reconcile_eligible` — the JSON form of `TriageResult.AutoReconcileEligible`, computed by `reconcileEligible` — requires all of `SafetyLocalRestart`, `needs_human <= 0.25`, `confidence >= 0.80`, no crash loop on the service and no foreign port holder. The flag marks a local restart as eligible and nothing more: the adapter still kills no foreign process, writes no manifest and executes nothing, and the agent maps a chosen option to a documented command.
 
 <a id="turning-it-on"></a>
 
@@ -164,10 +172,13 @@ at `~/.option-berth/attn.json` (or `$BERTH_HOME/attn.json` in an isolated run):
   "schema": "oberth.attn-settings/v1",
   "enabled": true,
   "preset": "openrouter",
+  "protocol": "decisions",
+  "mode": "assist",
   "endpoint": "https://openrouter.ai/api/alpha/decisions",
   "model": "typesafe/jev-1.14",
   "api_key": "…",
-  "timeout_ms": 10000
+  "timeout_ms": 10000,
+  "include_error_line": true
 }
 ```
 
@@ -195,6 +206,8 @@ flags is consent: they change a resolved field, they do not enable the model.
 Missing keys, timeouts, HTTP errors (including 401, 429, and 529), and malformed
 responses produce `unavailable`; expired or changed artifacts produce `stale`.
 Both leave the fact-only artifact unchanged.
+
+Assessment runs on a small asynchronous, fail-open pool: two workers, per-worktree coalescing so a worktree has at most one request in flight, a compare-and-swap that refuses a result computed from an older revision, and a circuit breaker that opens for 60 seconds after three consecutive transport failures. An open breaker skips the provider; it never turns a missing answer into a fact.
 The core `oberth` CLI remains usable and the agent can ask the user directly.
 The adapter re-reads the artifact before writing and refuses to attach a result
 if its event ID or state revision changed while the request was in flight.
@@ -207,6 +220,8 @@ and obvious credentials and local paths are redacted. Full logs, environment
 variables, API keys, and unrelated worktrees are never sent or copied into the
 artifact. Model output is accepted only when its option IDs and probabilities
 match the fixed artifact options; free-form text cannot enter the handoff.
+
+The world-based packet is built by `EvaluateWorld` and sends: the hashed worktree identity, bounded branch and task text, the diagnosis' `root_causes`, `drifts` and `loops`, and the port holder's `kind` only — never its PID or command line. While `include_error_line` is true (the default, and the value when the field is absent) it adds one bounded `first_error` line with obvious secrets and local paths redacted; setting `include_error_line: false` in `attn.json` suppresses error lines entirely.
 
 The runner does not claim calibrated the model probabilities. Its fixed policy asks
 the user for every side effect, incomplete or low-confidence result, close

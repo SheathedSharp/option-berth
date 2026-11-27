@@ -11,8 +11,16 @@
 
 ## oberth attn
 
-可选的模型评估就是 `oberth attn` 命令；授权模型与哪些内容会离开本机见 [Attention](../attention.zh.md)。
-agent 应使用一次调用完成状态读取、异常验证、评估和 HIL 输出：
+可选的模型评估就是 `oberth attn` 命令；授权模型、确定性的提示层以及哪些内容会离开本机见
+[Attention](../attention.zh.md)。提示始终可用，不需要任何配置：
+
+~~~sh
+oberth attn notes [--all] [--project <path>] [--json]
+~~~
+
+`notes` 读取 Runtime Service 为某个工作树落盘的提示；还没有宿主落盘时，从 `oberth runtime inspect`
+现场派生。`--all` 加上已解决的历史；存在提示时，`oberth attn status` 会带上 `notes` 摘要。
+开着模型层时，agent 应使用一次调用完成状态读取、异常验证、评估和 HIL 输出：
 
 ~~~sh
 # for short tasks pass arguments directly, no need to write a file
@@ -22,16 +30,25 @@ oberth attn assess --project "$PWD" \
 ~~~
 
 `oberth attn config` 是唯一写凭据的动词。无参数在终端运行时，它用方向键依次问供应商、
-模型、密钥，每个列表末尾都有自定义行：目录没有收录的端点或模型也能配。preset 只是填空
-便利，不是供应商限制：`openrouter` 填入 `https://openrouter.ai/api/alpha/decisions`，默认
-`typesafe/jev-1.14`，列表带上该端点当前提供的决策模型（TypeSafe Jev、OpenAI GPT-6 Luna
-Decisions、Google Gemini Decision 1、Microsoft Decision 1、Perplexity Decider、Cloudflare
-Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填入
-`https://api.typesafe.ai/v1/systemone`，可选 `jev-latest` 与 `jev-preview`。脚本与 CI 仍走
-参数形式：直接给 endpoint 与 model，或用 `--preset NAME`，密钥从 `--key-stdin`、
-`--key-env NAME`、终端隐藏输入读取，或保留已存密钥。两种形式都发一次合成的脱敏探测，
-**只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。`config` 改的是凭据，不是同意。
-`oberth attn on` 与 `oberth attn off [--forget]` 只翻转一个 `enabled` 布尔值，不联网。
+模型、密钥，每个列表末尾都有自定义行：目录没有收录的端点或模型也能配。preset 只填一个约定，
+不是限制：
+
+| 预设 | 协议 | 端点 |
+| --- | --- | --- |
+| `openrouter` | `decisions` | `https://openrouter.ai/api/alpha/decisions` |
+| `typesafe` | `decisions` | `https://api.typesafe.ai/v1/systemone` |
+| `openai` | `openai_chat` | 服务商的 chat completions 端点 |
+| `anthropic` | `anthropic` | 服务商的 messages 端点 |
+| `ollama` | `openai_chat` | 回环地址 `http://127.0.0.1:11434/v1/chat/completions` |
+
+`--protocol`（或 `BERTH_ATTN_PROTOCOL`）选择协议，默认是 `decisions`。远程端点需要密钥，
+没有密钥时的固定原因是 `no_key`。`ollama` 预设是例外：回环端点不需要密钥，并报告
+`key_source: "loopback"`。脚本与 CI 仍走参数形式：直接给 endpoint 与 model，或用
+`--preset NAME`，密钥从 `--key-stdin`、`--key-env NAME`、终端隐藏输入读取，或保留已存密钥。
+两种形式都发一次合成的脱敏探测，**只有探测成功才写** `attn.json`；探测失败时已有配置保持不动。
+`config` 改的是凭据，不是同意。`oberth attn on` 与 `oberth attn off [--forget]` 只翻转一个
+`enabled` 布尔值，不联网；`--mode strict|assist|reconcile`（或 `BERTH_ATTN_MODE`）决定分诊能走多远，
+默认 `assist`。
 `oberth attn test` 用当前有效配置探测一次。`oberth attn status` 报告解析结果、不可用时的
 固定原因，以及本地质量账本摘要。`--json` 输出的是决策文档：同意与配置字段，加上一个只回答
 「是否有任务在观测、是否有事情发生」的 `quality`——`activity`、`records_read`、
@@ -55,7 +72,9 @@ Clef、LiquidAI d1.1、Upstage Solar Decide、Morph Reflex）；`typesafe` 填�
 没有可用的环境 endpoint、model 或 key、网络失败、响应无效、文件过期或状态修订变化时，事实文件保持不变。
 `oberth attn config` 写入的 `~/.option-berth/attn.json`（隔离运行时为 `$BERTH_HOME/attn.json`）由
 `oberth attn` 自动读取，并且是唯一的持久同意：`enabled: true` 开启，`enabled: false` 即使环境
-里有密钥也保持关闭。显式 `BERTH_ATTN_ENDPOINT` / `BERTH_ATTN_MODEL` / `BERTH_ATTN_KEY` 只提供这三个
+里有密钥也保持关闭。同一个文件还带 `mode`、`protocol` 与 `include_error_line`；`include_error_line`
+默认为真，发送一行有界、已脱敏路径与密钥的错误，设为 false 则完全抑制错误行。
+显式 `BERTH_ATTN_ENDPOINT` / `BERTH_ATTN_MODEL` / `BERTH_ATTN_KEY` 只提供这三个
 字段，不开启评估；`BERTH_ATTN=1` 只为当前进程开启。每次不可用都带固定原因码（`no_key`、`disabled`、
 `invalid_config`、`unauthorized`、`rate_limited`、`timeout`、`network`、`provider_error`、
 `bad_response`、`stale`），而不是 provider 的错误原文。
@@ -97,25 +116,23 @@ worktree 的规范路径、脱敏任务摘要和固定评估选项后，接入�
 
 任务上下文 JSON 接受 `services` 和 `run_ids` 评估过滤。服务选择只跟随声明服务；标为 `run_only` 的临时运行事件必须按精确 run ID 关联。过滤进入评估缓存身份；两者都省略时保留既有声明服务范围，不包含任意临时运行。
 
-## oberth agent: external coding-agent handoff
+## oberth agent：外部编程助手交接
 
-`agent list --json` lists OpenCode, Codex, Claude Code, DeepSeek Harness and Pi without executing them.
-`agent plan codex --worktree <path> --json` returns an exact executable/argv/cwd plan; it does not launch,
-log in, install hooks, modify configuration, or send a model request. `--prompt-stdin` is plan-only and
-avoids putting the initial prompt in shell history. The resulting JSON can contain that prompt: keep it local.
-`agent run codex --worktree <path>` explicitly replaces the CLI with the native agent on macOS/Linux.
-The agent keeps its own permissions, authentication, tools and conversation history; no approval bypass is added.
+`agent list --json` 列出 OpenCode、Codex、Claude Code、DeepSeek Harness 和 Pi，但不执行它们。
+`agent plan codex --worktree <path> --json` 返回精确的可执行文件、argv 和工作目录计划；它不启动、
+不登录、不安装 hooks、不改配置，也不发送模型请求。`--prompt-stdin` 只用于计划，避免把初始 prompt
+留在 shell 历史里。生成的 JSON 可能包含这段 prompt：请只留在本地。`agent run codex --worktree <path>`
+在 macOS/Linux 上明确用原生助手替换当前 CLI。助手保留自己的权限、认证、工具和会话历史；这里不添加任何审批绕过。
 
-Native prompts are supported for OpenCode, Codex, Claude Code and Pi. DeepSeek uses `dsh --profile tui`
-for an already installed custom native profile; it is not a shipped-profile guarantee. Use `--mode task`
-with a prompt to select its documented headless profile. That one-shot task is not a resumed native conversation.
-No implicit “resume last” crosses worktree boundaries. The selected cwd is not an operating-system sandbox.
-Windows currently supports plan/list, not native process handoff. Merely finding a binary does not validate login
-or a particular installed version; a provider failure remains a provider failure, never a silent shell fallback.
+OpenCode、Codex、Claude Code 和 Pi 支持原生 prompt。DeepSeek 走 `dsh --profile tui`，针对已经安装的
+自定义原生 profile，不保证随产品提供；带 prompt 时用 `--mode task` 选择它文档化的无头 profile，
+那次一次性任务不是续接的原生会话。不存在跨工作树的隐式“继续上次”。选定的 cwd 不是操作系统沙箱。
+Windows 目前支持 list/plan，不支持原生进程交接。仅仅找到一个可执行文件，不能证明已登录或版本合规；
+provider 失败就是 provider 失败，不会悄悄退回 shell。
 
 ## 原生 Claude 项目 hooks
 
-`agent claude-hook` 处理 Claude Code 官方 `UserPromptSubmit`、`Stop`、`StopFailure` 和 `SessionEnd` JSON 输入。适配器以 **macOS 上的 Claude Code 2.1.322** 和本地假 provider，完成原生非交互（`-p`）端到端验证；不将更早版本或 Windows 原生执行视为已验证/支持。它不能透明附着任意已经运行的 `claude`/`cld`；包装命令必须保留项目 hooks。
+`agent claude-hook` 处理 Claude Code 官方 `UserPromptSubmit`、`PostToolUse`、`Stop`、`StopFailure` 和 `SessionEnd` JSON 输入。适配器以 **macOS 上的 Claude Code 2.1.322** 和本地假 provider，完成原生非交互（`-p`）端到端验证；不将更早版本或 Windows 原生执行视为已验证/支持。它不能透明附着任意已经运行的 `claude`/`cld`；包装命令必须保留项目 hooks。
 
 交互 TTY 和用户私有 `cld` 包装命令尚未验证。干净 HOME 的交互 PTY 尝试在任务执行前退出：即使 provider base URL 指向本地，Claude 首次启动的连通性检查仍访问 `api.anthropic.com`，被刻意拒绝外网的代理阻止。该尝试没有执行任务或 hook 反馈；不能从 `-p` 证据推导交互覆盖，也不能绕过项目 trust/首次设置来宣称通过。
 
@@ -126,9 +143,11 @@ oberth agent claude-hook --project "$PWD" --service api \
   --authorize inspect_logs,inspect_port,inspect_manifest --lease 10m --print-config
 ```
 
-该命令只打印 JSON。`--print-config` 同样必须带 `--project`，不会从当前目录推断项目。审阅后把其中 `hooks` 合入所选项目的 `.claude/settings.json`，不要覆盖其他设置；按 Claude 正常的项目信任流程开启新的原生会话。命令不写设置、不安装全局 hook，也不更改 Attention 同意状态。保留 `UserPromptSubmit` 的 `onFailure: "block"`：若任务入口失败或超时，应阻止该 prompt，而不是让后续 Stop 消费上个任务的租约；该行为依赖已验证版本的官方协议。[示例配置](../../examples/claude-hooks/settings.example.json) 给出最小结构；可执行文件不在常规 PATH 时优先使用生成结果。已安装的 skill 一致不能证明 hooks 已执行。`oberth doctor --only claude_hooks` 只读检查项目可提交的 `.claude/settings.json`，不读 `settings.local.json` 或用户全局 Claude 配置，也不写入 hooks。若该文件已经启用 hook 命令，但把 `timeout` 写成低于 20 秒，或传入短于 hook 命令预算的 `--lease`，该行会发出警告：换上新的 oberth 二进制也无法阻止 Claude 先切断更短的 hook 超时。省略 `timeout` 时沿用 Claude 的官方默认值（UserPromptSubmit 为 30 秒，Stop 为 600 秒），不按过短预算警告。
+该命令只打印 JSON。`--print-config` 同样必须带 `--project`，不会从当前目录推断项目。审阅后把其中 `hooks` 合入所选项目的 `.claude/settings.json`，不要覆盖其他设置；按 Claude 正常的项目信任流程开启新的原生会话。命令不写设置、不安装全局 hook，也不更改 Attention 同意状态。`--print-config` 输出的 `PostToolUse` 条目不带 `onFailure`，因为磁盘再慢也挡不住一次工具调用；该条目在工作树还没有提示文件之前保持沉默。保留 `UserPromptSubmit` 的 `onFailure: "block"`：若任务入口失败或超时，应阻止该 prompt，而不是让后续 Stop 消费上个任务的租约；该行为依赖已验证版本的官方协议。[示例配置](../../examples/claude-hooks/settings.example.json) 给出最小结构；可执行文件不在常规 PATH 时优先使用生成结果。已安装的 skill 一致不能证明 hooks 已执行。`oberth doctor --only claude_hooks` 只读检查项目可提交的 `.claude/settings.json`，不读 `settings.local.json` 或用户全局 Claude 配置，也不写入 hooks。若该文件已经启用 hook 命令，但把 `timeout` 写成低于 20 秒，或传入短于 hook 命令预算的 `--lease`，该行会发出警告：换上新的 oberth 二进制也无法阻止 Claude 先切断更短的 hook 超时。省略 `timeout` 时沿用 Claude 的官方默认值（UserPromptSubmit 为 30 秒，Stop 为 600 秒），不按过短预算警告。
 
-`--project` 必填，必须与 hook 输入解析到同一 worktree。`--service` 选声明服务；`--run` 选已登记的精确运行 ID，包括无端口 worker；两者都接受逗号分隔值。不认领同名陌生进程或替换代际的临时运行。`--authorize` 是固定只读评估选项的明确子集，不是工具或操作许可。范围在租约内固定；后来创建的临时运行需要在后续项目/任务配置中明确关联。不生成清单、不扫描 home、不启动缺失服务。已有 Runtime 必须认识所选项目；服务缺失、项目未登记或 Runtime 上下文不可用时返回 `runtime_context_unavailable`，不会转为全机扫描。原因已知时会限定为 `runtime_context_unavailable:runtime_service_required`、`runtime_context_unavailable:project_not_registered_in_runtime` 或 `runtime_context_unavailable:timeout`。未知的 Prepare 失败保持不加限定，避免把原始 RPC 文本写入 hook 消息。hook 不读源码、git diff 或日志正文。任务确实需要服务时仍走已有授权的 `up`/`start`，健康的既有运行作为事实复用。
+`--project` 必填，必须与 hook 输入解析到同一 worktree。`--service` 选声明服务；`--run` 选已登记的精确运行 ID，包括无端口 worker；两者都接受逗号分隔值。两者都省略、且工作树里有一份有效的 `oberth.yaml` 时，hook 自动收窄到清单声明的服务；显式选择器总是优先，没有清单时仍返回 `scope_required`。不认领同名陌生进程或替换代际的临时运行。`--authorize` 是固定只读评估选项的明确子集，不是工具或操作许可。范围在租约内固定；后来创建的临时运行需要在后续项目/任务配置中明确关联。不生成清单、不扫描 home、不启动缺失服务。已有 Runtime 必须认识所选项目；服务缺失、项目未登记或 Runtime 上下文不可用时返回 `runtime_context_unavailable`，不会转为全机扫描。原因已知时会限定为 `runtime_context_unavailable:runtime_service_required`、`runtime_context_unavailable:project_not_registered_in_runtime` 或 `runtime_context_unavailable:timeout`。未知的 Prepare 失败保持不加限定，避免把原始 RPC 文本写入 hook 消息。hook 不读源码、git diff 或日志正文。任务确实需要服务时仍走已有授权的 `up`/`start`，健康的既有运行作为事实复用。
+
+`PostToolUse` 是任务中途的交付路径。它不占交付租约，跳过任务边界的密钥派生和同意检查，在锁内读取这个工作树的提示文件。它输出 `hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: "..."}`，至多 500 个字符，而且只在有尚未在该世界修订下交付过的、落在任务范围内的活跃提示时才输出；每对 `(note, world_revision)` 只交付一次。处在 `OBERTH_CLAUDE_TASK_MODE=edit` 下、或工作树没有提示文件时保持沉默。
 
 `UserPromptSubmit` 绑定规范 worktree、不可推导含义的会话身份与新的任务代际。只把所选 Runtime 事实加入任务，并保留观测覆盖：监听盲区或窄视图不会被解释成 `running:false`。精确任务运行读取已有完整退出事实，不受 status 展示最近五条的上限影响。忽略 `prompt`、`transcript_path`、助手答复和错误详情。评估摘要使用保守的固定开发任务标签，相关性细节少于人工提供的脱敏摘要；适配器不存档对话，也不用对话充当评估摘要。
 
@@ -140,28 +159,24 @@ oberth agent claude-hook --project "$PWD" --service api \
 
 
 
-## Explicit native continuation / 显式原生续接
+## 显式原生续接
 
 `oberth agent plan <provider> --worktree /workspace/project --resume-file /absolute/session-file --json`
-produces a structured continuation plan; `agent run` accepts the same file option and hands the
-terminal to the provider. There is no implicit `--last`, partial ID search, shell interpolation,
-automatic login, conversation import, or approval bypass.
+产出结构化的续接计划；`agent run` 接受同一个文件参数，并把终端交给该 provider。不存在隐式的
+`--last`、部分 ID 搜索、shell 拼接、自动登录、对话导入或审批绕过。
 
-Supported metadata: Codex JSONL `session_meta` header; Claude Code JSONL records containing
-`sessionId`, `cwd`, and a semantic `version`; Pi session-format v3 UUID headers; OpenCode JSON
-exports with `info.id`, `info.directory`, and `info.version`. Metadata reads are bounded to 256 KiB;
-transcript messages are not copied into plans or another conversation database. The recorded
-worktree must resolve to the same directory as `--worktree`. Plan `resume` reports the exact ID,
-source metadata version, source file, worktree, and `approval_owner: provider_native`.
+支持的元数据：Codex JSONL 的 `session_meta` 头；包含 `sessionId`、`cwd` 和语义化 `version` 的
+Claude Code JSONL 记录；Pi session-format v3 的 UUID 头；带 `info.id`、`info.directory` 和
+`info.version` 的 OpenCode JSON 导出。元数据读取上限 256 KiB；transcript 消息不会被复制进计划，
+也不会写进另一个会话数据库。记录里的 worktree 必须解析到与 `--worktree` 相同的目录。计划中的
+`resume` 报告精确 ID、来源元数据版本、来源文件、worktree 和 `approval_owner: provider_native`。
 
-The person must select an original provider session file or a trusted OpenCode export. This checks
-that file's metadata, not the authenticity of a user-edited export or the currently installed CLI's
-version. The external CLI remains responsible for finding the ID, enforcing permissions and
-reading its actual conversation. Unknown formats, task-mode continuation and DeepSeek file-based
-continuation fail closed. This is a structured **launch** contract, not a unified live event/approval
-protocol; those capabilities remain in backlog.
+人必须自己挑选原始 provider 会话文件或可信的 OpenCode 导出。这里校验的是该文件的元数据，
+不是用户改过的导出是否真实，也不是当前安装的 CLI 版本。查找 ID、执行权限和读取真实对话仍由
+外部 CLI 负责。未知格式、task 模式续接和 DeepSeek 基于文件的续接一律拒绝。这是一份结构化的
+**启动**合同，不是统一的实时事件/审批协议；后者仍在待办里。
 
-Provider contracts: [OpenCode CLI](https://opencode.ai/docs/cli/),
-[Codex CLI](https://developers.openai.com/codex/cli/reference/),
-[Claude Code CLI](https://code.claude.com/docs/en/cli-reference), and
-[Pi CLI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md).
+Provider 合同：[OpenCode CLI](https://opencode.ai/docs/cli/)、
+[Codex CLI](https://developers.openai.com/codex/cli/reference/)、
+[Claude Code CLI](https://code.claude.com/docs/en/cli-reference) 和
+[Pi CLI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)。

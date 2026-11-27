@@ -32,8 +32,8 @@ preserved processes. Judgement for large-project scenarios does not require the 
 
 This is a **benchmark, not a merge gate**. It answers one question: on a fixed scenario library, does
 an agent working with oberth complete more tasks, in fewer turns, than the same agent alone? The
-release gates are `engine.yml`, the nightly and the release workflow; a red eval says the model or the
-gateway changed, not that the product regressed.
+release gates are the `engine` job in `ci.yml`, the nightly and the release workflow; a red eval says
+the model or the gateway changed, not that the product regressed.
 
 - **One experiment answers one question.** Run it when a decision needs evidence — a public claim, a
   positioning change, a provider change — not on every PR. Add one dimension at a time (a provider,

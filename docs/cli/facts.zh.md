@@ -213,6 +213,10 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 `worktree.services[]` 的 `pid`、`run_id` 和 `started_at` 在服务由 option-berth 正在运行时提供，
 无端口 worker 也能靠这些字段核对实际运行记录；`log_path` 始终由引擎给出。
 
+存在故障或漂移时，完整文档和 `--brief` 都会带一个新增的 `diagnosis` 对象——`healthy`、`summary`、
+`root_causes[]`、`drifts[]`、`loops[]` 和 `next_actions[]`，与 Runtime World 发布的结构相同。
+`status --only` 会把它收窄到所选服务。两份文档的其他部分不变，忽略该字段的读取方读到的仍是原来的内容。
+
 状态里出现确定的异常事件就会带事实型交接文件，与是否启用可选评估无关。`attn_path` 指向
 `BERTH_HOME/attention/` 下的一个可重算、可过期的 agent 交接文件；没有当前异常时该字段缺省。
 **它出现表示「有异常」，不表示「用户已同意」**——发布一个本地事实不向任何地方发送数据，
@@ -234,6 +238,77 @@ changed 是第一次运行时缺省的可选字段。ports 仍是给脚本核对
 这个文件是派生通知，不是新的运行事实来源；
 模型客户端不在 runtime service 或 `status` 的控制路径里：确定性部分在 `internal/attn`，模型客户端在
 `internal/attn/model`，这条依赖边界由 `internal/cmd/attention_boundary_test.go` 检查。
+
+## oberth runtime inspect [path] [--json]
+
+把 `status` 读取的同一批事实——声明、运行、监听、健康、代码身份——收敛成一份文档，也就是 Runtime World，
+并在出问题时回答到底哪里坏了。`schema` 固定为 `oberth.runtime.world/v1`，`seq` 是收敛顺序，
+`observed_at` 是时钟时间，`revision` 是对收敛内容算出的确定性 SHA-256 前缀，不含时钟：
+事实未变时两次读取得到同一个修订。有 runtime service 应答时经它读取，没有时直接读同一批事实；
+`coverage` 说明这一轮到底看到了多少（`observable`、`partial`、`blind`），失明的一轮不会被发布成
+「什么都没有在跑」。`health` 是工作树的结论：`healthy`、`starting`、`drifted`、`degraded`、
+`broken`、`idle` 或 `blind`。
+
+`services[]` 的每一行带 `state`（`ready`、`starting`、`degraded`、`crashed`、`crash_loop`、
+`port_conflict`、`blocked_by_dep`、`stopped`、`unobserved`）、挡住它启动的 `blocked_by` 依赖、
+它的 `drifts` 和 `first_error`。漂移种类有 `code_stale`、`binary_stale`、`manifest_stale`、
+`port_occupied`、`unowned_listener`、`health_failing`、`ready_timeout`、`service_crashed`、
+`start_failed`、`repeated_crash` 和 `dependency_blocked`。
+
+`diagnosis` 把这些观察变成原因：
+
+- `healthy` 与 `summary` 用一句话回答「到底有没有问题」。
+- `root_causes[]` 用 `id`、`service`、`kind` 和 `severity` 点名每个原因，并带上 `summary`、受影响的 `impacted` 服务、`evidence`、`first_error` 行，以及由此得出的可执行 `command`。
+- `drifts[]` 与 `loops[]` 列出收敛注意到的情况；`crash_loop` 在 10 分钟窗口内统计，`restart_thrash` 在 5 分钟窗口内统计。
+- `next_actions[]` 用 `priority`、`safety`、`service`、`summary` 和 `command` 给下一步排序；`safety` 取 `read_only`、`local_restart` 或 `human_decision`，读者据此分辨「看一眼」和「需要人决定」。
+
+~~~json
+{
+  "schema": "oberth.runtime.world/v1",
+  "seq": 42,
+  "observed_at": "2026-10-31T10:00:00Z",
+  "revision": "9f2c1a7d4b0e112233445566",
+  "worktree": {"identity": "wt_0123456789ab", "group": "demo", "root": "/work/demo",
+               "branch": "main", "config_path": "/work/demo/oberth.yaml",
+               "manifest_present": true},
+  "coverage": "observable",
+  "health": "broken",
+  "services": [
+    {"name": "api", "state": "ready", "ready": true, "running": true},
+    {"name": "worker", "state": "crash_loop", "ready": false, "running": false,
+     "drifts": [{"kind": "repeated_crash", "severity": "critical",
+                 "summary": "worker crashed 3 times in 10m",
+                 "command": "oberth logs worker --once"}],
+     "first_error": "Traceback (most recent call last): ..."}
+  ],
+  "machine": [{"name": "redis", "port": 6379, "listening": true, "listening_known": true}],
+  "diagnosis": {
+    "healthy": false,
+    "summary": "worker crashed 3 times in 10m",
+    "root_causes": [
+      {"id": "rc_9a0b1c2d3e4f5a6b", "service": "worker", "kind": "repeated_crash",
+       "severity": "critical", "summary": "worker crashed 3 times in 10m",
+       "evidence": ["exit status 1 at 10:00:12"],
+       "first_error": "Traceback (most recent call last): ...",
+       "command": "oberth logs worker --once"}
+    ],
+    "drifts": [{"kind": "repeated_crash", "severity": "critical",
+                "summary": "worker crashed 3 times in 10m",
+                "command": "oberth logs worker --once"}],
+    "loops": [{"kind": "crash_loop", "service": "worker", "count": 3,
+               "window_sec": 600, "summary": "3 crashes in 10m"}],
+    "next_actions": [
+      {"priority": 1, "safety": "read_only", "service": "worker",
+       "summary": "inspect worker logs before restarting",
+       "command": "oberth logs worker --once"}
+    ]
+  }
+}
+~~~
+
+`oberth status` 与 `status --brief` 以新增字段的形式带上同一份 `diagnosis`，一次读取既拿到逐服务事实，
+也拿到收敛后的原因。runtime service 通过 `runtime.world` 能力下的 `runtime.world.read` 用 RPC 返回同一份文档
+（协议 `3.1.0`）；版本规则见[基础设施参考](infrastructure.zh.md#runtime-service-协议-3-切换)。
 
 ## oberth logs <service|port> [--once] [--lines N] [--follow] [--ip address] [--json] [--run current|<id>] [--first-error]
 
