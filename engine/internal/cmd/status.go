@@ -19,6 +19,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
 	"github.com/sheathedsharp/option-berth/engine/internal/ports"
 	"github.com/sheathedsharp/option-berth/engine/internal/runs"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -125,6 +126,11 @@ type statusDocument struct {
 	// Ports and port_actual are then unknown, not empty; the manifest and run
 	// records still describe what was declared and started.
 	Observation *rpc.ObservationStatus `json:"observation,omitempty"`
+	// Diagnosis is the causal half of the same facts: which failure started a
+	// dependency cascade, which services it explains, and the first action
+	// worth taking. It is omitted when the world is clean or idle, so a healthy
+	// status document keeps its existing shape.
+	Diagnosis *runtimecore.CausalDiagnosis `json:"diagnosis,omitempty"`
 }
 
 func statusRun(cmd *cobra.Command, args []string) error {
@@ -359,6 +365,7 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 	// missing, from the full scan rather than doc.Ports: the occupier may
 	// belong to another worktree.
 	applyExitPortHolders(doc.Exits, pp)
+	doc.Diagnosis = statusDiagnosis(doc)
 	if pending, ok := draft.PendingFor(name); ok {
 		doc.Drafts = append(doc.Drafts, pending)
 	}
@@ -381,6 +388,44 @@ func buildStatusDocument(ctx context.Context, dir string, mark bool, only []stri
 	}
 
 	return doc, nil
+}
+
+// statusDiagnosis reduces the facts status already collected into the causal
+// view. It performs no scan and no extra runtime service call: the manifest
+// row, the listeners and the observation are all the world needs. A clean or
+// idle worktree yields nil, which is why the healthy wire shape does not grow
+// a diagnosis object.
+func statusDiagnosis(doc statusDocument) *runtimecore.CausalDiagnosis {
+	world := runtimecore.ReduceWorld(runtimecore.WorldInput{
+		ObservedAt:  time.Now().UTC().Format(time.RFC3339),
+		Group:       doc.Worktree,
+		Ports:       doc.Ports,
+		Observation: doc.Observation,
+		Exits:       statusExitEvidence(doc),
+	})
+	diagnosis := world.Diagnosis
+	if diagnosis.Healthy && len(diagnosis.RootCauses) == 0 &&
+		len(diagnosis.Drifts) == 0 && len(diagnosis.Loops) == 0 {
+		return nil
+	}
+	return &diagnosis
+}
+
+// statusExitEvidence is the exit half of the world input, read from the same
+// bounded rows the document publishes.
+func statusExitEvidence(doc statusDocument) []runtimecore.ExitEvidence {
+	out := make([]runtimecore.ExitEvidence, 0, len(doc.Exits))
+	for _, run := range doc.Exits {
+		code := 0
+		if run.ExitCode != nil {
+			code = *run.ExitCode
+		}
+		out = append(out, runtimecore.ExitEvidence{
+			Service: run.Name, RunID: run.ID, Reason: run.Reason, Code: code,
+			At: run.ExitedAt, LogPath: run.LogPath,
+		})
+	}
+	return out
 }
 
 // statusAttn is the consent and assessment state of the published handoff.
@@ -820,6 +865,7 @@ func printStatus(doc statusDocument) {
 	printStatusListeners(doc)
 	printStatusCode(doc)
 	printStatusFailure(doc)
+	printStatusDiagnosis(doc)
 	printStatusDraft(doc)
 	printStatusChange(doc)
 }
@@ -834,6 +880,7 @@ func printStatusBrief(doc statusDocument) {
 	printStatusResources(doc)
 	printStatusListeners(doc)
 	printStatusFailure(doc)
+	printStatusDiagnosis(doc)
 }
 
 func printStatusHead(doc statusDocument) {
@@ -869,7 +916,8 @@ func printStatusHead(doc statusDocument) {
 // is measured once from the widest, in terminal cells rather than runes, so
 // every row's value starts at the same cell.
 var statusLabels = []string{
-	"services", "depends on", "listeners", "resources", "code", "failed", "next", "drafts", "last look",
+	"services", "depends on", "listeners", "resources", "code", "failed",
+	"diagnosis", "impacted", "error", "next", "drafts", "last look",
 }
 
 func statusLabelWidth() int {
@@ -1237,6 +1285,29 @@ func lastNonEmpty(lines []string) string {
 		}
 	}
 	return ""
+}
+
+// printStatusDiagnosis names the one failure that explains the rest, so a
+// reader of a dependency cascade does not go looking for three independent
+// bugs. It prints only when a root cause exists: non-fatal drifts already have
+// their own service row and next step.
+func printStatusDiagnosis(doc statusDocument) {
+	if doc.Diagnosis == nil {
+		return
+	}
+	for _, root := range doc.Diagnosis.RootCauses {
+		value := fmt.Sprintf("%s · %s · %s", root.Service, root.Kind, root.Summary)
+		statusLine("diagnosis", display.Red(value))
+		if len(root.Impacted) > 0 {
+			statusLine("impacted", strings.Join(root.Impacted, ", "))
+		}
+		if root.FirstError != "" {
+			statusLine("error", root.FirstError)
+		}
+		if root.Command != "" {
+			statusLine("next", display.Dim(root.Command))
+		}
+	}
 }
 
 func printStatusDraft(doc statusDocument) {

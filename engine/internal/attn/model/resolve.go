@@ -35,6 +35,10 @@ const (
 	SourceOneShot Source = "one-shot"
 	// SourceFlag is an explicit command-line flag.
 	SourceFlag Source = "flag"
+	// SourceLoopback is the placeholder sent to a loopback endpoint that was
+	// configured without a key. It is not a secret and must never be shown as
+	// one: `oberth attn status` prints it as the loopback default.
+	SourceLoopback Source = "loopback"
 )
 
 // ResolveInput is everything the environment can contribute. Tests set it
@@ -55,6 +59,10 @@ type ResolveInput struct {
 	Endpoint string
 	Model    string
 	Key      string
+	// Protocol and Mode override the stored wire shape and autonomy for this
+	// process. Empty means "use the stored value, then the default".
+	Protocol string
+	Mode     string
 }
 
 // ResolveInputFromEnvironment reads the process environment. It never reads a
@@ -65,6 +73,8 @@ func ResolveInputFromEnvironment() ResolveInput {
 		Endpoint: strings.TrimSpace(os.Getenv("BERTH_ATTN_ENDPOINT")),
 		Model:    strings.TrimSpace(os.Getenv("BERTH_ATTN_MODEL")),
 		Key:      strings.TrimSpace(os.Getenv("BERTH_ATTN_KEY")),
+		Protocol: strings.TrimSpace(os.Getenv("BERTH_ATTN_PROTOCOL")),
+		Mode:     strings.TrimSpace(os.Getenv("BERTH_ATTN_MODE")),
 	}
 }
 
@@ -88,6 +98,15 @@ type Resolved struct {
 	// report "key from environment" without printing the key.
 	KeySource Source
 	Timeout   time.Duration
+	// Protocol is the effective wire shape: the stored value, the environment
+	// override, or ProtocolDecisions.
+	Protocol string
+	// Mode is the effective autonomy: the stored value, the environment
+	// override, or ModeAssist.
+	Mode string
+	// IncludeErrorLine says whether one redacted first-error line may be part
+	// of a triage payload.
+	IncludeErrorLine bool
 	// Reason is the fixed reason code when Enabled is false, and empty when it
 	// is true. See the Reason* constants.
 	Reason string
@@ -123,7 +142,15 @@ func oneShotConsent(value string) bool {
 // malformed settings file is a closed door with a reason, not a fall-through
 // to whatever the environment happens to hold.
 func Resolve(in ResolveInput) Resolved {
-	resolved := Resolved{Timeout: DefaultTimeout}
+	resolved := Resolved{
+		Timeout: DefaultTimeout,
+		// The defaults exist before any file is read, so a disabled or
+		// incomplete resolution still names the wire shape and autonomy a
+		// caller would get if the missing field were supplied.
+		Protocol:         NormalizeProtocol(in.Protocol),
+		Mode:             NormalizeMode(in.Mode),
+		IncludeErrorLine: true,
+	}
 
 	settingsUsable := in.SettingsPresent && in.SettingsErr == nil
 	if in.SettingsErr != nil {
@@ -152,9 +179,26 @@ func Resolve(in ResolveInput) Resolved {
 		resolved.Endpoint = in.Settings.Endpoint
 		resolved.Model = in.Settings.Model
 		resolved.Timeout = in.Settings.Timeout()
+		resolved.Protocol = in.Settings.EffectiveProtocol()
+		resolved.Mode = in.Settings.EffectiveMode()
+		resolved.IncludeErrorLine = in.Settings.AllowsErrorLine()
 	}
 	resolved.Endpoint = firstNonEmpty(in.Endpoint, resolved.Endpoint)
 	resolved.Model = firstNonEmpty(in.Model, resolved.Model)
+	if strings.TrimSpace(in.Protocol) != "" {
+		resolved.Protocol = NormalizeProtocol(in.Protocol)
+	}
+	if strings.TrimSpace(in.Mode) != "" {
+		resolved.Mode = NormalizeMode(in.Mode)
+	}
+	// An unknown protocol or mode is a closed door with a reason, exactly like
+	// a malformed file: the endpoint would be asked in a shape nobody defined,
+	// and the answer would be attached as if it were a decision.
+	if !KnownProtocol(resolved.Protocol) || !KnownMode(resolved.Mode) {
+		resolved.Enabled = false
+		resolved.Reason = ReasonInvalidConfig
+		return resolved
+	}
 
 	// The key search is independent of consent so the closed door can be named
 	// precisely. A key found without consent is then dropped from the value: a
@@ -170,7 +214,15 @@ func Resolve(in ResolveInput) Resolved {
 			return resolved
 		}
 		if resolved.Key == "" {
-			resolved.Reason = ReasonNoKey
+			// A loopback endpoint is a runtime on this machine: nothing crosses
+			// the network, and a local server usually has no key to give. The
+			// non-loopback requirement is untouched — a remote provider without
+			// a secret is still `no_key`.
+			if loopbackEndpoint(resolved.Endpoint) {
+				resolved.Key, resolved.KeySource = loopbackKey, SourceLoopback
+			} else {
+				resolved.Reason = ReasonNoKey
+			}
 		}
 		return resolved
 	}
@@ -196,7 +248,11 @@ func pickKey(in ResolveInput, settingsUsable bool) (string, Source) {
 		return in.Key, SourceEnvironment
 	}
 	if settingsUsable && strings.TrimSpace(in.Settings.APIKey) != "" {
-		return strings.TrimSpace(in.Settings.APIKey), SourceSettings
+		stored := strings.TrimSpace(in.Settings.APIKey)
+		if stored == loopbackKey && loopbackEndpoint(firstNonEmpty(in.Endpoint, in.Settings.Endpoint)) {
+			return loopbackKey, SourceLoopback
+		}
+		return stored, SourceSettings
 	}
 	return "", SourceNone
 }
@@ -211,22 +267,32 @@ func (r Resolved) Client() (Client, error) {
 	if strings.TrimSpace(r.Endpoint) == "" || strings.TrimSpace(r.Model) == "" {
 		return Client{}, WithReason(ReasonInvalidConfig, ErrUnavailable)
 	}
-	if strings.TrimSpace(r.Key) == "" {
-		return Client{}, ErrUnavailable
+	key := strings.TrimSpace(r.Key)
+	if key == "" {
+		if !loopbackEndpoint(r.Endpoint) {
+			return Client{}, WithReason(ReasonNoKey, ErrUnavailable)
+		}
+		key = loopbackKey
 	}
-	return Client{Endpoint: r.Endpoint, Model: r.Model, APIKey: r.Key, Timeout: r.Timeout}, nil
+	return Client{
+		Endpoint: r.Endpoint, Model: r.Model, APIKey: key, Timeout: r.Timeout,
+		Protocol: Protocol(r.Protocol), Mode: Mode(r.Mode), IncludeErrorLine: r.IncludeErrorLine,
+	}, nil
 }
 
 // RedactedState is what `oberth attn status` may print: everything about the
 // configuration except the secret itself.
 func (r Resolved) RedactedState() map[string]any {
 	state := map[string]any{
-		"enabled":        r.Enabled,
-		"endpoint":       r.Endpoint,
-		"model":          r.Model,
-		"timeout_ms":     r.Timeout.Milliseconds(),
-		"key_source":     string(r.KeySource),
-		"consent_source": string(r.ConsentSource),
+		"enabled":            r.Enabled,
+		"endpoint":           r.Endpoint,
+		"model":              r.Model,
+		"timeout_ms":         r.Timeout.Milliseconds(),
+		"key_source":         string(r.KeySource),
+		"consent_source":     string(r.ConsentSource),
+		"protocol":           NormalizeProtocol(r.Protocol),
+		"mode":               NormalizeMode(r.Mode),
+		"include_error_line": r.IncludeErrorLine,
 	}
 	if r.Preset != "" {
 		state["preset"] = r.Preset

@@ -158,7 +158,7 @@ func init() {
 		"Record that the user approved the proposed action (does not execute it)")
 
 	attnCmd.AddCommand(attnAssessCmd, attnFeedbackCmd, attnPreflightCmd,
-		attnStatusCmd, attnConfigCmd, attnOnCmd, attnOffCmd, attnTestCmd)
+		attnStatusCmd, attnNotesCmd, attnConfigCmd, attnOnCmd, attnOffCmd, attnTestCmd)
 	rootCmd.AddCommand(attnCmd)
 }
 

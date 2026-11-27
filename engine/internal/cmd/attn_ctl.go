@@ -24,10 +24,13 @@ var (
 	attnConfigPreset   string
 	attnConfigEndpoint string
 	attnConfigModel    string
+	attnConfigProtocol string
+	attnConfigMode     string
 	attnConfigTimeout  time.Duration
 	attnKeyStdinFlag   bool
 	attnKeyEnvFlag     string
 	attnOffForgetFlag  bool
+	attnOnModeFlag     string
 )
 
 var attnStatusCmd = &cobra.Command{
@@ -59,7 +62,10 @@ var attnConfigCmd = &cobra.Command{
 		"hidden terminal prompt, or the already stored key when no key flag is given.\n" +
 		"One synthetic redacted request proves the configuration before anything is\n" +
 		"written; a failed probe leaves the existing file untouched. This verb changes\n" +
-		"credentials, not consent: it never turns the assessment on.",
+		"credentials, not consent: it never turns the assessment on.\n\n" +
+		"--protocol picks the wire shape (decisions, openai_chat or anthropic) and a\n" +
+		"preset fills it; --mode stores how much autonomy the assessment may express\n" +
+		"(strict, assist or reconcile).",
 	Args: cobra.NoArgs,
 	RunE: runAttnConfig,
 }
@@ -69,7 +75,9 @@ var attnOnCmd = &cobra.Command{
 	Short: "Turn the assessment on (offline, one boolean)",
 	Long: "Set \"enabled\": true in attn.json. This is a consent flip, not a probe: run\n" +
 		"`oberth attn config` first to store a working configuration, and\n" +
-		"`oberth attn test` afterwards to verify it.",
+		"`oberth attn test` afterwards to verify it.\n\n" +
+		"--mode stores the autonomy in the same step (strict, assist or reconcile);\n" +
+		"without it the stored mode is kept, or assist when none is stored.",
 	Args: cobra.NoArgs,
 	RunE: runAttnOn,
 }
@@ -97,12 +105,18 @@ func init() {
 		"Fill endpoint and model from a preset ("+model.PresetNames()+"); optional")
 	attnConfigCmd.Flags().StringVar(&attnConfigEndpoint, "endpoint", "", "Endpoint URL (required unless --preset fills it)")
 	attnConfigCmd.Flags().StringVar(&attnConfigModel, "model", "", "Model name (required unless --preset fills it)")
+	attnConfigCmd.Flags().StringVar(&attnConfigProtocol, "protocol", "",
+		"Wire shape the endpoint speaks: decisions, openai_chat or anthropic (a preset fills it)")
+	attnConfigCmd.Flags().StringVar(&attnConfigMode, "mode", "",
+		"Autonomy to store: strict, assist or reconcile (default assist)")
 	attnConfigCmd.Flags().DurationVar(&attnConfigTimeout, "timeout", 0, "Request timeout (default 10s)")
 	attnConfigCmd.Flags().BoolVar(&attnKeyStdinFlag, "key-stdin", false,
 		"Read the key from the first line of standard input")
 	attnConfigCmd.Flags().StringVar(&attnKeyEnvFlag, "key-env", "",
 		"Read the key from this environment variable")
 
+	attnOnCmd.Flags().StringVar(&attnOnModeFlag, "mode", "",
+		"Autonomy to store while turning the assessment on: strict, assist or reconcile")
 	attnOffCmd.Flags().BoolVar(&attnOffForgetFlag, "forget", false, "Also delete the stored key")
 }
 
@@ -124,8 +138,12 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 	state["settings_present"] = present
 	state["settings_valid"] = err == nil
 	if present && err == nil {
-		if fingerprint := model.KeyFingerprint(cfg.APIKey); fingerprint != "" {
-			state["key_fingerprint"] = fingerprint
+		isLoopbackDefault := consent.KeySource == model.SourceLoopback ||
+			(model.LoopbackEndpoint(cfg.Endpoint) && cfg.APIKey == model.LoopbackKeyPlaceholder)
+		if !isLoopbackDefault {
+			if fingerprint := model.KeyFingerprint(cfg.APIKey); fingerprint != "" {
+				state["key_fingerprint"] = fingerprint
+			}
 		}
 	}
 	if attnStatusSinceFlag < 0 {
@@ -138,6 +156,10 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 	state["quality"] = attnStatusQuality(cmd, report)
 	loop := collectAttnLoopFacts(attnProjectFlag, report.Activity)
 	applyAttnLoopJSON(state, loop)
+	notes := attnNoteSummary(attnProjectFlag)
+	if notes != nil {
+		state["notes"] = notes
+	}
 	return attnPrint(state, func() string {
 		var b strings.Builder
 		switch {
@@ -159,8 +181,13 @@ func runAttnStatus(cmd *cobra.Command, _ []string) error {
 		if consent.Model != "" {
 			fmt.Fprintf(&b, "  model     %s\n", consent.Model)
 		}
+		fmt.Fprintf(&b, "  protocol  %s\n", model.NormalizeProtocol(consent.Protocol))
+		fmt.Fprintf(&b, "  mode      %s\n", model.NormalizeMode(consent.Mode))
 		if present {
 			fmt.Fprintf(&b, "  key       %s\n", keySourceLine(consent.KeySource, state["key_fingerprint"]))
+		}
+		if notes != nil {
+			fmt.Fprintf(&b, "  notes     %s\n", attnNotesSummaryLine(notes))
 		}
 		fmt.Fprintf(&b, "  quality   %s\n", qualitySummary(report, attnStatusSinceFlag))
 		if consent.Enabled && consent.Reason != "" {
@@ -251,7 +278,8 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 	}
 	options := model.EnableOptions{
 		Preset: attnConfigPreset, Endpoint: attnConfigEndpoint,
-		Model: attnConfigModel, Timeout: attnConfigTimeout,
+		Model: attnConfigModel, Protocol: attnConfigProtocol, Mode: attnConfigMode,
+		Timeout: attnConfigTimeout,
 	}
 	next := options.SettingsFrom(current)
 	// Validate the endpoint and model before asking for a secret: a person who
@@ -259,7 +287,7 @@ func runAttnConfig(cmd *cobra.Command, _ []string) error {
 	if err := attnValidateSelection(next); err != nil {
 		return err
 	}
-	key, keyErr := attnConfigKey(next.APIKey)
+	key, keyErr := attnConfigKey(next.APIKey, next.Endpoint)
 	if keyErr != nil {
 		return keyErr
 	}
@@ -276,7 +304,12 @@ func attnCommitConfig(cmd *cobra.Command, next model.LocalConfig) error {
 		return err
 	}
 	if strings.TrimSpace(next.APIKey) == "" {
-		return usageError{errors.New("an API key is required; rerun `oberth attn config`")}
+		// A loopback runtime normally has no key to give. The stored value is
+		// the documented placeholder, never a real secret and never printed.
+		if !model.LoopbackEndpoint(next.Endpoint) {
+			return usageError{errors.New("an API key is required; rerun `oberth attn config`")}
+		}
+		next.APIKey = model.LoopbackKeyPlaceholder
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), next.Timeout()+time.Second)
 	defer cancel()
@@ -291,10 +324,16 @@ func attnCommitConfig(cmd *cobra.Command, next model.LocalConfig) error {
 	if err := model.WriteSettings(path, next); err != nil {
 		return err
 	}
+	keySource := model.SourceSettings
+	if next.APIKey == model.LoopbackKeyPlaceholder && model.LoopbackEndpoint(next.Endpoint) {
+		keySource = model.SourceLoopback
+	}
 	state := model.Resolved{
 		Enabled: next.Enabled, ConsentSource: model.SourceSettings, Preset: next.Preset,
 		Endpoint: next.Endpoint, Model: next.Model, Key: next.APIKey,
-		KeySource: model.SourceSettings, Timeout: next.Timeout(),
+		KeySource: keySource, Timeout: next.Timeout(),
+		Protocol: next.EffectiveProtocol(), Mode: next.EffectiveMode(),
+		IncludeErrorLine: next.AllowsErrorLine(),
 	}
 	return attnPrint(map[string]any{
 		"status":   "configured",
@@ -304,8 +343,12 @@ func attnCommitConfig(cmd *cobra.Command, next model.LocalConfig) error {
 		"sends":    model.SendsSummary(),
 	}, func() string {
 		var b strings.Builder
+		var fp any
+		if keySource != model.SourceLoopback {
+			fp = model.KeyFingerprint(next.APIKey)
+		}
 		fmt.Fprintf(&b, "Attention: configured (%s, key %s)\n",
-			next.Model, keySourceLine(model.SourceSettings, model.KeyFingerprint(next.APIKey)))
+			next.Model, keySourceLine(keySource, fp))
 		fmt.Fprintf(&b, "  %s\n", path)
 		fmt.Fprintf(&b, "  consent   %s\n\n", attnConsentLine(next.Enabled))
 		b.WriteString(model.HumanSendsSummary())
@@ -327,13 +370,15 @@ func attnConsentLine(enabled bool) string {
 
 func noAttnConfigFlags() bool {
 	return strings.TrimSpace(attnConfigPreset) == "" && strings.TrimSpace(attnConfigEndpoint) == "" &&
-		strings.TrimSpace(attnConfigModel) == "" && attnConfigTimeout == 0 &&
+		strings.TrimSpace(attnConfigModel) == "" && strings.TrimSpace(attnConfigProtocol) == "" &&
+		strings.TrimSpace(attnConfigMode) == "" && attnConfigTimeout == 0 &&
 		!attnKeyStdinFlag && strings.TrimSpace(attnKeyEnvFlag) == ""
 }
 
 // attnConfigKey answers which secret to store. An explicit source wins; no key
-// flag keeps the stored key, or prompts when there is none to keep.
-func attnConfigKey(stored string) (string, error) {
+// flag keeps the stored key, and a loopback endpoint needs no key at all, so
+// the prompt only appears where a key is actually required.
+func attnConfigKey(stored, endpoint string) (string, error) {
 	switch {
 	case attnKeyStdinFlag:
 		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -353,6 +398,8 @@ func attnConfigKey(stored string) (string, error) {
 		return value, nil
 	case strings.TrimSpace(stored) != "":
 		return strings.TrimSpace(stored), nil
+	case model.LoopbackEndpoint(endpoint):
+		return "", nil
 	default:
 		key, err := terminal.ReadSecret(os.Stderr, "API key (input hidden)")
 		if errors.Is(err, terminal.ErrNotInteractive) {
@@ -377,11 +424,21 @@ func humanSettings(cfg model.LocalConfig) string {
 	}
 	fmt.Fprintf(&b, "  endpoint  %s\n", cfg.Endpoint)
 	fmt.Fprintf(&b, "  model     %s\n", cfg.Model)
-	fmt.Fprintf(&b, "  key       %s\n", keySourceLine(model.SourceSettings, model.KeyFingerprint(cfg.APIKey)))
+	fmt.Fprintf(&b, "  protocol  %s\n", cfg.EffectiveProtocol())
+	fmt.Fprintf(&b, "  mode      %s\n", cfg.EffectiveMode())
+	if model.LoopbackEndpoint(cfg.Endpoint) && cfg.APIKey == model.LoopbackKeyPlaceholder {
+		fmt.Fprintf(&b, "  key       %s\n", keySourceLine(model.SourceLoopback, nil))
+	} else {
+		fmt.Fprintf(&b, "  key       %s\n", keySourceLine(model.SourceSettings, model.KeyFingerprint(cfg.APIKey)))
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func runAttnOn(cmd *cobra.Command, _ []string) error {
+	mode := strings.ToLower(strings.TrimSpace(attnOnModeFlag))
+	if mode != "" && !model.KnownMode(mode) {
+		return usageError{errors.New("--mode must be strict, assist or reconcile")}
+	}
 	cfg, present, err := model.LoadLocalConfig()
 	if err != nil {
 		return failHint("attn_invalid_config", "attention settings are not usable",
@@ -391,27 +448,35 @@ func runAttnOn(cmd *cobra.Command, _ []string) error {
 		return failHint("attn_not_configured", "attention is not configured",
 			"run `oberth attn config` first")
 	}
-	if cfg.Enabled {
-		return attnPrint(map[string]any{"status": "already_on"}, func() string {
-			return "Attention: already on"
+	modeChanged := mode != "" && mode != cfg.Mode
+	if cfg.Enabled && !modeChanged {
+		return attnPrint(map[string]any{"status": "already_on", "mode": cfg.EffectiveMode()}, func() string {
+			return "Attention: already on (mode " + cfg.EffectiveMode() + ")"
 		})
 	}
 	cfg.Enabled = true
+	if mode != "" {
+		cfg.Mode = mode
+	}
 	if err := cfg.Validate(); err != nil {
 		return failHint("attn_invalid_config", "attention is not fully configured",
 			"run `oberth attn config` to supply the endpoint and model")
 	}
 	if strings.TrimSpace(cfg.APIKey) == "" {
-		return failHint("attn_no_key", "no key is stored",
-			"run `oberth attn config --key-stdin` (or --key-env) to store one")
+		if !model.LoopbackEndpoint(cfg.Endpoint) {
+			return failHint("attn_no_key", "no key is stored",
+				"run `oberth attn config --key-stdin` (or --key-env) to store one")
+		}
+		cfg.APIKey = model.LoopbackKeyPlaceholder
 	}
 	path := paths.AttnConfigPath()
 	if err := model.WriteSettings(path, cfg); err != nil {
 		return err
 	}
-	return attnPrint(map[string]any{"status": "enabled", "path": path}, func() string {
-		return "Attention: on\n  run `oberth attn test` to verify it answers"
-	})
+	return attnPrint(map[string]any{"status": "enabled", "path": path, "mode": cfg.EffectiveMode()},
+		func() string {
+			return "Attention: on (mode " + cfg.EffectiveMode() + ")\n  run `oberth attn test` to verify it answers"
+		})
 }
 
 func runAttnOff(cmd *cobra.Command, _ []string) error {
@@ -453,6 +518,7 @@ func runAttnTest(cmd *cobra.Command, _ []string) error {
 	// The probe must use the same effective fields a real assessment would:
 	// environment overrides are already merged into the resolved consent.
 	cfg.Endpoint, cfg.Model, cfg.APIKey = consent.Endpoint, consent.Model, consent.Key
+	cfg.Protocol, cfg.Mode = consent.Protocol, consent.Mode
 	if cfg.TimeoutMS == 0 {
 		cfg.TimeoutMS = int(consent.Timeout / time.Millisecond)
 	}

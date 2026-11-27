@@ -32,27 +32,54 @@ type RunExit struct {
 	ExitedAt time.Time
 }
 
+type runExitHook struct {
+	fn func(RunExit)
+}
+
 var (
 	runExitMu    sync.Mutex
-	runExitHooks []func(RunExit)
+	runExitHooks []*runExitHook
 )
 
-// OnRunExit registers a callback run for every run whose end this runtime service
-// records.
+// OnRunExit registers a callback run for every run whose end this runtime
+// service records. It lives for the process lifetime; a component with a
+// shorter life registers with RegisterRunExit so it can detach.
 func OnRunExit(f func(RunExit)) {
+	RegisterRunExit(f)
+}
+
+// RegisterRunExit registers a callback and returns the function that removes
+// it. The cancellation makes the hook safe for a Server: a test that builds
+// and stops many servers must not leave every one of them listening to the
+// next exit.
+func RegisterRunExit(f func(RunExit)) (cancel func()) {
 	if f == nil {
-		return
+		return func() {}
 	}
+	hook := &runExitHook{fn: f}
 	runExitMu.Lock()
-	defer runExitMu.Unlock()
-	runExitHooks = append(runExitHooks, f)
+	runExitHooks = append(runExitHooks, hook)
+	runExitMu.Unlock()
+	return func() {
+		runExitMu.Lock()
+		defer runExitMu.Unlock()
+		for i, existing := range runExitHooks {
+			if existing == hook {
+				runExitHooks = append(runExitHooks[:i], runExitHooks[i+1:]...)
+				return
+			}
+		}
+	}
 }
 
 // NotifyRunExit runs the registered callbacks. The run registry calls it; a
 // package that only wants to hear about exits registers with OnRunExit.
 func NotifyRunExit(e RunExit) {
 	runExitMu.Lock()
-	hooks := append([]func(RunExit){}, runExitHooks...)
+	hooks := make([]func(RunExit), 0, len(runExitHooks))
+	for _, hook := range runExitHooks {
+		hooks = append(hooks, hook.fn)
+	}
 	runExitMu.Unlock()
 	for _, f := range hooks {
 		f(e)

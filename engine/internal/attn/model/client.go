@@ -15,6 +15,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -98,26 +99,49 @@ func (t TaskContext) validate(options []attn.Option) ([]string, error) {
 // Client calls one configured endpoint. HTTPClient is injectable for tests;
 // nil uses http.DefaultClient.
 type Client struct {
-	Endpoint   string
-	APIKey     string
-	Model      string
+	Endpoint string
+	APIKey   string
+	Model    string
+	// Protocol is the wire shape the endpoint speaks. Empty means the
+	// decisions schema every provider before this field spoke.
+	Protocol Protocol
+	// IncludeErrorLine says whether one redacted first-error line may travel
+	// with a world triage. It has no effect on Evaluate, whose payload never
+	// carried log text.
+	IncludeErrorLine bool
+	// Mode is carried so a caller can report which autonomy produced a
+	// result. The client itself never acts on it.
+	Mode       Mode
 	HTTPClient *http.Client
 	Timeout    time.Duration
 }
 
 func (c Client) normalized() (Client, error) {
 	c.APIKey = strings.TrimSpace(c.APIKey)
-	if c.APIKey == "" {
-		return Client{}, WithReason(ReasonNoKey, ErrUnavailable)
-	}
 	c.Endpoint = strings.TrimSpace(c.Endpoint)
 	c.Model = strings.TrimSpace(c.Model)
 	if c.Endpoint == "" || c.Model == "" {
+		if c.APIKey == "" {
+			return Client{}, WithReason(ReasonNoKey, ErrUnavailable)
+		}
 		return Client{}, WithReason(ReasonInvalidConfig, ErrUnavailable)
 	}
 	if err := validateEndpoint(c.Endpoint); err != nil {
 		return Client{}, WithReason(ReasonInvalidConfig, fmt.Errorf("attn: %w", err))
 	}
+	if c.APIKey == "" {
+		// A loopback endpoint is a runtime on this machine; it is configured
+		// without a secret on purpose. Every other endpoint still needs one.
+		if !loopbackEndpoint(c.Endpoint) {
+			return Client{}, WithReason(ReasonNoKey, ErrUnavailable)
+		}
+		c.APIKey = loopbackKey
+	}
+	c.Protocol = Protocol(NormalizeProtocol(string(c.Protocol)))
+	if !KnownProtocol(string(c.Protocol)) {
+		return Client{}, WithReason(ReasonInvalidConfig, ErrUnavailable)
+	}
+	c.Mode = Mode(NormalizeMode(string(c.Mode)))
 	if c.Timeout <= 0 {
 		c.Timeout = DefaultTimeout
 	}
@@ -125,6 +149,16 @@ func (c Client) normalized() (Client, error) {
 		c.HTTPClient = http.DefaultClient
 	}
 	return c, nil
+}
+
+// loopbackEndpoint reports whether an endpoint is a plain-HTTP address on this
+// machine. Only those may be configured without a key.
+func loopbackEndpoint(endpoint string) bool {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || u.Scheme != "http" || u.Host == "" {
+		return false
+	}
+	return isLoopbackHost(u.Hostname())
 }
 
 // apiRequest and apiResponse mirror TypeSafe's documented HTTP contract. The
@@ -174,9 +208,25 @@ type apiResponse struct {
 type apiAnswer struct {
 	Type          string             `json:"type"`
 	Noul          *float64           `json:"noul,omitempty"`
+	Score         *float64           `json:"score,omitempty"`
 	Choice        string             `json:"choice,omitempty"`
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	Confidence    *float64           `json:"confidence,omitempty"`
+}
+
+// decisionPayload is the protocol-independent answer shape every structured
+// protocol parses into before validation. One validator for all three is what
+// keeps a provider from reaching the artifact through a bound another provider
+// checks: the wire schema differs, the rule does not.
+type decisionPayload struct {
+	TaskRelevant  *float64           `json:"task_relevant,omitempty"`
+	NeedsHuman    *float64           `json:"needs_human,omitempty"`
+	Urgency       *float64           `json:"urgency,omitempty"`
+	NextOption    string             `json:"next_option,omitempty"`
+	Confidence    *float64           `json:"confidence,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
+	Summary       string             `json:"summary,omitempty"`
+	Model         string             `json:"model,omitempty"`
 }
 
 // Result contains the validated, typed recommendation and the task relevance
@@ -233,6 +283,17 @@ func (c Client) EvaluateObserved(ctx context.Context, artifact attn.Artifact, ta
 				"false": "The agent can safely continue with a documented, reversible, already authorized inspection.",
 			},
 		},
+		// urgency is optional: a provider that does not answer score questions
+		// still produces a usable assessment, and a provider that does can say
+		// how soon the next step stops being optional.
+		"urgency": {
+			Type:         "score",
+			Instructions: "How soon does this event stop the development task from proceeding usefully, if nothing is done?",
+			Criteria: map[string]string{
+				"0": "the task is unaffected and can continue for now",
+				"1": "the task cannot proceed at all until this is resolved",
+			},
+		},
 	}
 	if len(options) > 1 {
 		criteria := make(map[string]string, len(options))
@@ -245,54 +306,67 @@ func (c Client) EvaluateObserved(ctx context.Context, artifact attn.Artifact, ta
 			Criteria:     criteria,
 		}
 	}
-	payload := apiRequest{State: state, Model: client.Model, Questions: questions}
-	body, err := json.Marshal(payload)
+	body, err := encodeDecisionRequest(client.Protocol, client.Model, state, questions)
 	if err != nil {
-		return Result{}, fmt.Errorf("attn: encode request: %w", err)
+		return Result{}, err
 	}
-	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > client.Timeout {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, client.Timeout)
-		defer cancel()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.Endpoint, bytes.NewReader(body))
+	responseBody, err := client.exchange(ctx, body, attempted)
 	if err != nil {
-		return Result{}, fmt.Errorf("attn: create request: %w", err)
+		return Result{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+client.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	if err := ctx.Err(); err != nil {
-		return Result{}, WithReason(reasonFromTransport(ctx, err), err)
-	}
-	if attempted != nil {
-		attempted()
-	}
-	resp, err := client.HTTPClient.Do(req)
-	if err != nil {
-		// A timeout, an unreachable host and a cancelled context are three
-		// different next steps for the person, so classify before wrapping.
-		return Result{}, WithReason(reasonFromTransport(ctx, err), fmt.Errorf("%w: %v", ErrUnavailable, err))
-	}
-	defer resp.Body.Close()
-	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if readErr != nil {
-		return Result{}, WithReason(reasonFromTransport(ctx, readErr), fmt.Errorf("%w: read response: %v", ErrUnavailable, readErr))
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Do not return the response body: providers may echo state or account
-		// details and errors should never become agent-visible evidence.
-		return Result{}, WithReason(reasonFromStatus(resp.StatusCode), fmt.Errorf("%w: HTTP status %d", ErrUnavailable, resp.StatusCode))
-	}
-	var decoded apiResponse
-	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid response", ErrUnavailable))
-	}
-	result, err := validateResponse(decoded, options, client.Model)
+	result, err := decisionResult(client.Protocol, responseBody, options, client.Model)
 	if err != nil {
 		return Result{}, err
 	}
 	result.Assessment.ContextID = assessmentContextID(task, options)
 	return result, nil
+}
+
+// exchange posts one already-encoded request with the headers its protocol
+// needs and returns the bounded response body. It is the only place a provider
+// is contacted, so the timeout rule, the status classification and the
+// request-events hook have exactly one implementation.
+func (c Client) exchange(ctx context.Context, body []byte, attempted func()) ([]byte, error) {
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > c.Timeout {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("attn: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	switch Protocol(NormalizeProtocol(string(c.Protocol))) {
+	case ProtocolAnthropic:
+		req.Header.Set("x-api-key", c.APIKey)
+		req.Header.Set("anthropic-version", anthropicVersion)
+	default:
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, WithReason(reasonFromTransport(ctx, err), err)
+	}
+	if attempted != nil {
+		attempted()
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		// A timeout, an unreachable host and a cancelled context are three
+		// different next steps for the person, so classify before wrapping.
+		return nil, WithReason(reasonFromTransport(ctx, err), fmt.Errorf("%w: %v", ErrUnavailable, err))
+	}
+	defer resp.Body.Close()
+	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		return nil, WithReason(reasonFromTransport(ctx, readErr), fmt.Errorf("%w: read response: %v", ErrUnavailable, readErr))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Do not return the response body: providers may echo state or account
+		// details and errors should never become agent-visible evidence.
+		return nil, WithReason(reasonFromStatus(resp.StatusCode), fmt.Errorf("%w: HTTP status %d", ErrUnavailable, resp.StatusCode))
+	}
+	return responseBody, nil
 }
 
 func assessmentContextID(task TaskContext, authorized []string) string {
@@ -417,31 +491,71 @@ func validateResponse(response apiResponse, options []string, configuredModel st
 	if err != nil {
 		return Result{}, err
 	}
-	assessment := attn.Assessment{NeedsHuman: &needsHuman, TaskRelevant: &relevant}
+	payload := decisionPayload{TaskRelevant: &relevant, NeedsHuman: &needsHuman, Model: response.Model}
+	// urgency is optional: a provider that does not answer score questions
+	// still produces a usable assessment, and a malformed score it did claim to
+	// answer is a bad response rather than a silent zero.
+	if answer, ok := response.Answers["urgency"]; ok {
+		if answer.Type != "score" || !finiteProbability(answer.Score) {
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid urgency answer", ErrUnavailable))
+		}
+		payload.Urgency = answer.Score
+	}
+	if len(options) > 1 {
+		choice := response.Answers["next_option"]
+		if choice.Type != "choice" {
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid next_option answer", ErrUnavailable))
+		}
+		payload.NextOption = choice.Choice
+		payload.Confidence = choice.Confidence
+		payload.Probabilities = choice.Probabilities
+	}
+	return validateDecision(payload, options, configuredModel)
+}
+
+// validateDecision is the one validator behind every protocol. It enforces the
+// numeric bounds, the option vocabulary and the probability sum without
+// caring which wire shape produced the values.
+func validateDecision(payload decisionPayload, options []string, configuredModel string) (Result, error) {
+	if payload.TaskRelevant == nil || !finite(*payload.TaskRelevant) {
+		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid task_relevant answer", ErrUnavailable))
+	}
+	if payload.NeedsHuman == nil || !finite(*payload.NeedsHuman) {
+		return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid needs_human answer", ErrUnavailable))
+	}
+	assessment := attn.Assessment{
+		NeedsHuman: payload.NeedsHuman, TaskRelevant: payload.TaskRelevant,
+		Summary: attn.BoundSummary(payload.Summary),
+	}
+	if payload.Urgency != nil {
+		if !finite(*payload.Urgency) {
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid urgency answer", ErrUnavailable))
+		}
+		assessment.Urgency = payload.Urgency
+	}
 	if len(options) == 1 {
 		assessment.NextOption = options[0]
 		assessment.Probabilities = map[string]float64{options[0]: 1}
 	} else {
-		choice := response.Answers["next_option"]
-		if choice.Type != "choice" || !finiteProbability(choice.Confidence) || choice.Confidence == nil {
+		if !finiteProbability(payload.Confidence) {
 			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: invalid next_option confidence", ErrUnavailable))
 		}
-		if !contains(options, choice.Choice) {
-			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: model selected unauthorized option %q", ErrUnavailable, choice.Choice))
+		if !contains(options, payload.NextOption) {
+			return Result{}, WithReason(ReasonBadResponse, fmt.Errorf("%w: model selected unauthorized option %q", ErrUnavailable, payload.NextOption))
 		}
-		probabilities, err := validateChoiceProbabilities(choice.Probabilities, options)
+		probabilities, err := validateChoiceProbabilities(payload.Probabilities, options)
 		if err != nil {
 			return Result{}, err
 		}
-		assessment.NextOption = choice.Choice
+		assessment.NextOption = payload.NextOption
 		assessment.Probabilities = probabilities
-		assessment.Confidence = choice.Confidence
+		assessment.Confidence = payload.Confidence
 	}
-	assessment.Model = strings.TrimSpace(response.Model)
+	assessment.Model = strings.TrimSpace(payload.Model)
 	if assessment.Model == "" {
 		assessment.Model = configuredModel
 	}
-	return Result{Assessment: assessment, TaskRelevant: relevant, Model: assessment.Model}, nil
+	return Result{Assessment: assessment, TaskRelevant: *payload.TaskRelevant, Model: assessment.Model}, nil
 }
 
 func validateNoul(answer apiAnswer, key string) (float64, error) {
@@ -530,12 +644,34 @@ func validateAssessment(artifact *attn.Artifact, assessment attn.Assessment) err
 
 var (
 	secretPattern = regexp.MustCompile(`(?i)(bearer\s+|api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+`)
-	pathPattern   = regexp.MustCompile(`(?:/Users/[^\s"']+|/home/[^\s"']+|/private/tmp/[^\s"']+|/tmp/[^\s"']+|/var/tmp/[^\s"']+|/var/folders/[^\s"']+)`)
-	refPattern    = regexp.MustCompile(`^[A-Za-z0-9._\[\]:-]+$`)
+	// userinfoPattern catches credentials embedded in a connection string, the
+	// shape a database driver puts in its own error line.
+	userinfoPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s:@]+(:[^/\s@]+)?@`)
+	pathPattern     = regexp.MustCompile(`(?:/Users/[^\s"']+|/home/[^\s"']+|/private/tmp/[^\s"']+|/private/var/[^\s"']+|/tmp/[^\s"']+|/var/tmp/[^\s"']+|/var/folders/[^\s"']+|/opt/[^\s"']+|/srv/[^\s"']+|/root/[^\s"']+|/mnt/[^\s"']+|/Volumes/[^\s"']+|[A-Za-z]:\\Users\\[^\s"']+|[A-Za-z]:\\Program Files\\[^\s"']+)`)
+	refPattern      = regexp.MustCompile(`^[A-Za-z0-9._\[\]:-]+$`)
 )
+
+// RedactLine is the one redaction a caller outside this package may apply: it
+// collapses text to one line, removes secret-shaped and path-shaped runs, and
+// bounds the result. A first-error line goes through exactly this before it is
+// stored on a note or sent to a provider, so a log line cannot become a way to
+// exfiltrate a token or a home directory.
+func RedactLine(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	text = secretPattern.ReplaceAllString(text, "$1<redacted>")
+	text = userinfoPattern.ReplaceAllString(text, "$1<redacted>@")
+	text = pathPattern.ReplaceAllString(text, "<path>")
+	const limit = 240
+	runes := []rune(text)
+	if len(runes) > limit {
+		text = strings.TrimSpace(string(runes[:limit]))
+	}
+	return text
+}
 
 func redactText(value string, limit int) string {
 	value = secretPattern.ReplaceAllString(value, "$1<redacted>")
+	value = userinfoPattern.ReplaceAllString(value, "$1<redacted>@")
 	value = pathPattern.ReplaceAllString(value, "<path>")
 	if len([]byte(value)) > limit {
 		value = string([]byte(value)[:limit])

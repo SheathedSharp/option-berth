@@ -29,6 +29,89 @@ const (
 	maxLocalTimeout   = 2 * time.Minute
 )
 
+// Protocol names the wire shape a configured endpoint speaks. It is a property
+// of the endpoint, not of a vendor: a gateway that speaks the decisions schema
+// and a local runtime that speaks OpenAI chat are configured the same way and
+// differ only here. The empty value means ProtocolDecisions, which is what
+// every configuration written before this field existed speaks.
+type Protocol string
+
+const (
+	ProtocolDecisions  Protocol = "decisions"
+	ProtocolOpenAIChat Protocol = "openai_chat"
+	ProtocolAnthropic  Protocol = "anthropic"
+)
+
+// Mode is how much autonomy the assessment may express. It never widens what a
+// command is allowed to do: strict only reads, assist reports and recommends,
+// reconcile may mark a note eligible for a local restart a person already
+// authorized. The empty value means ModeAssist once the assessment is enabled.
+type Mode string
+
+const (
+	// ModeStrict reports the deterministic note and makes no recommendation.
+	ModeStrict Mode = "strict"
+	// ModeAssist recommends the next fixed option; it never acts.
+	ModeAssist Mode = "assist"
+	// ModeReconcile additionally marks notes whose evidence matches the
+	// bounded local-restart rule as eligible for reconciliation.
+	ModeReconcile Mode = "reconcile"
+)
+
+// NormalizeProtocol returns the effective protocol: the stored value, lower
+// case and trimmed, or ProtocolDecisions when nothing is stored.
+func NormalizeProtocol(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return string(ProtocolDecisions)
+	}
+	return value
+}
+
+// KnownProtocol reports whether a stored protocol value is one this build can
+// speak. Empty is known: it means the default.
+func KnownProtocol(value string) bool {
+	switch Protocol(NormalizeProtocol(value)) {
+	case ProtocolDecisions, ProtocolOpenAIChat, ProtocolAnthropic:
+		return true
+	}
+	return false
+}
+
+// NormalizeMode returns the effective mode: the stored value, lower case and
+// trimmed, or ModeAssist when nothing is stored.
+func NormalizeMode(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return string(ModeAssist)
+	}
+	return value
+}
+
+// KnownMode reports whether a stored mode value is one this build understands.
+func KnownMode(value string) bool {
+	switch Mode(NormalizeMode(value)) {
+	case ModeStrict, ModeAssist, ModeReconcile:
+		return true
+	}
+	return false
+}
+
+// loopbackKey is the placeholder secret sent to a loopback endpoint that was
+// configured without one. Local runtimes such as Ollama ignore authorization;
+// the value exists so an OpenAI-compatible server still receives a well-formed
+// header, and so the empty string keeps meaning "no key, refuse" everywhere
+// else.
+const loopbackKey = "ollama"
+
+// LoopbackKeyPlaceholder is the exported spelling of that placeholder. A caller
+// that stores it must never present it as a real secret.
+const LoopbackKeyPlaceholder = loopbackKey
+
+// LoopbackEndpoint reports whether an endpoint is a plain-HTTP address on this
+// machine — the one shape that may be configured without a key.
+func LoopbackEndpoint(endpoint string) bool { return loopbackEndpoint(endpoint) }
+
 // LocalConfig is the on-disk shape written by `oberth attn config`.
 // APIKey is never included in telemetry, attention artifacts, or diagnostic
 // output. The file itself is required to be owner-only on Unix systems.
@@ -43,16 +126,41 @@ type LocalConfig struct {
 	Model     string `json:"model"`
 	APIKey    string `json:"api_key"`
 	TimeoutMS int    `json:"timeout_ms"`
+	// Protocol is the wire shape the endpoint speaks. Empty means
+	// ProtocolDecisions, which keeps every file written before this field
+	// existed exactly as valid as it was.
+	Protocol string `json:"protocol,omitempty"`
+	// Mode is the autonomy the assessment may express. Empty means ModeAssist.
+	Mode string `json:"mode,omitempty"`
+	// IncludeErrorLine says whether one redacted first-error line may be part
+	// of a triage payload. Nil means yes: the line is already redacted, and a
+	// triage without the error is a guess. A person who wants no log text at
+	// all sets it to false.
+	IncludeErrorLine *bool `json:"include_error_line,omitempty"`
 }
+
+// AllowsErrorLine is the nil-means-true form of IncludeErrorLine.
+func (c LocalConfig) AllowsErrorLine() bool {
+	return c.IncludeErrorLine == nil || *c.IncludeErrorLine
+}
+
+// EffectiveProtocol is the protocol a client built from this file speaks.
+func (c LocalConfig) EffectiveProtocol() string { return NormalizeProtocol(c.Protocol) }
+
+// EffectiveMode is the autonomy a client built from this file may express.
+func (c LocalConfig) EffectiveMode() string { return NormalizeMode(c.Mode) }
 
 // RedactedSettings is the stored shape without the secret, for `attn config`
 // with no flags and for diagnostics.
 func (c LocalConfig) RedactedSettings() map[string]any {
 	state := map[string]any{
-		"enabled":    c.Enabled,
-		"endpoint":   c.Endpoint,
-		"model":      c.Model,
-		"timeout_ms": c.Timeout().Milliseconds(),
+		"enabled":            c.Enabled,
+		"endpoint":           c.Endpoint,
+		"model":              c.Model,
+		"timeout_ms":         c.Timeout().Milliseconds(),
+		"protocol":           c.EffectiveProtocol(),
+		"mode":               c.EffectiveMode(),
+		"include_error_line": c.AllowsErrorLine(),
 	}
 	if c.Preset != "" {
 		state["preset"] = c.Preset
@@ -122,6 +230,17 @@ func (c *LocalConfig) Validate() error {
 		if _, _, ok := PresetDefaults(c.Preset); !ok {
 			return fmt.Errorf("attention settings preset is unknown; use one of %s, or leave it empty", PresetNames())
 		}
+	}
+	// Protocol and mode are stored trimmed and lower case so two files that
+	// mean the same thing hash and compare the same. Empty stays empty: the
+	// default is applied at resolution, where it can be named as a default.
+	c.Protocol = strings.ToLower(strings.TrimSpace(c.Protocol))
+	if c.Protocol != "" && !KnownProtocol(c.Protocol) {
+		return fmt.Errorf("attention settings protocol is unknown; use decisions, openai_chat or anthropic, or leave it empty")
+	}
+	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
+	if c.Mode != "" && !KnownMode(c.Mode) {
+		return errors.New("attention settings mode is unknown; use strict, assist or reconcile, or leave it empty")
 	}
 	c.Endpoint = strings.TrimSpace(c.Endpoint)
 	if c.Endpoint != "" {

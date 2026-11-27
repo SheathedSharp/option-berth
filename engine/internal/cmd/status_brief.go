@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/display"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/servicefacts"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -28,6 +29,10 @@ type briefStatusDocument struct {
 	Machine     []briefMachine         `json:"machine,omitempty"`
 	Exits       []briefExit            `json:"exits"`
 	Observation *rpc.ObservationStatus `json:"observation,omitempty"`
+	// Diagnosis is the same causal projection the full document carries. It is
+	// absent for a clean or idle worktree, so a brief reader that only wants
+	// runtime facts pays nothing when there is nothing to explain.
+	Diagnosis *runtimecore.CausalDiagnosis `json:"diagnosis,omitempty"`
 }
 
 type briefWorktree struct {
@@ -218,6 +223,7 @@ func briefStatusFrom(doc statusDocument) briefStatusDocument {
 		Ports:       make([]int, 0, len(doc.Ports)),
 		Exits:       make([]briefExit, 0, len(doc.Exits)),
 		Observation: doc.Observation,
+		Diagnosis:   doc.Diagnosis,
 	}
 
 	for _, port := range doc.Ports {
