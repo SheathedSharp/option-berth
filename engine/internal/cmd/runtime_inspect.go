@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -13,12 +12,6 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/spf13/cobra"
 )
-
-// runtimeInspectLogBytes bounds the log read behind first_error. The first
-// error is the line a service failed on, so the beginning of its run's range is
-// the right place to look; a run that prints more than this before an error
-// gets no first_error rather than a slow read.
-const runtimeInspectLogBytes = 256 << 10
 
 var runtimeInspectJSONFlag bool
 
@@ -102,8 +95,8 @@ func runtimeInspectLoops(ctx context.Context, group, root string) []runtimecore.
 
 // runtimeInspectFirstErrors reads the first error line of the newest failed run
 // for each service. The read is bounded by the run's own log offset and one
-// fixed byte budget; a missing or rotated log yields no first_error, never a
-// guessed one.
+// fixed byte budget, falling back to the run's bounded exit tail lines when the
+// log file is missing, rotated or printed past the budget before failing.
 func runtimeInspectFirstErrors(doc statusDocument) map[string]string {
 	out := map[string]string{}
 	seen := map[string]bool{}
@@ -118,45 +111,22 @@ func runtimeInspectFirstErrors(doc statusDocument) map[string]string {
 		}
 	}
 	for _, run := range doc.Exits {
-		if run.Name == "" || seen[run.Name] || !isFailureReason(run.Reason) || run.LogPath == "" {
+		if run.Name == "" || seen[run.Name] || !isFailureReason(run.Reason) {
 			continue
 		}
 		if want, known := current[run.Name]; known && want != "" && run.ID != want {
 			continue
 		}
 		seen[run.Name] = true
-		if text := firstErrorInRunFile(run.LogPath, run.LogOffset); text != "" {
+		offset := int64(0)
+		if run.LogOffset != nil {
+			offset = *run.LogOffset
+		}
+		if text := runtimecore.FirstErrorFromExit(run.LogPath, offset, run.LastLines); text != "" {
 			out[run.Name] = text
 		}
 	}
 	return out
-}
-
-func firstErrorInRunFile(path string, offset *int64) string {
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return ""
-	}
-	start := int64(0)
-	if offset != nil {
-		start = *offset
-	}
-	if start < 0 || start > info.Size() {
-		start = 0
-	}
-	end := info.Size()
-	if start+runtimeInspectLogBytes < end {
-		end = start + runtimeInspectLogBytes
-	}
-	lines, _, _, err := readRunLines(path, logRange{start: start, end: end})
-	if err != nil {
-		return ""
-	}
-	match := findFirstError(visibleLogLines(lines))
-	if match == nil {
-		return ""
-	}
-	return match.Text
 }
 
 func inspectExitEvidence(doc statusDocument) []runtimecore.ExitEvidence {

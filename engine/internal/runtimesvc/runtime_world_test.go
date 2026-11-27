@@ -12,6 +12,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 func worldTestGroup(t *testing.T) (state.Group, string) {
@@ -167,6 +168,88 @@ func TestRuntimeWorldReadHandlerReadsBothSelectors(t *testing.T) {
 	var protocolError *rpc.Error
 	if !errors.As(err, &protocolError) || protocolError.Code != rpc.CodeNotFound {
 		t.Fatalf("missing world error = %v, want not_found", err)
+	}
+}
+
+func TestServerWorldPopulatesFirstErrorFromStoreRunExits(t *testing.T) {
+	group, root := worldTestGroup(t)
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	logPath := filepath.Join(t.TempDir(), "auth.log")
+	prev := "ERROR: previous generation\n"
+	curr := "starting auth\nERROR: invalid JWT_SECRET\n"
+	if err := os.WriteFile(logPath, []byte(prev+curr), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	if err := db.AppendRunExit(store.RunExitRow{
+		ID:        "auth-run-2",
+		PID:       4242,
+		Group:     "shop",
+		Name:      "auth",
+		Cwd:       root,
+		LogPath:   logPath,
+		LogOffset: int64(len(prev)),
+		Code:      1,
+		Reason:    "crashed",
+		StartedAt: now.Add(-time.Second),
+		ExitedAt:  now,
+		LastLines: []string{"ERROR: invalid JWT_SECRET"},
+	}); err != nil {
+		t.Fatalf("AppendRunExit: %v", err)
+	}
+
+	group.Services = []state.Service{
+		{
+			Name:    "auth",
+			LogPath: &logPath,
+			LastExit: &state.ServiceExit{
+				Code: 1, Reason: "crashed", RunID: "auth-run-2", At: now.Format(time.RFC3339),
+			},
+		},
+		{
+			Name:      "api",
+			DependsOn: []string{"auth"},
+			LastExit: &state.ServiceExit{
+				Code: 1, Reason: "dependency_not_ready", RunID: "api-run-2", At: now.Format(time.RFC3339),
+			},
+		},
+	}
+
+	server := New(Options{Socket: "/test/world-first-error.sock", Version: "test"})
+	server.host.Store = db
+	var observed []runtimecore.World
+	server.RegisterWorldObserver(func(w runtimecore.World) { observed = append(observed, w) })
+
+	server.publish(state.Snapshot{}, state.Snapshot{
+		Seq: 1, At: now.Format(time.RFC3339), Groups: []state.Group{group},
+		Observation: &state.Observation{State: state.ObservationObservable},
+	}, nil)
+
+	if len(observed) != 1 || len(observed[0].Diagnosis.RootCauses) != 1 {
+		t.Fatalf("observed = %+v, want one root cause", observed)
+	}
+	rootCause := observed[0].Diagnosis.RootCauses[0]
+	if rootCause.Service != "auth" || rootCause.FirstError != "ERROR: invalid JWT_SECRET" {
+		t.Fatalf("root cause = %+v, want auth first error from run offset", rootCause)
+	}
+
+	// Once the service recovers, the cached failed run id is released.
+	runID := "auth-run-3"
+	group.Services = []state.Service{{Name: "auth", Running: true, RunID: &runID}}
+	server.publish(state.Snapshot{}, state.Snapshot{
+		Seq: 2, At: now.Add(time.Minute).Format(time.RFC3339), Groups: []state.Group{group},
+		Observation: &state.Observation{State: state.ObservationObservable},
+	}, nil)
+	server.worldMu.RLock()
+	cached := len(server.exitErrors)
+	server.worldMu.RUnlock()
+	if cached != 0 {
+		t.Fatalf("exitErrors cache kept %d stale entries after recovery", cached)
 	}
 }
 

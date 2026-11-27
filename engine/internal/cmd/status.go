@@ -402,6 +402,7 @@ func statusDiagnosis(doc statusDocument) *runtimecore.CausalDiagnosis {
 		Ports:       doc.Ports,
 		Observation: doc.Observation,
 		Exits:       statusExitEvidence(doc),
+		FirstErrors: runtimeInspectFirstErrors(doc),
 	})
 	diagnosis := world.Diagnosis
 	if diagnosis.Healthy && len(diagnosis.RootCauses) == 0 &&
