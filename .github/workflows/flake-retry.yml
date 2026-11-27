@@ -21,8 +21,6 @@ on:
       - CI
       - Nightly full verification
       - Windows build verification
-      - Reused service readiness
-      - Git read verification
     types: [completed]
 
 permissions:

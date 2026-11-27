@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Classify a failed CI run so a re-run is spent only on a failure no change can fix.
 
-The `retry` job in .github/workflows/ci.yml runs this after an area job fails.
+scripts/retry-ci.sh, started by .github/workflows/flake-retry.yml after a
+verification run ends, runs this on the attempt that has to be explained.
 It answers with one of three kinds, and only two of them may be re-run:
 
   infrastructure    The check never looked at the change: the job never ran a
