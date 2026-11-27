@@ -95,7 +95,8 @@ func TestAttnStatusReportsUnconsumedHooksAndUnobservedArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	now := time.Date(2026, 11, 20, 6, 39, 18, 618736000, time.UTC)
+	now := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	artifactAt := now.Add(time.Hour)
 	if _, err := model.AppendTelemetry(home, model.TelemetryRecord{
 		Kind: "assessment", Project: "example", SessionID: "session-one",
 		Status: "human_required", EventID: "event-one", StateRevision: "rev-one",
@@ -135,11 +136,11 @@ func TestAttnStatusReportsUnconsumedHooksAndUnobservedArtifact(t *testing.T) {
 		"event_id":"event-one",
 		"state_revision":"rev-one",
 		"worktree_root":"` + project + `",
-		"generated_at":"2026-11-20T09:52:57.238605Z",
-		"fresh_until":"2026-11-20T10:02:57.238605Z",
-		"first_seen":"2026-11-20T09:52:43Z",
-		"last_seen":"2026-11-20T09:52:57Z",
-		"event":{"kind":"ready_timeout","service":"secret-service","at":"2026-11-20T09:37:57Z"},
+		"generated_at":"` + artifactAt.Format(time.RFC3339Nano) + `",
+		"fresh_until":"` + artifactAt.Add(10*time.Minute).Format(time.RFC3339Nano) + `",
+		"first_seen":"` + artifactAt.Add(-14*time.Second).Format(time.RFC3339) + `",
+		"last_seen":"` + artifactAt.Format(time.RFC3339) + `",
+		"event":{"kind":"ready_timeout","service":"secret-service","at":"` + artifactAt.Add(-15*time.Minute).Format(time.RFC3339) + `"},
 		"evidence":[{"ref":"secret-ref","log_path":"/secret/log"}],
 		"options":[{"id":"inspect_logs"}]
 	}`
@@ -153,7 +154,7 @@ func TestAttnStatusReportsUnconsumedHooksAndUnobservedArtifact(t *testing.T) {
 		"no committed .claude/settings.json enabling oberth claude-hook",
 		"1 hook session(s); 0 consumed, 1 not consumed",
 		"last reason lease_expired",
-		"published ready_timeout at 2026-11-20T09:52:57Z",
+		"published ready_timeout at " + artifactAt.Format(time.RFC3339),
 		"no observation followed (not an automatic assessment)",
 		"print-config",
 	} {
@@ -255,7 +256,7 @@ func TestAttnStatusQualityFlagPrintsLedgerInText(t *testing.T) {
 	if _, err := model.AppendTelemetry(home, model.TelemetryRecord{
 		Kind: "assessment", Project: "example", SessionID: "session-one",
 		Status: "human_required", EventID: "event-one", StateRevision: "rev-one",
-		ModelCalls: 1, RecordedAt: "2026-11-20T06:39:18.618736Z",
+		ModelCalls: 1, RecordedAt: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano),
 	}); err != nil {
 		t.Fatal(err)
 	}
