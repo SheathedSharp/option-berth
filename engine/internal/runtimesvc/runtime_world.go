@@ -9,6 +9,7 @@ import (
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
+	"github.com/sheathedsharp/option-berth/engine/internal/store"
 )
 
 func init() {
@@ -82,6 +83,7 @@ func handleRuntimeWorldRead(_ context.Context, req *Request) (any, error) {
 // fan-out takes subsMu, so no observer can deadlock on a subscriber list.
 func (s *Server) publishWorlds(next state.Snapshot) {
 	at := snapshotTime(next.At)
+	nextExitErrors := s.resolveFailedExitErrors(next.Groups)
 	var worlds []runtimecore.World
 	facts := make(map[string]runWorldFact)
 	for _, group := range next.Groups {
@@ -90,12 +92,15 @@ func (s *Server) publishWorlds(next state.Snapshot) {
 		}
 		key := worktreeKey(group)
 		s.recordGroupLoops(group, key, at, facts)
+		exits, firstErrors := groupExitEvidence(group, nextExitErrors)
 		world := runtimecore.ReduceWorld(runtimecore.WorldInput{
 			Seq:         next.Seq,
 			ObservedAt:  next.At,
 			Group:       group,
 			Ports:       next.Ports,
 			Observation: next.Observation,
+			Exits:       exits,
+			FirstErrors: firstErrors,
 			Loops:       s.loops.Signals(key, at),
 		})
 		worlds = append(worlds, world)
@@ -112,6 +117,7 @@ func (s *Server) publishWorlds(next state.Snapshot) {
 	}
 	s.worlds = fresh
 	s.runFacts = facts
+	s.exitErrors = nextExitErrors
 	observers := append([]func(runtimecore.World){}, s.worldObservers...)
 	s.worldMu.Unlock()
 
@@ -120,6 +126,115 @@ func (s *Server) publishWorlds(next state.Snapshot) {
 			s.notifyWorldObserver(observer, world)
 		}
 	}
+}
+
+// resolveFailedExitErrors returns a bounded map of first-error lines keyed by
+// failed LastExit run id. Healthy snapshots and unchanged failed runs perform
+// no SQLite query and no log file read; resolved runs are dropped on the next
+// publishWorlds swap.
+func (s *Server) resolveFailedExitErrors(groups []state.Group) map[string]string {
+	needed := map[string]string{} // runID -> fallback log path
+	for _, group := range groups {
+		if group.RootDir == nil || *group.RootDir == "" {
+			continue
+		}
+		for _, svc := range group.Services {
+			if svc.Running || svc.LastExit == nil || svc.LastExit.RunID == "" {
+				continue
+			}
+			if !runtimecore.IsFailureExitReason(svc.LastExit.Reason) {
+				continue
+			}
+			logPath := ""
+			if svc.LogPath != nil {
+				logPath = *svc.LogPath
+			}
+			needed[svc.LastExit.RunID] = logPath
+		}
+	}
+	if len(needed) == 0 {
+		return map[string]string{}
+	}
+
+	resolved := make(map[string]string, len(needed))
+	missing := false
+	s.worldMu.RLock()
+	for runID := range needed {
+		if text, ok := s.exitErrors[runID]; ok {
+			resolved[runID] = text
+		} else {
+			missing = true
+		}
+	}
+	s.worldMu.RUnlock()
+	if !missing {
+		return resolved
+	}
+
+	var rowsByID map[string]store.RunExitRow
+	if s.host != nil && s.host.Store != nil {
+		if rows, err := s.host.Store.RunExits(store.RunExitLimit); err == nil && len(rows) > 0 {
+			rowsByID = make(map[string]store.RunExitRow, len(rows))
+			for _, row := range rows {
+				if row.ID != "" {
+					rowsByID[row.ID] = row
+				}
+			}
+		}
+	}
+	for runID, fallbackLog := range needed {
+		if _, cached := resolved[runID]; cached {
+			continue
+		}
+		if row, ok := rowsByID[runID]; ok {
+			logPath := row.LogPath
+			if logPath == "" {
+				logPath = fallbackLog
+			}
+			resolved[runID] = runtimecore.FirstErrorFromExit(logPath, row.LogOffset, row.LastLines)
+			continue
+		}
+		if fallbackLog != "" {
+			resolved[runID] = runtimecore.FirstErrorInLogFile(fallbackLog, 0, runtimecore.DefaultFirstErrorLogBytes)
+		} else if s.host == nil || s.host.Store == nil {
+			resolved[runID] = ""
+		}
+	}
+	return resolved
+}
+
+func groupExitEvidence(group state.Group, exitErrors map[string]string) ([]runtimecore.ExitEvidence, map[string]string) {
+	var exits []runtimecore.ExitEvidence
+	var firstErrors map[string]string
+	for _, svc := range group.Services {
+		if svc.Running || svc.LastExit == nil {
+			continue
+		}
+		logPath := ""
+		if svc.LogPath != nil {
+			logPath = *svc.LogPath
+		}
+		firstErr := ""
+		if svc.LastExit.RunID != "" {
+			firstErr = exitErrors[svc.LastExit.RunID]
+		}
+		exits = append(exits, runtimecore.ExitEvidence{
+			Service:    svc.Name,
+			RunID:      svc.LastExit.RunID,
+			Reason:     svc.LastExit.Reason,
+			Code:       svc.LastExit.Code,
+			At:         svc.LastExit.At,
+			LogPath:    logPath,
+			FirstError: firstErr,
+		})
+		if firstErr != "" {
+			if firstErrors == nil {
+				firstErrors = map[string]string{}
+			}
+			firstErrors[svc.Name] = firstErr
+		}
+	}
+	return exits, firstErrors
 }
 
 // recordGroupLoops feeds the bounded window from the facts already on the

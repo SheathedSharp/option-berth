@@ -119,7 +119,11 @@ type Server struct {
 	// runFacts maps a live run id to the worktree and service it belongs to,
 	// so an OnRunExit notification can feed the loop detector even when the
 	// next snapshot has not been read yet.
-	runFacts        map[string]runWorldFact
+	runFacts map[string]runWorldFact
+	// exitErrors caches the bounded first_error line per active failed run id.
+	// Owned by Server under worldMu; replaced on every publishWorlds call with
+	// only currently referenced failed LastExit run ids so it stays bounded.
+	exitErrors      map[string]string
 	stopRunExit     func()
 	stopRunExitOnce sync.Once
 
@@ -158,6 +162,7 @@ func New(opts Options) *Server {
 		worlds:          map[string]runtimecore.World{},
 		loops:           runtimecore.NewLoopTracker(),
 		runFacts:        map[string]runWorldFact{},
+		exitErrors:      map[string]string{},
 		stopping:        make(chan struct{}),
 		done:            make(chan struct{}),
 	}
