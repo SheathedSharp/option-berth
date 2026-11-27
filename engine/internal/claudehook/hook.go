@@ -48,6 +48,21 @@ type Context struct {
 	Text  string `json:"additionalContext"`
 }
 type Feedback struct{ EventID, Revision, Until, Body string }
+
+// MidTurnBrief is one bounded finding a native hook may inject between tool
+// calls. It is facts plus at most one assessment sentence; it is never an
+// instruction and never a permission.
+type MidTurnBrief struct{ Revision, Text string }
+
+// midTurnMaxRunes bounds the injected text. A mid-turn note is read by a model
+// in the middle of a task: a sentence it can act on, not a report.
+const midTurnMaxRunes = 500
+
+// midTurnBudget bounds the fast path. It is a local file read behind one atomic
+// rename; a budget this small is a guard against a stuck disk, not an expected
+// duration.
+const midTurnBudget = 2 * time.Second
+
 type Lease struct {
 	WorktreeID string            `json:"worktree_id"`
 	Consent    string            `json:"consent_identity"`
@@ -78,6 +93,10 @@ type Adapter struct {
 	// Delivered is invoked after a finding has been included in a hook
 	// response. It must not write human feedback labels.
 	Delivered func(Feedback)
+	// MidTurn answers whether this worktree has a finding an agent turn has
+	// not seen yet. It runs on PostToolUse only, and the callback owns
+	// deduplication: it returns false for a revision it already delivered.
+	MidTurn func(context.Context) (MidTurnBrief, bool)
 }
 
 func Decode(r io.Reader) (Input, error) {
@@ -90,7 +109,7 @@ func Decode(r io.Reader) (Input, error) {
 		return in, errors.New("invalid native hook envelope")
 	}
 	switch in.Event {
-	case "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd":
+	case "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd", "PostToolUse":
 	default:
 		return in, errors.New("unsupported native hook event")
 	}
@@ -252,6 +271,26 @@ func (a Adapter) policy() error {
 	return a.Consent()
 }
 
+// midTurn is the PostToolUse path: one local lookup, no lease, no lock, no
+// decision. Nothing new means an empty response, which every host reads as "no
+// opinion" rather than as a blocked turn.
+func (a Adapter) midTurn(ctx context.Context) Response {
+	if a.EditOnly || a.MidTurn == nil {
+		return Response{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, midTurnBudget)
+	defer cancel()
+	brief, ok := a.MidTurn(ctx)
+	text := strings.TrimSpace(brief.Text)
+	if !ok || text == "" {
+		return Response{}
+	}
+	if runes := []rune(text); len(runes) > midTurnMaxRunes {
+		text = string(runes[:midTurnMaxRunes])
+	}
+	return Response{Specific: &Context{Event: "PostToolUse", Text: text}}
+}
+
 // stop changes only the delivery cursor. The worker detects revocation, cancels
 // its runner and joins its sockets before releasing the active kernel lock.
 func (a Adapter) stop(ctx context.Context, key string) error {
@@ -278,6 +317,13 @@ func (a Adapter) Handle(ctx context.Context, in Input) (Response, error) {
 			return Response{}, errors.New("hook_worktree_mismatch")
 		}
 		return message("not_attached", "worktree_mismatch"), nil
+	}
+	// PostToolUse is a read-only peek between tool calls. It must not touch the
+	// observer lease: the lease belongs to the prompt that started it, and a
+	// tool call neither renews nor ends that. It never blocks the turn either —
+	// a finding is additional context, not a permission decision.
+	if in.Event == "PostToolUse" {
+		return a.midTurn(ctx), nil
 	}
 	key := Key(a.Root, in.Session)
 	lock, e := a.lock(ctx, key, "hook")

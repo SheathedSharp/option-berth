@@ -222,7 +222,18 @@ type Assessment struct {
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	Confidence    *float64           `json:"confidence,omitempty"`
 	Model         string             `json:"model,omitempty"`
+	// Urgency is how soon the next step stops being optional, from 0 (whenever)
+	// to 1 (now). It orders notes for a reader; it never grants an action.
+	Urgency *float64 `json:"urgency,omitempty"`
+	// Summary is one bounded, single-line sentence of triage for a person or an
+	// agent reading the note list. It is never a command.
+	Summary string `json:"summary,omitempty"`
 }
+
+// MaxSummaryRunes bounds an assessment summary. A triage sentence a reader can
+// act on fits; a paragraph of model prose does not, and is truncated rather
+// than rejected because the rest of the assessment is still valid.
+const MaxSummaryRunes = 160
 
 type Artifact struct {
 	Schema        string `json:"schema"`
@@ -838,6 +849,9 @@ func AttachAssessment(artifact *Artifact, assessment Assessment) error {
 	if assessment.Confidence != nil && !probability(*assessment.Confidence) {
 		return errors.New("attention: confidence must be between 0 and 1")
 	}
+	if assessment.Urgency != nil && !probability(*assessment.Urgency) {
+		return errors.New("attention: urgency must be between 0 and 1")
+	}
 	allowed := make(map[string]bool, len(artifact.Options))
 	for _, option := range artifact.Options {
 		allowed[option.ID] = true
@@ -861,6 +875,9 @@ func AttachAssessment(artifact *Artifact, assessment Assessment) error {
 		}
 	}
 	copy := assessment
+	// A summary is a sentence, not a channel: collapse it to one line and
+	// bound it here so no downstream reader has to defend against model prose.
+	copy.Summary = BoundSummary(assessment.Summary)
 	if assessment.Probabilities != nil {
 		copy.Probabilities = make(map[string]float64, len(assessment.Probabilities))
 		for key, value := range assessment.Probabilities {
@@ -873,6 +890,16 @@ func AttachAssessment(artifact *Artifact, assessment Assessment) error {
 
 func probability(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
+}
+
+// BoundSummary collapses text to one line and bounds it to MaxSummaryRunes.
+func BoundSummary(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) > MaxSummaryRunes {
+		text = strings.TrimSpace(string(runes[:MaxSummaryRunes]))
+	}
+	return text
 }
 
 // Clear removes the current artifact for a worktree. A missing artifact is

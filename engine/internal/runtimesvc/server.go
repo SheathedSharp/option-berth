@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/paths"
+	"github.com/sheathedsharp/option-berth/engine/internal/runtimecore"
 	"github.com/sheathedsharp/option-berth/engine/internal/runtimesvc/rpc"
 	"github.com/sheathedsharp/option-berth/engine/internal/scanner"
 	"github.com/sheathedsharp/option-berth/engine/internal/state"
@@ -36,8 +37,10 @@ const stateReplayCapacity = 256
 // from runtime.service.hello to tell whether, say, share.* exists before calling it.
 // Later steps append their own family as they land.
 func Capabilities() []string {
-	return append([]string{"state", rpc.CapabilityStateScope, "ports.read", "ports.kill", "store", "streams"},
-		registeredCapabilities()...)
+	return append([]string{
+		"state", rpc.CapabilityStateScope, "ports.read", "ports.kill", "store", "streams",
+		rpc.CapabilityRuntimeWorld,
+	}, registeredCapabilities()...)
 }
 
 // Options configures a Server. Every field may be left zero; New fills in the
@@ -105,6 +108,21 @@ type Server struct {
 	// relation is persisted in oberth.yaml or the database.
 	workspaceScopes map[string]map[uint64]state.Scope
 
+	// The live Runtime World per worktree. worlds is keyed by canonical group
+	// name and by worktree root; loops is the bounded window that supplies
+	// crash_loop and restart_thrash evidence. Observers are called outside
+	// worldMu and outside subsMu, so a slow one cannot stall the fan-out.
+	worldMu        sync.RWMutex
+	worlds         map[string]runtimecore.World
+	loops          *runtimecore.LoopTracker
+	worldObservers []func(runtimecore.World)
+	// runFacts maps a live run id to the worktree and service it belongs to,
+	// so an OnRunExit notification can feed the loop detector even when the
+	// next snapshot has not been read yet.
+	runFacts        map[string]runWorldFact
+	stopRunExit     func()
+	stopRunExitOnce sync.Once
+
 	replayMu sync.Mutex
 	replay   []stateReplay
 	// Oldest physical slot; logical replay order is reconstructed only on read.
@@ -137,10 +155,17 @@ func New(opts Options) *Server {
 		socket:          opts.Socket,
 		conns:           map[uint64]*Conn{},
 		workspaceScopes: map[string]map[uint64]state.Scope{},
+		worlds:          map[string]runtimecore.World{},
+		loops:           runtimecore.NewLoopTracker(),
+		runFacts:        map[string]runWorldFact{},
 		stopping:        make(chan struct{}),
 		done:            make(chan struct{}),
 	}
 	server.touch()
+	// The world's loop memory listens to run exits from the moment the server
+	// exists, not only once Serve is called: a test that publishes a snapshot
+	// and then notifies an exit needs the same path production takes.
+	server.stopRunExit = RegisterRunExit(server.recordRunExit)
 
 	server.loop = server.scannerFor(opts)
 	server.loop.SetDemand(server.demand)
@@ -256,6 +281,10 @@ func (s *Server) releaseSingleInstance() {
 // gets ErrAlreadyRunning.
 func (s *Server) Serve(ctx context.Context) error {
 	defer close(s.done)
+	// Exit notifications supplement the snapshot-driven loop feed: a run that
+	// dies between two scans is still one crash in the window. The hook was
+	// installed by New; Serve guarantees it is detached however this returns.
+	defer s.detachRunExit()
 	if err := paths.RejectRetiredRuntimeServiceEnvironment(os.Getenv); err != nil {
 		return err
 	}
@@ -473,6 +502,16 @@ func (s *Server) Shutdown() {
 		close(s.stopping)
 		if s.ln != nil {
 			_ = s.ln.Close()
+		}
+		s.detachRunExit()
+	})
+}
+
+// detachRunExit removes this server's exit hook exactly once.
+func (s *Server) detachRunExit() {
+	s.stopRunExitOnce.Do(func() {
+		if s.stopRunExit != nil {
+			s.stopRunExit()
 		}
 	})
 }
@@ -1095,6 +1134,12 @@ func (s *Server) viewForLocked(c *Conn) viewSpec {
 // receive only their redacted state.changed summaries; unscoped connections
 // keep the historical delta/event view. Each wire view is encoded once.
 func (s *Server) publish(prev, next state.Snapshot, events []state.Event) {
+	// The Runtime World is refreshed on every transition, including the ticks
+	// nobody is watching: it is the service's own projection, not a
+	// subscriber's view, and a world that only moved while a client watched
+	// would make the next reader's diagnosis stale.
+	s.publishWorlds(next)
+
 	s.subsMu.RLock()
 	defer s.subsMu.RUnlock()
 	s.recordReplay(prev, next, events)

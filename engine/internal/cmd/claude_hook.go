@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/sheathedsharp/option-berth/engine/internal/attn"
+	attnengine "github.com/sheathedsharp/option-berth/engine/internal/attn/engine"
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/model"
 	"github.com/sheathedsharp/option-berth/engine/internal/attn/runner"
 	"github.com/sheathedsharp/option-berth/engine/internal/claudehook"
@@ -47,10 +49,33 @@ func addClaudeHooks(parent *cobra.Command) {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(claudehook.Response{Message: "Oberth Runtime: not_attached (worktree_mismatch)."})
 		}
 		in.Cwd = actual
-		a := claudeAdapter(root)
-		a.Task = model.TaskContext{Task: claudehook.Summary, Services: services, RunIDs: ids, AuthorizedOptions: authorized}
-		a.Duration = lease
-		a.EditOnly = os.Getenv("OBERTH_CLAUDE_TASK_MODE") == "edit"
+		// A project that declares its services has already said what a task in
+		// this worktree may look at; asking the person to repeat every name on
+		// the command line is how a hook ends up permanently `scope_required`.
+		// An explicit --service/--run always wins, and a worktree with no
+		// manifest keeps the old refusal.
+		editOnly := os.Getenv("OBERTH_CLAUDE_TASK_MODE") == "edit"
+		taskServices := services
+		if len(taskServices) == 0 && len(ids) == 0 && !editOnly {
+			taskServices = autoScopeServices(root)
+		}
+		// PostToolUse is a read-only mid-turn peek that runs on every tool call;
+		// avoid loading consent or deriving the PBKDF2 identity cursor it never uses.
+		var a claudehook.Adapter
+		if in.Event == "PostToolUse" {
+			a = claudehook.Adapter{
+				Home:     paths.Dir(),
+				Root:     root,
+				EditOnly: editOnly,
+				MidTurn:  claudeMidTurn(root, taskServices),
+			}
+		} else {
+			a = claudeAdapter(root)
+			a.Task = model.TaskContext{Task: claudehook.Summary, Services: taskServices, RunIDs: ids, AuthorizedOptions: authorized}
+			a.Duration = lease
+			a.EditOnly = editOnly
+			a.MidTurn = claudeMidTurn(root, taskServices)
+		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), claudehook.HookCommandTimeout)
 		defer cancel()
 		out, err := a.Handle(ctx, in)
@@ -105,7 +130,10 @@ func addClaudeHooks(parent *cobra.Command) {
 			Hooks []entry `json:"hooks"`
 		}
 		hooks := map[string][]group{}
-		for _, event := range []string{"UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"} {
+		// PostToolUse is the mid-turn half: it never blocks and never carries
+		// an onFailure, because a slow disk or a missing document must leave
+		// the agent's tool call exactly as it was.
+		for _, event := range []string{"UserPromptSubmit", "Stop", "StopFailure", "SessionEnd", "PostToolUse"} {
 			failure := ""
 			if event == "UserPromptSubmit" {
 				failure = "block"
@@ -127,6 +155,48 @@ func addClaudeHooks(parent *cobra.Command) {
 	worker.Flags().StringVar(&key, "key", "", "Opaque local delivery key")
 	worker.Flags().StringVar(&generation, "generation", "", "One task generation")
 	parent.AddCommand(worker)
+}
+
+// autoScopeServices names the services a worktree's own manifest declares. An
+// unreadable or invalid manifest names none: scope the person did not write is
+// not scope this build invents.
+func autoScopeServices(root string) []string {
+	for _, name := range []string{groups.ConfigName, groups.LegacyConfigName} {
+		path := filepath.Join(root, name)
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		cfg, err := groups.Load(path)
+		if err != nil || cfg == nil {
+			return nil
+		}
+		names := make([]string, 0, len(cfg.Services))
+		for _, service := range cfg.Services {
+			if strings.TrimSpace(service.Name) != "" {
+				names = append(names, service.Name)
+			}
+		}
+		return names
+	}
+	return nil
+}
+
+// claudeMidTurn is the PostToolUse fast path: read this worktree's native
+// attention notes and return at most one bounded finding the current agent turn
+// has not seen. It runs no subprocess, reads one owner-only file and contacts
+// no provider.
+func claudeMidTurn(root string, services []string) func(context.Context) (claudehook.MidTurnBrief, bool) {
+	store := attnengine.NoteStore{Home: paths.Dir()}
+	return func(ctx context.Context) (claudehook.MidTurnBrief, bool) {
+		if err := ctx.Err(); err != nil {
+			return claudehook.MidTurnBrief{}, false
+		}
+		brief, ok := store.TakeMidTurnBriefFor(root, services)
+		if !ok {
+			return claudehook.MidTurnBrief{}, false
+		}
+		return claudehook.MidTurnBrief{Revision: brief.Revision, Text: brief.Text}, true
+	}
 }
 
 func claudeAdapter(root string) claudehook.Adapter {

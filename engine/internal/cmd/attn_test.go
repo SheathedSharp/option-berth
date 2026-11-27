@@ -33,6 +33,8 @@ func TestAttnSurfaceIsTheRunnerAndSetupVerbs(t *testing.T) {
 	want := map[string]bool{
 		// the runner: what an agent calls while working
 		"assess": false, "feedback": false, "preflight": false,
+		// the native notes: what the Runtime World tracks for this worktree
+		"notes": false,
 		// setup and explanation: what a person calls once
 		"status": false, "config": false, "on": false, "off": false, "test": false,
 	}
