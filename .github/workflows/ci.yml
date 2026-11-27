@@ -227,7 +227,7 @@ jobs:
           go test -tags integration -v -count=1 -timeout=8m ./internal/scenario/... 2>&1 | tee ../verification/scenario.log
       - name: Retain verification logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: engine-verification-${{ matrix.os }}-${{ github.run_id }}
           path: verification/
@@ -257,7 +257,7 @@ jobs:
         run: npm test
       - name: Keep browser evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: website-browser-evidence-${{ github.run_id }}
           path: site/test-results/

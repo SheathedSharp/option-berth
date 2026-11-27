@@ -174,7 +174,7 @@ jobs:
           path: option-berth-skill
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: source/engine/go.mod
           cache-dependency-path: source/engine/go.sum
@@ -285,7 +285,7 @@ jobs:
               handle.write("\n".join(lines) + "\n")
           PY
       - name: Share the built binary with the shards
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: agent-eval-binary
           path: source/bin/oberth
@@ -642,7 +642,7 @@ jobs:
           PY
       - name: Keep this shard
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: agent-eval-shard-${{ matrix.name }}
           path: |
@@ -715,7 +715,7 @@ jobs:
           fi
       - name: Keep the merged report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: agent-eval-merged-${{ github.run_id }}
           path: agent-eval-merged/
