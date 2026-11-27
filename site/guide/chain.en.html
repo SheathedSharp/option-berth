@@ -1,15 +1,29 @@
 <p class="chapter-intro">Every command in this guide reads or writes the same chain: <strong>worktree → manifest → service → run → runtime facts</strong>. Each station has exactly one writer, and the next station reads only what the previous one published. There is no second source of state.</p>
 
+<h2 id="world">The Runtime World tuple</h2>
+<p>A checkout's Runtime World is a four-position record. Intent, execution, observation and causal diagnosis each answer a different question, and a missing fact is never filled in by the position beside it.</p>
+<table class="chapter-table">
+  <caption class="sr-only">The four positions and their writers</caption>
+  <thead><tr><th scope="col">Position</th><th scope="col">Writer</th><th scope="col">What it publishes</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Intent</th><td>A person confirming the manifest</td><td><code>oberth.yaml</code>: services, ports, <code>depends_on</code>, health and prepare.</td></tr>
+    <tr><th scope="row">Execution</th><td>The run registry</td><td>Start order, actual address, exit code and log path for one run.</td></tr>
+    <tr><th scope="row">Observation</th><td>This round's OS scan</td><td>Process, listener, health and exit as four separate facts.</td></tr>
+    <tr><th scope="row">Causal diagnosis</th><td>The diagnosis pass</td><td>Root causes, blocked services and a redacted <code>first_error</code>.</td></tr>
+  </tbody>
+</table>
+
 <h2 id="stations">Five stations</h2>
+<p>The four positions are carried by five stations. The extra station is the worktree itself, which settles attribution before any service starts.</p>
 <table class="chapter-table">
   <caption class="sr-only">What each station publishes and what the next one reads</caption>
   <thead><tr><th scope="col">Station</th><th scope="col">Who writes it</th><th scope="col">What it publishes</th></tr></thead>
   <tbody>
     <tr><th scope="row">Worktree</th><td>Git, observed by the engine</td><td>The checkout root path and the <code>wt_…</code> identity a run belongs to.</td></tr>
-    <tr><th scope="row">Manifest</th><td>A person</td><td><code>oberth.yaml</code>: services, ports, dependencies, health checks, references.</td></tr>
+    <tr><th scope="row">Manifest</th><td>A person</td><td>Services, ports, dependencies, health checks and references.</td></tr>
     <tr><th scope="row">Service</th><td>The engine, at start</td><td>Which declaration it started, in which order and on which address.</td></tr>
-    <tr><th scope="row">Run</th><td>The engine's run registry</td><td>The pid, start, end, exit code and log path of one process.</td></tr>
-    <tr><th scope="row">Runtime facts</th><td>This round's observations</td><td>Alive, listening, healthy, and the reason an earlier run ended.</td></tr>
+    <tr><th scope="row">Run</th><td>The run registry</td><td>The pid, start, end, exit code and log path of one process.</td></tr>
+    <tr><th scope="row">Runtime facts</th><td>This round's observation</td><td>Alive, listening, healthy, and the reason an earlier run ended.</td></tr>
   </tbody>
 </table>
 
@@ -17,9 +31,26 @@
 <p>A single “is it up?” flag would flatten the chain, and every reader would have to work out the rest for itself. So each step is published before the next one is allowed to decide anything: attribution before lifecycle, lifecycle before observation, observation before readiness.</p>
 <p>That is why <code>up --wait</code> can return a real answer, and why <code>status</code> can report a running service with an unknown port without contradicting itself.</p>
 
+<h2 id="diagnosis">Causal diagnosis</h2>
+<p>Diagnosis reads the whole chain. A crash propagates through <code>depends_on</code>, but the report keeps one root cause and lists the downstream services as blocked, so the reader does not chase three symptoms that share one cause.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">diagnosis.root_causes · a cascade</figcaption>
+  <pre><code>"diagnosis": {
+  "healthy": false,
+  "root_causes": [{
+    "service": "auth",
+    "kind": "service_crashed",
+    "severity": "critical",
+    "first_error": "connection refused: postgres:5432 (redacted)",
+    "impacted": ["api", "gateway"]
+  }]
+}</code></pre>
+</figure>
+<p>The same pass compares start time, exit code and log fingerprint across generations. A service that keeps restarting is reported as a loop with evidence, not as healthy because the current pid is alive.</p>
+
 <h2 id="attribution">A run belongs to the checkout that started it</h2>
 <p>Attribution combines three inputs: this round's path observation, the manifest's content index and the run identity. Two worktrees of the same repository therefore never share services, a port, a database name or a stop.</p>
-<p>Ports follow the same rule. <code>port: auto</code> is reserved per run and handed back on stop, so the second checkout asking for “the API port” gets its own answer instead of a collision.</p>
+<p>Ports follow the same rule. <code>port: auto</code> is reserved per run and handed back on stop, so the second checkout asking for “the API port” gets its own answer instead of a collision. When a port is occupied by another checkout, the diagnosis reports the holder; it does not suggest killing a foreign process.</p>
 
 <h2 id="unknown">An unread fact stays unknown</h2>
 <p>Failure, cancellation and an incomplete scan may not become “free”, “gone” or “healthy”. A port missing from the listener table means the fact was not observed. It never means the port is free. A successful signal means the signal was delivered, not that the process exited.</p>

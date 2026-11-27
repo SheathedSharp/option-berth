@@ -1,25 +1,59 @@
-<p class="chapter-intro"><code>oberth</code> keeps one answer per Git worktree: what should run, whether it really is running, and why not when it is not. A person reads a table; a coding agent reads the same command with <code>--json</code>. This guide shows how that answer is built, and where it can fail.</p>
+<p class="chapter-intro"><code>oberth</code> keeps one <strong>Runtime World</strong> per Git worktree. It records what the checkout should run, what was actually started, what the operating system reports, and why a failure happened. A person reads the Human output; an agent reads the same command with <code>--json</code>.</p>
 
-<h2 id="problem">Four checkouts, four guesses</h2>
-<p>Git worktrees solved parallel code, not parallel runtime. Four checkouts of one repository share a port range, a database name and a shell history, so every session works out the same three facts again, and works them out slightly differently.</p>
-<p>oberth writes those facts once, in a fixed order, and every reader reads the same copy: <strong>worktree → manifest → service → run → runtime facts</strong>. A later step does not guess at what an earlier step already recorded.</p>
-
-<h2 id="chain">One chain, five stations</h2>
+<h2 id="world">A Runtime World per checkout</h2>
+<p>The world has four positions. They are not four views of one flag: each one publishes a different kind of fact, and a later position is not allowed to invent what an earlier one already recorded.</p>
 <table class="chapter-table">
-  <caption class="sr-only">The five stations of the chain of facts</caption>
-  <thead><tr><th scope="col">Station</th><th scope="col">The question it settles</th><th scope="col">What it may not do</th></tr></thead>
+  <caption class="sr-only">The four positions of a Runtime World</caption>
+  <thead><tr><th scope="col">Position</th><th scope="col">It publishes</th><th scope="col">Its boundary</th></tr></thead>
   <tbody>
-    <tr><th scope="row">Worktree</th><td>Which checkout does a run belong to?</td><td>Belong to a checkout it did not start in.</td></tr>
-    <tr><th scope="row">Manifest</th><td>What should run, on which port, after what?</td><td>Be guessed from a running process, or adopted by a model.</td></tr>
-    <tr><th scope="row">Service</th><td>Which declaration starts, in which order, on which address?</td><td>Start a dependent service before its dependency is ready.</td></tr>
-    <tr><th scope="row">Run</th><td>pid, start, end, exit code, log path.</td><td>Count as listening because the process exists.</td></tr>
-    <tr><th scope="row">Runtime facts</th><td>Alive, listening, healthy, and why it ended.</td><td>Turn a table it could not read into “not running”.</td></tr>
+    <tr><th scope="row">Intent</th><td>Services, ports, <code>depends_on</code>, health checks and prepare steps.</td><td>A person confirms the manifest; a model may only draft it.</td></tr>
+    <tr><th scope="row">Execution</th><td>Start order, actual address, exit code and log path for one run.</td><td>The run registry is the only writer.</td></tr>
+    <tr><th scope="row">Observation</th><td>Process, listener, health and exit, read from the operating system.</td><td>An unread fact stays unknown.</td></tr>
+    <tr><th scope="row">Causal diagnosis</th><td>Root causes, blocked services and a redacted <code>first_error</code>.</td><td>A downstream failure does not become an equal cause.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="chain">Five stations in one direction</h2>
+<p>Every command reads or writes the same chain: <strong>worktree → manifest → service → run → runtime facts</strong>. One writer per station, one direction, no second source of state.</p>
+<table class="chapter-table">
+  <caption class="sr-only">What each station publishes and what the next one reads</caption>
+  <thead><tr><th scope="col">Station</th><th scope="col">Who writes it</th><th scope="col">What it publishes</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Worktree</th><td>Git, observed by the engine</td><td>The checkout root and the <code>wt_…</code> identity a run belongs to.</td></tr>
+    <tr><th scope="row">Manifest</th><td>A person</td><td><code>oberth.yaml</code>: services, ports, dependencies, health checks, references.</td></tr>
+    <tr><th scope="row">Service</th><td>The engine, at start</td><td>Which declaration it started, in which order and on which address.</td></tr>
+    <tr><th scope="row">Run</th><td>The run registry</td><td>The pid, start, end, exit code and log path of one process.</td></tr>
+    <tr><th scope="row">Runtime facts</th><td>This round's observation</td><td>Alive, listening, healthy, and the reason an earlier run ended.</td></tr>
   </tbody>
 </table>
 <p><a href="{{guide}}chain/">One chain of facts</a> walks the five stations in order, one section each.</p>
 
+<h2 id="diagnosis">Cascading failures collapse to one cause</h2>
+<p><code>oberth runtime inspect</code> reads the whole world. When a dependency crashes, its dependents are reported as <code>blocked_by_dep</code>, not as separate failures. The diagnosis names the process that ended first and keeps the redacted first error next to it.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth runtime inspect · a cascade</figcaption>
+  <pre><code>auth      crashed        exit 1      12:04:17
+api       blocked_by_dep             waiting on auth
+gateway   blocked_by_dep             waiting on api
+web       running        :21731      health 200
+
+diagnosis  1 root cause · 2 impacted (api, gateway)
+           first_error: connection refused: postgres:5432 (redacted)
+attention  urgency 0.92 · inspect_logs(auth)</code></pre>
+</figure>
+<p>A restart or crash loop is treated as evidence, not as a healthy service that happens to be young. Start time, exit code and log fingerprint are compared across generations.</p>
+
+<h2 id="attention">Native Attention</h2>
+<p>Attention is the deterministic observation layer inside the engine. It produces reviewable notes from runtime facts; enabling triage is a separate decision, and a note never grants permission to kill foreign processes or edit manifests.</p>
+<ul>
+  <li><strong>strict</strong> reports read-only facts and evidence without recommending mutations.</li>
+  <li><strong>assist</strong> gives the exact next command when the evidence supports it; the person or agent still decides whether to run it.</li>
+  <li><strong>reconcile</strong> opts into bounded recovery for declared services owned by this worktree, never touching foreign processes, <code>machine:</code> dependencies, or <code>oberth.yaml</code>.</li>
+</ul>
+<p>With an agent hook enabled, Attention delivers a note on <code>PostToolUse</code>, when the tool call returns, so the agent does not spend another turn debugging a stale binary or a crashed upstream. The adapter supports the Decisions API, OpenAI and Anthropic. <code>oberth attn</code> shows the current mode, consent state and quality ledger.</p>
+
 <h2 id="loop">The commands you use every day</h2>
-<p>Five commands cover a working day, and each one replaces a shell pipeline that had to be rebuilt for every checkout.</p>
+<p>Five commands cover a working day. Each one replaces a shell pipeline that has to be rebuilt for every checkout.</p>
 <table class="chapter-table">
   <caption class="sr-only">The core commands and what they replace</caption>
   <thead><tr><th scope="col">You want to</th><th scope="col">oberth</th><th scope="col">The shell answer it replaces</th></tr></thead>
@@ -45,7 +79,7 @@ worker   running   no port
 <ul>
   <li><strong>First time here.</strong> <a href="{{guide}}install/">Install oberth</a>, then follow <a href="{{guide}}quickstart/">Your first worktree</a>: one example project, five commands, from an empty checkout to a clean stop.</li>
   <li><strong>You already run a local stack.</strong> Read <a href="{{guide}}chain/">One chain of facts</a> and <a href="{{guide}}worktrees/">Several worktrees at once</a>, then use the command chapters as you need them.</li>
-  <li><strong>You are wiring an agent.</strong> Start with <a href="{{guide}}json/">Facts as JSON</a>, then read <a href="{{guide}}agents/">Coding agents</a> for the three moments to call oberth.</li>
+  <li><strong>You are wiring an agent.</strong> Start with <a href="{{guide}}json/">Facts as JSON</a>, then read <a href="{{guide}}agents/">Coding agents</a> for the lifecycle calls and the Attention hook.</li>
 </ul>
 
 <h2 id="readers">Two readers, one interface</h2>
@@ -58,7 +92,7 @@ oberth logs api --once --json --run current --first-error</code></pre>
 </figure>
 <p><a href="{{root}}llms.txt">llms.txt</a> lists this guide for machines, and <a href="{{root}}llms-full.txt">llms-full.txt</a> carries every chapter as plain text.</p>
 
-<h2 id="not">What this guide is not</h2>
+<h2 id="not">Scope</h2>
 <aside class="note">
-  <p><strong>Not the contract.</strong> The exact CLI surface, JSON fields and manifest rules live in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>. This guide explains the chain and points there for detail. <strong>Not the product site.</strong> The <a href="{{root}}">homepage</a> shows the product itself. <strong>Not a framework tutorial.</strong> The examples use <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a> because it needs nothing but Python 3. The same chain applies to any stack.</p>
+  <p><strong>The guide explains the chain; the contract lives in <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>.</strong> The <strong>homepage</strong> shows the product and its workbench. The <strong>examples</strong> use <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a> because it needs nothing but Python 3; the same chain applies to any stack.</p>
 </aside>

@@ -1,25 +1,59 @@
-<p class="chapter-intro"><code>oberth</code> 为每个 Git worktree 保留同一份答案：该跑什么、是不是真的在跑、没跑的时候为什么。人读一张表，coding agent 读同一条命令的 <code>--json</code>。这本指南讲这份答案怎么建立，以及它可能在哪一步出问题。</p>
+<p class="chapter-intro"><code>oberth</code> 为每个 Git worktree 保留一个 <strong>Runtime World</strong>：这个 checkout 该跑什么、实际启动了什么、操作系统观察到了什么、失败为什么发生。人读 Human 输出，agent 读同一条命令的 <code>--json</code>。</p>
 
-<h2 id="problem">四个 checkout，四次猜测</h2>
-<p>worktree 解决的是并行写代码，不是并行跑服务。同一个仓库的四份 checkout 共用一段端口范围、一个数据库名和一份 shell 历史，于是每个会话都要把这同样的三件事重新推一遍，而且每次推出来的结果都略有出入。</p>
-<p>oberth 把这些事实按固定顺序写一次，每个读者读到的都是同一份：<strong>worktree → 清单 → 服务 → 运行 → 运行事实</strong>。后面的环节不会去猜前面的环节已经记下的东西。</p>
-
-<h2 id="chain">一条链，五个站点</h2>
+<h2 id="world">每个 checkout 一个 Runtime World</h2>
+<p>一个 world 有四个位置。它们不是同一个布尔值的四种视图：每个位置发布不同种类的事实，后面的位置不允许凭空补出前面已经记录过的内容。</p>
 <table class="chapter-table">
-  <caption class="sr-only">事实链的五个站点</caption>
-  <thead><tr><th scope="col">站点</th><th scope="col">它解决什么问题</th><th scope="col">它不许做什么</th></tr></thead>
+  <caption class="sr-only">Runtime World 的四个位置</caption>
+  <thead><tr><th scope="col">位置</th><th scope="col">发布什么</th><th scope="col">边界</th></tr></thead>
   <tbody>
-    <tr><th scope="row">worktree</th><td>一次运行属于哪个 checkout？</td><td>属于它不是在其中启动的那个 checkout。</td></tr>
-    <tr><th scope="row">清单</th><td>该跑什么、在哪个端口、依赖谁？</td><td>从运行中的进程去猜，或被模型采纳。</td></tr>
-    <tr><th scope="row">服务</th><td>哪条声明先启动、落在哪个地址上？</td><td>在依赖就绪之前启动依赖它的服务。</td></tr>
-    <tr><th scope="row">运行</th><td>pid、开始、结束、退出码、日志路径。</td><td>因为进程存在就算作在监听。</td></tr>
-    <tr><th scope="row">运行事实</th><td>活着、在监听、健康，以及为什么结束。</td><td>把读不到的表写成“没在运行”。</td></tr>
+    <tr><th scope="row">Intent</th><td>服务、端口、<code>depends_on</code>、健康检查和 prepare 步骤。</td><td>清单由人确认；模型只能起草。</td></tr>
+    <tr><th scope="row">Execution</th><td>一次运行的启动顺序、实际地址、退出码和日志路径。</td><td>运行注册表是唯一写入者。</td></tr>
+    <tr><th scope="row">Observation</th><td>从操作系统读到的进程、监听、健康和退出。</td><td>没读到的事实保持 unknown。</td></tr>
+    <tr><th scope="row">Causal diagnosis</th><td>根因、被阻塞的服务，以及脱敏后的 <code>first_error</code>。</td><td>下游失败不会变成同等原因。</td></tr>
+  </tbody>
+</table>
+
+<h2 id="chain">五个站点，一个方向</h2>
+<p>每条命令都在读写同一条链：<strong>worktree → 清单 → 服务 → 运行 → 运行事实</strong>。每个站点一个写入者，方向只有一条，没有第二个状态来源。</p>
+<table class="chapter-table">
+  <caption class="sr-only">每一站发布什么，下一站读什么</caption>
+  <thead><tr><th scope="col">站点</th><th scope="col">谁写</th><th scope="col">发布什么</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">worktree</th><td>Git，由引擎观察</td><td>checkout 根路径，以及一次运行所属的 <code>wt_…</code> 身份。</td></tr>
+    <tr><th scope="row">清单</th><td>人</td><td><code>oberth.yaml</code>：服务、端口、依赖、健康检查、引用。</td></tr>
+    <tr><th scope="row">服务</th><td>启动时的引擎</td><td>启动的是哪条声明、按什么顺序、落在哪个地址上。</td></tr>
+    <tr><th scope="row">运行</th><td>运行注册表</td><td>一个进程的 pid、开始、结束、退出码与日志路径。</td></tr>
+    <tr><th scope="row">运行事实</th><td>本轮的观察</td><td>活着、在监听、健康，以及更早那次运行为什么结束。</td></tr>
   </tbody>
 </table>
 <p><a href="{{guide}}chain/">一条事实链</a>按顺序走完这五个站点，每站一节。</p>
 
+<h2 id="diagnosis">级联失败收敛成一个原因</h2>
+<p><code>oberth runtime inspect</code> 读取整个 world。依赖崩溃时，依赖它的服务报成 <code>blocked_by_dep</code>，不算独立失败。诊断指出最先结束的那个进程，并把脱敏后的第一条错误放在旁边。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">oberth runtime inspect · 一次级联</figcaption>
+  <pre><code>auth      crashed        exit 1      12:04:17
+api       blocked_by_dep             waiting on auth
+gateway   blocked_by_dep             waiting on api
+web       running        :21731      health 200
+
+diagnosis  1 root cause · 2 impacted (api, gateway)
+           first_error: connection refused: postgres:5432 (redacted)
+attention  urgency 0.92 · inspect_logs(auth)</code></pre>
+</figure>
+<p>重启或崩溃循环会被当成证据，而不是一个碰巧很年轻、就算健康的服务。引擎跨代比较启动时间、退出码和日志指纹。</p>
+
+<h2 id="attention">Native Attention</h2>
+<p>Attention 是引擎内部的确定性观察层。它从运行事实里生成可复核的 note；启用 triage 是另一个决定，一条 note 从不授予杀外部进程或改写清单的权限。</p>
+<ul>
+  <li><strong>strict</strong> 只报告事实和证据，不推荐变更动作。</li>
+  <li><strong>assist</strong> 在证据足够时给出确切的下一步命令；跑不跑仍由人或 agent 决定。</li>
+  <li><strong>reconcile</strong> 显式开启后，仅对归属当前 worktree 的声明服务做有界恢复，永不触碰外部进程、<code>machine:</code> 依赖或清单。</li>
+</ul>
+<p>开启 agent hook 后，Attention 在 <code>PostToolUse</code> 工具调用返回时递送 note，agent 不会再多花一轮去调试过期的二进制或已经崩溃的上游。适配器支持 Decisions API、OpenAI 和 Anthropic。<code>oberth attn</code> 显示当前模式、consent 状态和质量账本。</p>
+
 <h2 id="loop">每天都会用到的命令</h2>
-<p>五条命令覆盖一个工作日，每一条都替你省掉一段每个 checkout 都得重写一遍的 shell 管道。</p>
+<p>五条命令覆盖一个工作日。每一条都替掉一段每个 checkout 都得重写一遍的 shell 管道。</p>
 <table class="chapter-table">
   <caption class="sr-only">核心命令与被它们替代的做法</caption>
   <thead><tr><th scope="col">你想</th><th scope="col">oberth</th><th scope="col">被替代的 shell 做法</th></tr></thead>
@@ -45,7 +79,7 @@ worker   running   no port
 <ul>
   <li><strong>第一次来。</strong>先<a href="{{guide}}install/">安装 oberth</a>，再跟<a href="{{guide}}quickstart/">第一个 worktree</a>走一遍：一个示例项目、五条命令，从一个空 checkout 到一个干净的停止。</li>
   <li><strong>你已经在跑本地服务。</strong>读<a href="{{guide}}chain/">一条事实链</a>和<a href="{{guide}}worktrees/">同时跑多个 worktree</a>，命令章节按需查。</li>
-  <li><strong>你在接入 agent。</strong>从<a href="{{guide}}json/">JSON 里的运行事实</a>开始，再看<a href="{{guide}}agents/">接入 agent</a>的三个调用时机。</li>
+  <li><strong>你在接入 agent。</strong>从<a href="{{guide}}json/">JSON 里的运行事实</a>开始，再看<a href="{{guide}}agents/">接入 agent</a>的生命周期调用和 Attention hook。</li>
 </ul>
 
 <h2 id="readers">两个读者，一个接口</h2>
@@ -58,7 +92,7 @@ oberth logs api --once --json --run current --first-error</code></pre>
 </figure>
 <p><a href="{{root}}llms.txt">llms.txt</a> 为机器列出这本指南，<a href="{{root}}llms-full.txt">llms-full.txt</a> 收录全部章节的纯文本。</p>
 
-<h2 id="not">这本指南不是什么</h2>
+<h2 id="not">范围</h2>
 <aside class="note">
-  <p><strong>不是契约。</strong>确切的 CLI 面、JSON 字段与清单规则在 <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>；这本指南讲链，细节去那里查。<strong>不是产品官网。</strong><a href="{{root}}">官网</a>展示产品本身。<strong>不是框架教程。</strong>示例用 <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a>，因为它只依赖 Python 3；同一条链适用于任何技术栈。</p>
+  <p><strong>指南解释链；契约在 <a href="https://github.com/SheathedSharp/option-berth/blob/main/docs/cli.md">docs/cli.md</a>。</strong><strong>官网</strong>展示产品和工作台。<strong>示例</strong>用 <a href="https://github.com/SheathedSharp/option-berth/tree/main/examples/hello-worktree">Hello Worktree</a>，因为它只依赖 Python 3；同一条链适用于任何技术栈。</p>
 </aside>

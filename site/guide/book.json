@@ -111,14 +111,14 @@
         "en": {
           "nav": "Overview",
           "title": "The option-berth guide",
-          "lede": "What a checkout should run, whether it really is running, and why not. This guide explains the chain of facts behind every oberth command.",
-          "summary": "What option-berth is, the chain of facts, the core loop, and how to read the rest of the guide."
+          "lede": "A Runtime World records what a checkout should run, what was started, what the OS observes, and the one root cause behind a cascade.",
+          "summary": "Runtime World, the chain of facts, native Attention, the core loop, and how to read the rest of the guide."
         },
         "zh": {
           "nav": "总览",
           "title": "option-berth 指南",
-          "lede": "一个 checkout 该跑什么、是不是真的在跑、没跑为什么。这本指南讲清 oberth 每条命令背后那条事实链。",
-          "summary": "option-berth 是什么、事实链、核心循环，以及这本指南怎么读。"
+          "lede": "Runtime World 记录一个 checkout 该跑什么、启动了什么、系统观察到什么，以及一次级联背后的那个根因。",
+          "summary": "Runtime World、事实链、原生 Attention、核心循环，以及这本指南怎么读。"
         }
       },
       "refs": [
@@ -176,14 +176,14 @@
         "en": {
           "nav": "The chain of facts",
           "title": "One chain of facts",
-          "lede": "Worktree → manifest → service → run → runtime facts. Each station has one writer, and the next station reads only what the previous one published.",
-          "summary": "Why the order matters, how attribution works, and why an unread fact stays unknown."
+          "lede": "A Runtime World is carried by five stations. Each station publishes before the next one decides, and causal diagnosis keeps one root cause for a cascade.",
+          "summary": "The Runtime World tuple, the five stations, causal diagnosis, attribution, and why an unread fact stays unknown."
         },
         "zh": {
           "nav": "事实链",
           "title": "一条事实链",
-          "lede": "worktree → 清单 → 服务 → 运行 → 运行事实。每个站点只有一个写入者，下一站只读上一站发布的东西。",
-          "summary": "为什么顺序重要、归属怎么确定，以及没读到的事实为什么保持未知。"
+          "lede": "Runtime World 由五个站点承载。每一站先发布，下一站才做决定；因果诊断让一次级联只留一个根因。",
+          "summary": "Runtime World 四元组、五个站点、因果诊断、归属，以及没读到的事实为什么保持未知。"
         }
       },
       "refs": [
@@ -351,14 +351,14 @@
         "en": {
           "nav": "Coding agents",
           "title": "Call oberth from a coding agent",
-          "lede": "The interface is the CLI and --json. Integration means calling it from the tool's own setup, run and cleanup slots. The product installs nothing and configures nothing for you.",
-          "summary": "The three moments to call oberth, the reads an agent opens with, recipes, and the pitfalls that bite in hooks."
+          "lede": "The interface is the CLI and --json. Attention adds an opt-in mid-turn note through PostToolUse; the engine installs nothing and configures nothing for you.",
+          "summary": "The lifecycle calls, the opening reads, Runtime World inspection, native Attention, recipes, and hook pitfalls."
         },
         "zh": {
           "nav": "接入 agent",
           "title": "从 coding agent 调用 oberth",
-          "lede": "接口只有 CLI 和 --json。集成就是在工具自己的 setup、run、cleanup 槽位里调用它。产品不装 hooks、不注册 MCP，也不改任何工具配置。",
-          "summary": "三个调用时机、agent 开局的三次读取、接入配方，以及 hook 里最容易踩的坑。"
+          "lede": "接口只有 CLI 和 --json。Attention 通过 PostToolUse 在轮次中途递送可选 note；引擎不装 hooks，也不改任何工具配置。",
+          "summary": "生命周期调用、开局读取、Runtime World 检查、原生 Attention、接入配方，以及 hook 里的坑。"
         }
       },
       "refs": [
