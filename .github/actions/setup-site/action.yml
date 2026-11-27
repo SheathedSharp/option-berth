@@ -1,0 +1,26 @@
+name: Set up the website build
+description: >-
+  Install Node, the locked site dependencies and the Playwright browsers the
+  website tests drive.
+
+inputs:
+  browsers:
+    description: Playwright browser engines to install.
+    default: 'chromium webkit'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: site/package-lock.json
+    - name: Install exact site dependencies
+      working-directory: site
+      shell: bash
+      run: npm ci --ignore-scripts
+    - name: Install browser engines
+      working-directory: site
+      shell: bash
+      run: npx playwright install --with-deps ${{ inputs.browsers }}
