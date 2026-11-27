@@ -26,7 +26,10 @@ const Version = "2.0"
 // executable_path, executable_modified_at and executable_changed_since_start.
 // The change is additive: a client that does not read them is unaffected.
 // 3.0.0 replaces the retired host namespace, endpoint and public field names.
-const ProtocolVersion = "3.0.0"
+// 3.1.0 added runtime.world.read and its World result. The change is additive:
+// a client gates it on the runtime service's CapabilityRuntimeWorld rather than
+// on this version.
+const ProtocolVersion = "3.1.0"
 
 // Request is a client call. ID is raw so a client can use numbers or strings.
 type Request struct {

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="$description">
-  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#1b1e22" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f7f4ee" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1114" media="(prefers-color-scheme: dark)">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' $script_hash; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>$page_title</title>
   <link rel="canonical" href="$canonical">
@@ -27,7 +27,7 @@
   <a class="skip-link" href="#main">$skip</a>
   <header class="doc-top">
     <div class="doc-top-inner">
-      <a class="doc-brand" href="$home_path"><img src="${asset_path}mark.svg" width="22" height="22" alt=""><span class="doc-brand-name">option<span class="doc-brand-hyphen">-</span>berth</span><span class="doc-brand-tag">$nav_guide</span></a>
+      <a class="doc-brand" href="$home_path"><img class="brand-mark brand-mark-light" src="${asset_path}mark.svg" width="22" height="22" alt=""><img class="brand-mark brand-mark-dark" src="${asset_path}mark-dark.svg" width="22" height="22" alt=""><span class="doc-brand-name">option<span class="doc-brand-hyphen">-</span>berth</span><span class="doc-brand-tag">$nav_guide</span></a>
       <button class="doc-search-open" type="button" data-search-open aria-label="$search_open" hidden><span data-search-label>$search_open</span><kbd aria-hidden="true">/</kbd></button>
       <nav class="doc-tools" aria-label="$navigation">
         <details class="doc-lang" data-lang-menu>
@@ -45,7 +45,8 @@ $content
   <footer class="doc-foot">
     <div class="doc-foot-inner">
       <div class="doc-foot-mark">
-        <img src="${asset_path}mark.svg" width="56" height="56" alt="">
+        <img class="brand-mark brand-mark-light" src="${asset_path}mark.svg" width="56" height="56" alt="">
+        <img class="brand-mark brand-mark-dark" src="${asset_path}mark-dark.svg" width="56" height="56" alt="">
         <p>option-berth<br><span>$footer_line</span></p>
       </div>
       <nav class="doc-foot-cols" aria-label="$footer_navigation">

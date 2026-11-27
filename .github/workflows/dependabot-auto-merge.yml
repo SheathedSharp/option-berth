@@ -5,9 +5,10 @@ name: Dependabot auto-merge
 # for a click; nothing here merges by itself and nothing bypasses a check.
 # Two kinds of update stay manual, and the pull request says why:
 #   - major updates, because each one needs a real review;
-#   - anything touching .github/workflows/ or .github/quality-gate-checks.json,
-#     because Gate integrity requires a maintainer author for those, which
-#     Dependabot is not, so auto-merge would wait forever.
+#   - anything touching .github/workflows/, .github/actions/ or
+#     .github/quality-gate-checks.json, because Gate integrity requires a
+#     maintainer author for those, which Dependabot is not, so auto-merge would
+#     wait forever.
 # This workflow is not a required check and is deliberately absent from
 # .github/quality-gate-checks.json.
 on:
@@ -55,7 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           changed=$(gh pr diff --name-only "$PR_URL")
-          if printf '%s\n' "$changed" | grep -Eq '^(\.github/workflows/|\.github/quality-gate-checks\.json$)'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(\.github/(workflows|actions)/|\.github/quality-gate-checks\.json$)'; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
@@ -66,7 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh pr comment "$PR_URL" --body "自动合并没有开启：这个 PR 改动了 \`.github/workflows/\` 或 \`.github/quality-gate-checks.json\`。Gate integrity 要求这类改动由维护者提交，Dependabot 不是维护者，自动合并会一直等下去，请人工评审。"
+          gh pr comment "$PR_URL" --body "自动合并没有开启：这个 PR 改动了 \`.github/workflows/\`、\`.github/actions/\` 或 \`.github/quality-gate-checks.json\`。Gate integrity 要求这类改动由维护者提交，Dependabot 不是维护者，自动合并会一直等下去，请人工评审。"
 
       - name: Enable auto-merge with a merge commit
         if: steps.owned.outputs.found == 'false'

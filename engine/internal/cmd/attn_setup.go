@@ -51,7 +51,7 @@ func runAttnConfigWizard(cmd *cobra.Command) error {
 	if err := attnValidateSelection(next); err != nil {
 		return attnWizardStop(cmd, err)
 	}
-	key, err := attnAskKey(next.APIKey)
+	key, err := attnAskKey(next.APIKey, next.Endpoint)
 	if err != nil {
 		return attnWizardStop(cmd, err)
 	}
@@ -102,7 +102,7 @@ func attnProviderChoices(current model.LocalConfig) ([]terminal.Choice, int) {
 	}
 	choices = append(choices, terminal.Choice{
 		Value: attnCustomEndpoint, Label: "Custom endpoint",
-		Detail: "any endpoint that speaks the decisions protocol",
+		Detail: "any endpoint that speaks decisions, OpenAI chat or Anthropic messages",
 	})
 	if initial < 0 {
 		if current.Endpoint == "" {
@@ -146,6 +146,9 @@ func attnAskProvider(current model.LocalConfig) (model.LocalConfig, error) {
 		return next, fmt.Errorf("attn: provider %q is not in the catalog", choices[picked].Value)
 	}
 	next.Preset, next.Endpoint = vendor.Name, vendor.Endpoint
+	// The preset carries the wire shape its endpoint speaks; a stored protocol
+	// from a previous endpoint is not carried over to a different one.
+	next.Protocol = model.NormalizeProtocol(model.PresetProtocol(vendor.Name))
 	modelName, err := attnAskModel(vendor, current)
 	if err != nil {
 		return next, err
@@ -200,8 +203,13 @@ func vendorHasModel(vendor model.Vendor, id string) bool {
 }
 
 // attnAskKey reads the secret, keeping a stored one on an empty answer. The
-// label says which of the two it will do, so Enter is never a surprise.
-func attnAskKey(stored string) (string, error) {
+// label says which of the two it will do, so Enter is never a surprise. A local
+// runtime with no stored key is not asked at all: it usually has none to give,
+// and the probe still proves it answers.
+func attnAskKey(stored, endpoint string) (string, error) {
+	if strings.TrimSpace(stored) == "" && model.LoopbackEndpoint(endpoint) {
+		return "", nil
+	}
 	label := "API key (input hidden, enter keeps the stored key)"
 	if strings.TrimSpace(stored) == "" {
 		label = "API key (input hidden)"

@@ -109,20 +109,39 @@ def snapshot_values(snapshot: dict) -> dict[str, str]:
     def seconds(value: object) -> str:
         return f"{_number(value, 'duration'):.0f}s"
 
+    def progress(value: object, name: str) -> str:
+        """A whole number for a <progress> value attribute."""
+        return str(max(0, int(round(_number(value, name)))))
+
+    def ceiling(value: object, name: str) -> str:
+        """A <progress> max attribute is always positive."""
+        return str(max(1, int(round(_number(value, name)))))
+
+    completion_max = max(int(oberth["completed"]), int(native["completed"]))
+    turns_max = max(_number(oberth["steps_p50"], "steps_p50"), _number(native["steps_p50"], "steps_p50"))
+    time_max = max(_number(oberth["duration_p50_s"], "duration_p50_s"), _number(native["duration_p50_s"], "duration_p50_s"))
+
     return {
         "proof_run_count": str(int(_number(snapshot.get("runs"), "runs"))),
         "proof_scenario_count": str(scenarios),
         "proof_repeat": str(int(_number(snapshot.get("repeat"), "repeat"))),
         "proof_completion_with": completion(oberth),
         "proof_completion_without": completion(native),
+        "proof_completion_with_num": progress(oberth["completed"], "completed"),
+        "proof_completion_without_num": progress(native["completed"], "completed"),
+        "proof_completion_max": str(max(1, completion_max)),
         "proof_rate_with": rate(oberth),
         "proof_rate_without": rate(native),
         "proof_turns_with": f"{_number(oberth['steps_p50'], 'steps_p50'):g}",
         "proof_turns_without": f"{_number(native['steps_p50'], 'steps_p50'):g}",
+        "proof_turns_max": ceiling(turns_max, "steps_p50"),
         "proof_turns_p95_with": f"P95 {_number(oberth['steps_p95'], 'steps_p95'):g}",
         "proof_turns_p95_without": f"P95 {_number(native['steps_p95'], 'steps_p95'):g}",
         "proof_time_with": seconds(oberth["duration_p50_s"]),
         "proof_time_without": seconds(native["duration_p50_s"]),
+        "proof_time_with_num": progress(oberth["duration_p50_s"], "duration_p50_s"),
+        "proof_time_without_num": progress(native["duration_p50_s"], "duration_p50_s"),
+        "proof_time_max": ceiling(time_max, "duration_p50_s"),
         "proof_scenarios_fewer": str(fewer),
         "proof_comparable_scenarios": str(comparable),
         "proof_oob_with": str(int(_number(oberth["oob_total"], "oob_total"))),

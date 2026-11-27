@@ -37,8 +37,10 @@ AREAS: dict[str, tuple[str, ...]] = {
     ),
     "examples": ("examples/", "engine/", "scripts/smoke.py"),
     "readiness": ("engine/", "scripts/verify-reused-readiness.py"),
+    "site": ("site/", ".github/actions/setup-site/"),
     "ci": (
         ".github/workflows/",
+        ".github/actions/",
         ".github/quality-gate-checks.json",
         "scripts/check_ci_gate.py",
         "scripts/check_ci_gate_test.py",

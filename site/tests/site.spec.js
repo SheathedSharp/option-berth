@@ -23,6 +23,9 @@ for (const locale of ['', 'en/']) for (const width of [360, 390, 768, 1440]) {
     await page.goto(locale || './');
     await expect(page.locator('h1')).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('lang', locale ? 'en' : 'zh-CN');
+    // The dark page carries the light-railed mark; the old mark.svg vanished here.
+    await expect(page.locator('.wordmark img')).toBeVisible();
+    await expect(page.locator('.wordmark img')).toHaveAttribute('src', /mark-dark\.svg/);
     await page.locator('#install').scrollIntoViewIfNeeded();
     await expect(page.locator('#install h2')).toBeVisible();
     await expect(page.locator('a[href$="releases/latest"]')).toBeVisible();
@@ -69,9 +72,9 @@ test('command filter, empty state and Escape reset', async ({page}) => {
   await page.goto('./');
   const input = page.locator('#command-filter');
   const rows = page.locator('#command-list li');
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(8);
   await input.fill('logs');
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(8);
   await expect(page.locator('#command-list li:visible')).toHaveCount(1);
   await expect(page.locator('#command-list li:visible')).toContainText('oberth logs');
   await expect(page.locator('#command-status')).toContainText('1');
@@ -80,8 +83,22 @@ test('command filter, empty state and Escape reset', async ({page}) => {
   await expect(page.locator('#command-empty')).toBeVisible();
   await input.press('Escape');
   await expect(input).toHaveValue('');
-  await expect(page.locator('#command-list li:visible')).toHaveCount(6);
+  await expect(page.locator('#command-list li:visible')).toHaveCount(8);
   await expect(page.locator('#command-empty')).toBeHidden();
+});
+
+test('install copy buttons reveal the command and confirm the copy', async ({page, browserName, context}) => {
+  if (browserName === 'chromium') await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('./');
+  const release = page.locator('[data-copy="install-release-code"]');
+  const source = page.locator('[data-copy="install-source-code"]');
+  await expect(release).toBeVisible();
+  await expect(source).toBeVisible();
+  const before = await release.innerText();
+  await release.click();
+  await expect.poll(async () => (await release.innerText()) !== before).toBe(true);
+  await expect(page.locator('#install-release-code')).toContainText('install.sh');
+  await expect(page.locator('#install-source-code')).toContainText('mage buildEngine');
 });
 
 test('measured proof is present in both locales', async ({page}) => {
@@ -89,8 +106,9 @@ test('measured proof is present in both locales', async ({page}) => {
   await expect(page.locator('#proof-title')).toBeVisible();
   await expect(page.locator('.proof-table')).toContainText('40/40');
   await expect(page.locator('.proof-table')).toContainText('29/40');
+  await expect(page.locator('.proof-bar')).toHaveCount(6);
   await page.locator('.lang').click();
-  await expect(page.locator('#proof-title')).toContainText('Done is the metric.');
+  await expect(page.locator('#proof-title')).toContainText('Measured across 80 agent runs');
   await expect(page.locator('.proof-table')).toContainText('40/40');
 });
 
@@ -99,50 +117,81 @@ test('real static language navigation and product links', async ({page}) => {
   await expect(page.locator('.products a')).toHaveCount(2);
   await page.locator('.lang').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.locator('h1')).toHaveText('option-berth');
-  await expect(page.locator('.hero-tagline')).toContainText('Stop guessing');
+  await expect(page.locator('h1')).toHaveText('A deterministic runtime engine for multi-worktree development');
+  await expect(page.locator('.hero-lede')).toContainText('Runtime World');
   await expect(page.locator('.products a[href$="option-berth-skill"]')).toHaveCount(1);
   await page.locator('.lang').click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
 });
 
-test('the worktree switch changes the berth without leaving the page', async ({page}) => {
+test('the workbench switches worktrees, fault states and output views', async ({page}) => {
   await page.goto('./');
-  const first = page.locator('[data-wt-panel="0"]');
-  const second = page.locator('[data-wt-panel="1"]');
-  await expect(first).toBeVisible();
-  await expect(first).toContainText('main');
-  await expect(second).toBeHidden();
-  await page.locator('.wt-switch button[data-wt="1"]').click();
-  await expect(second).toBeVisible();
-  await expect(first).toBeHidden();
-  await expect(second).toContainText('feature/ports');
-  await expect(second).toContainText('21741');
-  await expect(page.locator('.wt-switch button[data-wt="1"]')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('.wt-switch button[data-wt="0"]')).toHaveAttribute('aria-pressed', 'false');
-  await page.locator('.wt-switch button[data-wt="0"]').click();
-  await expect(first).toBeVisible();
+  const main = page.locator('[data-wt-panel="0"]');
+  const billing = page.locator('[data-wt-panel="1"]');
+  await expect(main).toBeVisible();
+  await expect(billing).toBeHidden();
+  await expect(main.locator('[data-scenario-panel="healthy"]')).toBeVisible();
+
+  await page.locator('[data-wt="1"]').click();
+  await expect(billing).toBeVisible();
+  await expect(main).toBeHidden();
+  await expect(billing).toContainText('feat/billing');
+  await expect(billing.locator('[data-scenario-panel="healthy"]')).toContainText('21741');
+  await expect(page.locator('[data-wt="1"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-wt="0"]')).toHaveAttribute('aria-pressed', 'false');
+
+  await page.locator('[data-scenario="cascade"]').click();
+  const cascade = billing.locator('[data-scenario-panel="cascade"]');
+  await expect(cascade).toBeVisible();
+  await expect(cascade).toContainText('auth');
+  await expect(cascade).toContainText('first_error');
+  await expect(page.locator('[data-scenario="cascade"]')).toHaveAttribute('aria-pressed', 'true');
+
+  await page.locator('[data-scenario="port"]').click();
+  await expect(billing.locator('[data-scenario-panel="port"]')).toContainText('44120');
+  await expect(billing.locator('[data-scenario-panel="port"]')).toContainText('port_occupied');
+
+  await page.locator('[data-scenario="drift"]').click();
+  await expect(billing.locator('[data-scenario-panel="drift"]')).toContainText('code_stale');
+
+  await page.locator('[data-view="json"]').click();
+  await expect(page.locator('[data-wb-json]')).toBeVisible();
+  await expect(page.locator('[data-wb-human]')).toBeHidden();
+  const payload = page.locator('[data-wb-json-code]');
+  await expect(payload).toContainText('"schema": "oberth.runtime.world/v1"');
+  await expect(payload).toContainText('"root_causes"');
+  await expect(payload).toContainText('"attention"');
+  await expect(payload).toContainText('"kind": "code_stale"');
+
+  await page.locator('[data-view="human"]').click();
+  await expect(page.locator('[data-wb-human]')).toBeVisible();
+  await expect(page.locator('[data-wb-json]')).toBeHidden();
 });
 
-test('reduced motion keeps every tile in place and the switch instant', async ({page}) => {
+test('reduced motion keeps the page static and the workbench switch instant', async ({page}) => {
   await page.emulateMedia({reducedMotion: 'reduce'});
   await page.goto('./');
-  await page.waitForTimeout(400);
-  const tiles = await page.locator('.board > .tile').evaluateAll(nodes =>
+  await page.waitForTimeout(300);
+  const sections = await page.locator('main > section').evaluateAll(nodes =>
     nodes.map(node => getComputedStyle(node).opacity + '|' + getComputedStyle(node).transform));
-  expect(tiles.every(value => value === '1|none')).toBe(true);
-  await page.locator('.wt-switch button[data-wt="1"]').click();
+  expect(sections.every(value => value === '1|none')).toBe(true);
+  await page.locator('[data-scenario="cascade"]').click();
+  const main = page.locator('[data-wt-panel="0"]');
+  await expect(main.locator('[data-scenario-panel="cascade"]')).toBeVisible();
+  await expect(main.locator('[data-scenario-panel="healthy"]')).toBeHidden();
+  expect(await page.locator('[data-wb-human]').evaluate(el => el.getAnimations().length)).toBe(0);
+  await page.locator('[data-wt="1"]').click();
   await expect(page.locator('[data-wt-panel="1"]')).toBeVisible();
   await expect(page.locator('[data-wt-panel="0"]')).toBeHidden();
 });
 
-test('tiles arrive with motion when the reader allows it', async ({page}) => {
-  await page.emulateMedia({reducedMotion: 'no-preference'});
+test('controls answer the pointer and the page ships no animation library', async ({page}) => {
   await page.goto('./');
-  const first = page.locator('.board > .tile').first();
-  await expect.poll(() => first.evaluate(el => getComputedStyle(el).opacity), {timeout: 3000}).toBe('1');
-  const moved = await page.evaluate(() => window.gsap ? 1 : 0);
-  expect(moved).toBe(1);
+  expect(await page.evaluate(() => typeof window.gsap)).toBe('undefined');
+  const pill = page.locator('[data-scenario="port"]');
+  const before = await pill.evaluate(el => getComputedStyle(el).color);
+  await pill.hover();
+  await expect.poll(() => pill.evaluate(el => getComputedStyle(el).color)).not.toBe(before);
 });
 
 test('no-JavaScript page keeps copy, language, commands and release link', async ({browser, baseURL}) => {
@@ -150,9 +199,17 @@ test('no-JavaScript page keeps copy, language, commands and release link', async
   const page = await context.newPage();
   await page.goto(baseURL);
   await expect(page.locator('h1')).toBeVisible();
-  await expect(page.locator('#command-list li')).toHaveCount(6);
-  await expect(page.locator('#command-list li:visible')).toHaveCount(6);
+  await expect(page.locator('#command-list li')).toHaveCount(8);
+  await expect(page.locator('#command-list li:visible')).toHaveCount(8);
   await expect(page.locator('#command-empty')).toBeHidden();
+  await expect(page.locator('[data-command-search]')).toBeHidden();
+  await expect(page.locator('[data-wb-controls]')).toBeHidden();
+  await expect(page.locator('[data-wt-panel="0"]')).toBeVisible();
+  await expect(page.locator('[data-wt-panel="1"]')).toBeHidden();
+  await expect(page.locator('[data-scenario-panel="healthy"]').first()).toBeVisible();
+  await expect(page.locator('[data-scenario-panel="cascade"]').first()).toBeHidden();
+  await expect(page.locator('[data-wb-json]')).toBeHidden();
+  await expect(page.locator('.copy').first()).toBeHidden();
   await page.locator('#install').scrollIntoViewIfNeeded();
   await expect(page.locator('a[href$="releases/latest"]')).toBeVisible();
   await expect(page.locator('a[href$="docs/install.md"]')).toBeVisible();
@@ -230,14 +287,19 @@ test('guide: the theme follows the system until the reader chooses', async ({pag
   await page.emulateMedia({colorScheme: 'dark'});
   await page.goto(guidePath('en', 'status'));
   await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('.doc-brand .brand-mark-dark')).toBeVisible();
+  await expect(page.locator('.doc-brand .brand-mark-light')).toBeHidden();
   const dark = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   await page.locator('[data-theme-toggle]').click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('.doc-brand .brand-mark-light')).toBeVisible();
+  await expect(page.locator('.doc-brand .brand-mark-dark')).toBeHidden();
   const light = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   expect(light).not.toBe(dark);
   await expect(page.locator('[data-theme-toggle]')).toHaveAttribute('aria-label', /dark/i);
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('.doc-brand .brand-mark-light')).toBeVisible();
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(light);
 });
 

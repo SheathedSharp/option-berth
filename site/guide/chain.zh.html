@@ -1,14 +1,28 @@
 <p class="chapter-intro">这本指南里的每条命令都在读写同一条链：<strong>worktree → 清单 → 服务 → 运行 → 运行事实</strong>。每个站点只有一个写入者，下一站只读上一站发布的东西。没有第二个状态来源。</p>
 
+<h2 id="world">Runtime World 的四元组</h2>
+<p>一个 checkout 的 Runtime World 是四个位置组成的记录。Intent、execution、observation 和 causal diagnosis 各自回答不同的问题，缺失的事实不会被旁边的位置补出来。</p>
+<table class="chapter-table">
+  <caption class="sr-only">四个位置与各自的写入者</caption>
+  <thead><tr><th scope="col">位置</th><th scope="col">写入者</th><th scope="col">发布什么</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Intent</th><td>确认清单的人</td><td><code>oberth.yaml</code>：服务、端口、<code>depends_on</code>、健康和 prepare。</td></tr>
+    <tr><th scope="row">Execution</th><td>运行注册表</td><td>一次运行的启动顺序、实际地址、退出码和日志路径。</td></tr>
+    <tr><th scope="row">Observation</th><td>本轮的 OS 扫描</td><td>进程、监听、健康和退出，四项独立事实。</td></tr>
+    <tr><th scope="row">Causal diagnosis</th><td>诊断环节</td><td>根因、被阻塞的服务，以及脱敏后的 <code>first_error</code>。</td></tr>
+  </tbody>
+</table>
+
 <h2 id="stations">五个站点</h2>
+<p>四个位置由五个站点承载。多出来的是 worktree 本身，它在任何服务启动之前先确定归属。</p>
 <table class="chapter-table">
   <caption class="sr-only">每一站发布什么，下一站读什么</caption>
   <thead><tr><th scope="col">站点</th><th scope="col">谁写</th><th scope="col">发布什么</th></tr></thead>
   <tbody>
     <tr><th scope="row">worktree</th><td>Git，由引擎观察</td><td>checkout 根路径，以及一次运行所属的 <code>wt_…</code> 身份。</td></tr>
-    <tr><th scope="row">清单</th><td>人</td><td><code>oberth.yaml</code>：服务、端口、依赖、健康检查、引用。</td></tr>
+    <tr><th scope="row">清单</th><td>人</td><td>服务、端口、依赖、健康检查和引用。</td></tr>
     <tr><th scope="row">服务</th><td>启动时的引擎</td><td>启动的是哪条声明、按什么顺序、落在哪个地址上。</td></tr>
-    <tr><th scope="row">运行</th><td>引擎的运行注册表</td><td>一个进程的 pid、开始、结束、退出码与日志路径。</td></tr>
+    <tr><th scope="row">运行</th><td>运行注册表</td><td>一个进程的 pid、开始、结束、退出码与日志路径。</td></tr>
     <tr><th scope="row">运行事实</th><td>本轮的观察</td><td>活着、在监听、健康，以及更早那次运行为什么结束。</td></tr>
   </tbody>
 </table>
@@ -17,9 +31,26 @@
 <p>只给一个“它起来了吗”的布尔值，整条链就被压平了，每个读者都得自己把剩下的推一遍。所以每一步都先发布，下一步才被允许据此做决定：归属先于生命周期，生命周期先于观察，观察先于就绪。</p>
 <p>所以 <code>up --wait</code> 返回的是真的答案，<code>status</code> 也能一边说服务在运行、一边说端口未知，而不自相矛盾。</p>
 
+<h2 id="diagnosis">因果诊断</h2>
+<p>诊断读取整条链。崩溃会沿 <code>depends_on</code> 传播，但报告只保留一个根因，把下游服务列为被阻塞，读者不会去追三个共享同一原因的症状。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">diagnosis.root_causes · 一次级联</figcaption>
+  <pre><code>"diagnosis": {
+  "healthy": false,
+  "root_causes": [{
+    "service": "auth",
+    "kind": "service_crashed",
+    "severity": "critical",
+    "first_error": "connection refused: postgres:5432 (redacted)",
+    "impacted": ["api", "gateway"]
+  }]
+}</code></pre>
+</figure>
+<p>同一轮诊断跨代比较启动时间、退出码和日志指纹。反复重启的服务会带着证据报成循环，不会因为当前 pid 活着就算健康。</p>
+
 <h2 id="attribution">一次运行属于启动它的 checkout</h2>
 <p>归属由三项共同确定：这一轮的路径观察、清单的内容索引和运行身份。所以同一个仓库的两个 worktree 不会串服务，也不会串端口、数据库名或停止动作。</p>
-<p>端口遵守同一条规则。<code>port: auto</code> 按一次运行预留、停止时交还，第二个 checkout 问“那个 API 端口”时得到的是它自己的答案，不是一次冲突。</p>
+<p>端口遵守同一条规则。<code>port: auto</code> 按一次运行预留、停止时交还，第二个 checkout 问“那个 API 端口”时得到的是它自己的答案，不是一次冲突。端口被另一个 checkout 占用时，诊断报告持有者，不会建议杀掉别人的进程。</p>
 
 <h2 id="unknown">没读到的事实保持未知</h2>
 <p>失败、取消和不完整的扫描，都不能变成“空闲”“已消失”或“健康”。监听表里没有这个端口，只说明这条事实没被观察到，绝不代表端口空闲。信号发送成功，也只说明信号送到了，不代表进程已经退出。</p>

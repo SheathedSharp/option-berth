@@ -1,6 +1,6 @@
-<p class="chapter-intro">接口只有 CLI 和 <code>--json</code>。集成就是在工具自己的 setup、run、cleanup 槽位里调用它。产品不替你装 hooks、不注册 MCP server，也不代你写任何配置。</p>
+<p class="chapter-intro">接口只有 CLI 和 <code>--json</code>。集成就是在工具自己的 setup、run、cleanup 槽位里调用它。Native Attention 可以在 agent 的工具调用返回时加一条中途 note。产品不替你装 hooks，也不代你写任何配置。</p>
 
-<h2 id="moments">三个调用时机</h2>
+<h2 id="moments">三个生命周期调用</h2>
 <p>工具提供生命周期槽位时，用同样的三次调用：创建之后启动，运行期间读取，结束时停止。</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">三次调用就是全部集成</figcaption>
@@ -12,8 +12,8 @@ oberth status --json --brief
 oberth down --worktree /absolute/path/to/checkout</code></pre>
 </figure>
 
-<h2 id="reads">agent 开局的三次读取</h2>
-<p><code>oberth --help</code> 末尾有一段 <strong>For agents</strong>，给的是阅读模式，不是新命令。三次读取足够让会话定位自己，不用去拼 <code>ps</code>、<code>lsof</code> 或 <code>tail</code>。</p>
+<h2 id="reads">agent 开局的读取</h2>
+<p><code>oberth --help</code> 末尾有一段 <strong>For agents</strong>，给的是阅读模式，不是新命令。几次读取足够让会话定位自己，不用去拼 <code>ps</code>、<code>lsof</code> 或 <code>tail</code>。</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">开局模式</figcaption>
   <pre><code>oberth status --json --brief
@@ -25,6 +25,25 @@ oberth logs &lt;service&gt; --once --json --run current --first-error</code></pr
   <li>确实应该有东西在跑时才 <code>up --wait</code>。它等真实就绪，而不是睡一会儿。</li>
   <li>失败之后才 <code>logs --run current --first-error</code>。它指向一行，不给猜测。</li>
 </ul>
+
+<h2 id="runtime">从 Runtime World 开始</h2>
+<p><code>oberth runtime inspect --json</code> 用一个值返回整个 world：intent、execution、observation 和 <code>diagnosis.root_causes</code>。agent 在第一条命令之前读它，就不必从 shell 历史里重建这套服务栈。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">一个 world，一次读取</figcaption>
+  <pre><code>oberth runtime inspect --json
+oberth status --json --brief</code></pre>
+</figure>
+<p>把两次读取分开用。<code>runtime inspect</code> 是诊断用的完整记录；<code>status --brief</code> 是 agent 可以反复读、不会挤爆上下文的短读。</p>
+
+<h2 id="attention">一轮工作里的 Native Attention</h2>
+<p>Attention 需要显式启用。<code>oberth attn status</code> 报告模式和 consent 状态；<code>oberth attn on</code> 打开本机 consent；<code>oberth attn assess</code> 为一个任务跑一次有界评估。确定性的 note 不需要任何模型调用。</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">查看、同意、评估</figcaption>
+  <pre><code>oberth attn status --json
+oberth attn on
+oberth attn assess --project /absolute/path/to/checkout</code></pre>
+</figure>
+<p>三档 triage 模式是 <code>strict</code>、<code>assist</code> 和 <code>reconcile</code>。启用项目 hook 后，<code>PostToolUse</code> 会在工具调用返回时递送一条新的 note，agent 可以在调试错二进制之前先重启过期服务。适配器支持 Decisions API、OpenAI 和 Anthropic。建议不授予权限；有副作用的动作仍由人决定。</p>
 
 <h2 id="recipes">接入配方</h2>
 <p>工具自己的配置由用户写。项目级配置可以随仓库提交，但产品不分发集成代码，也不写任何工具配置。</p>
@@ -46,14 +65,14 @@ oberth logs &lt;service&gt; --once --json --run current --first-error</code></pr
 The services in this worktree are managed by option-berth (`oberth`).
 Before starting or troubleshooting, read the facts with it first.
 
-- Run `oberth status --json` before guessing ports or digging through `ps`.
+- Run `oberth runtime inspect --json` before guessing ports or digging through `ps`.
 - Start with `oberth up --wait --json`; do not reimplement dependency order.
 - On failure read `oberth logs &lt;service&gt; --once --json`; do not substitute a timeout for the reason.
 - When `observation.state` is not `observable`, say you cannot see the listener and follow the hint.
 - Stop this checkout with `oberth down`; never kill by a guessed pid.</code></pre>
 </figure>
 
-<h2 id="pitfalls">容易踩的坑</h2>
+<h2 id="pitfalls">hook 里容易踩的坑</h2>
 <ul>
   <li>hook 通常不加载你的 shell rc。用 <code>oberth</code> 的绝对路径，或显式设置 <code>PATH</code>；<code>node</code>、<code>npm</code>、<code>python3</code> 也必须能找到。</li>
   <li>workspace 根不一定是 Git checkout 根。先 <code>cd "$(git rev-parse --show-toplevel)"</code>，再把同一个根传给 <code>down --worktree</code>。</li>

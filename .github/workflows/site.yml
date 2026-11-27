@@ -1,11 +1,21 @@
 name: Product website
 on:
+  # Pull-request verification runs directly inside ci.yml via the shared
+  # setup-site composite action so ci.yml keeps strictly contents:read
+  # permissions without inheriting pages:write/id-token:write from deploy.
+  # This workflow verifies and deploys on pushes to main and manual dispatches.
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the verified site to GitHub Pages.
+        type: boolean
+        default: true
   push:
     branches: [main]
-    paths: ['site/**', '.github/workflows/site.yml']
-  pull_request:
-    paths: ['site/**', '.github/workflows/site.yml']
+    paths:
+      - 'site/**'
+      - '.github/workflows/site.yml'
+      - '.github/actions/setup-site/**'
 permissions:
   contents: read
 concurrency:
@@ -16,39 +26,29 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: site/package-lock.json
+      - uses: ./.github/actions/setup-site
       - name: Build verified static pages
         run: python3 site/build.py
-      - name: Install exact test tooling
-        working-directory: site
-        run: npm ci --ignore-scripts
-      - name: Install browser engines
-        working-directory: site
-        run: npx playwright install --with-deps chromium webkit
       - name: Verify browsers, responsive layouts, keyboard and reduced motion
         working-directory: site
         run: npm test
       - name: Keep browser evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: website-browser-evidence-${{ github.run_id }}
           path: site/test-results/
           retention-days: 7
           if-no-files-found: ignore
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.deploy)
         with:
           path: site/dist
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.deploy)
     needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 5

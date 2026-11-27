@@ -1,6 +1,6 @@
-<p class="chapter-intro">The interface is the CLI and <code>--json</code>. Integration means calling it from the tool's own setup, run and cleanup slots. The product installs no hooks for you, runs no MCP server, and writes no configuration on your behalf.</p>
+<p class="chapter-intro">The interface is the CLI and <code>--json</code>. Integration means calling it from the tool's own setup, run and cleanup slots. Native Attention can add a mid-turn note when the agent's tool call returns. The product installs no hooks for you and writes no configuration on your behalf.</p>
 
-<h2 id="moments">Three moments</h2>
+<h2 id="moments">Three lifecycle calls</h2>
 <p>Where a tool offers lifecycle slots, use the same three calls: start after the checkout is created, read while it runs, and stop at the end.</p>
 <figure class="fragment" data-ui>
   <figcaption class="fragment-label">the integration, in three calls</figcaption>
@@ -26,6 +26,25 @@ oberth logs &lt;service&gt; --once --json --run current --first-error</code></pr
   <li><code>logs --run current --first-error</code> only after a failure. It points at a line, not a guess.</li>
 </ul>
 
+<h2 id="runtime">Start with the Runtime World</h2>
+<p><code>oberth runtime inspect --json</code> returns the whole world in one value: intent, execution, observation and <code>diagnosis.root_causes</code>. An agent that reads it before the first command does not have to reconstruct the stack from shell history.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">one world, one read</figcaption>
+  <pre><code>oberth runtime inspect --json
+oberth status --json --brief</code></pre>
+</figure>
+<p>Keep the two reads separate. <code>runtime inspect</code> is the full record for diagnosis; <code>status --brief</code> is the short read an agent can repeat without flooding its context.</p>
+
+<h2 id="attention">Native Attention during a turn</h2>
+<p>Attention is opt-in. <code>oberth attn status</code> reports the mode and consent state; <code>oberth attn on</code> enables local consent; <code>oberth attn assess</code> runs one bounded assessment for a task. The deterministic notes exist without any model call.</p>
+<figure class="fragment" data-ui>
+  <figcaption class="fragment-label">inspect, consent, assess</figcaption>
+  <pre><code>oberth attn status --json
+oberth attn on
+oberth attn assess --project /absolute/path/to/checkout</code></pre>
+</figure>
+<p>The three triage modes are <code>strict</code>, <code>assist</code> and <code>reconcile</code>. With a project hook enabled, <code>PostToolUse</code> delivers a fresh note when a tool call returns, so the agent can restart a stale service before debugging the wrong binary. The adapter supports the Decisions API, OpenAI and Anthropic. A suggestion never grants permission; the person still decides on side effects.</p>
+
 <h2 id="recipes">Recipes</h2>
 <p>Users write the tool's own configuration. Project-level configuration can be committed, but the product distributes no integration code and writes no tool configuration.</p>
 <table class="chapter-table">
@@ -46,14 +65,14 @@ oberth logs &lt;service&gt; --once --json --run current --first-error</code></pr
 The services in this worktree are managed by option-berth (`oberth`).
 Before starting or troubleshooting, read the facts with it first.
 
-- Run `oberth status --json` before guessing ports or digging through `ps`.
+- Run `oberth runtime inspect --json` before guessing ports or digging through `ps`.
 - Start with `oberth up --wait --json`; do not reimplement dependency order.
 - On failure read `oberth logs &lt;service&gt; --once --json`; do not substitute a timeout for the reason.
 - When `observation.state` is not `observable`, say you cannot see the listener and follow the hint.
 - Stop this checkout with `oberth down`; never kill by a guessed pid.</code></pre>
 </figure>
 
-<h2 id="pitfalls">Pitfalls</h2>
+<h2 id="pitfalls">Pitfalls in hooks</h2>
 <ul>
   <li>Hooks often do not load your shell rc. Use the absolute path to <code>oberth</code>, or set <code>PATH</code> explicitly; <code>node</code>, <code>npm</code> and <code>python3</code> have to be on it too.</li>
   <li>The workspace root is not always the Git checkout root. Run <code>cd "$(git rev-parse --show-toplevel)"</code> first, and pass the same root to <code>down --worktree</code>.</li>

@@ -33,8 +33,9 @@ jobs:
             --jq '.[] | .filename, (.previous_filename // empty)')
           # The retry policy belongs on this list too: a change to what CI
           # re-runs, or to the tests it may re-run, can turn a real failure into
-          # a green run.
-          if ! printf '%s\n' "$changed" | grep -Eq '^(\.github/workflows/|\.github/quality-gate-checks\.json$|scripts/(release\.py|race-packages\.txt|check_ci_gate\.py|check_ci_gate_test\.py|check_skill_contract\.py|check_skill_contract_test\.py|changed_areas\.py|changed_areas_test\.py|ci_failures\.py|ci_failures_test\.py|retry-ci\.sh|retry_ci_test\.py|flaky-tests\.txt)$)'; then
+          # a green run. Composite actions are part of the gate for the same
+          # reason as workflows: every job's setup runs through them.
+          if ! printf '%s\n' "$changed" | grep -Eq '^(\.github/(workflows|actions)/|\.github/quality-gate-checks\.json$|scripts/(release\.py|race-packages\.txt|check_ci_gate\.py|check_ci_gate_test\.py|check_skill_contract\.py|check_skill_contract_test\.py|changed_areas\.py|changed_areas_test\.py|ci_failures\.py|ci_failures_test\.py|retry-ci\.sh|retry_ci_test\.py|flaky-tests\.txt)$)'; then
             echo "No quality gate configuration changed."
             exit 0
           fi
